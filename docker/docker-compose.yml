@@ -1,0 +1,76 @@
+version: '3.8'
+
+services:
+  # Asteriskサーバー
+  asterisk:
+    image: bit3rus/goautodial:4.0
+    restart: always
+    ports:
+      - "5038:5038"  # AMI
+      - "8088:8088"  # ARI
+      - "5060:5060/udp"  # SIP
+    volumes:
+      - ./asterisk-config:/etc/asterisk
+    networks:
+      - autodialer-network
+
+  # TTSサーバー
+  jambonz:
+    image: jambonz/sbc-inbound:latest
+    restart: always
+    ports:
+      - "3000:3000"  # API
+    networks:
+      - autodialer-network
+
+  # バックエンドサーバー
+  backend:
+    build: 
+      context: ../backend
+      dockerfile: Dockerfile.prod
+    restart: always
+    ports:
+      - "5000:5000"
+    environment:
+      - NODE_ENV=production
+      - MYSQL_HOST=mysql
+      - MYSQL_USER=root
+      - MYSQL_PASSWORD=your_secure_password
+      - MYSQL_DATABASE=autodialer
+      - ASTERISK_HOST=asterisk
+      - JWT_SECRET=your_jwt_secret
+    depends_on:
+      - mysql
+      - asterisk
+    networks:
+      - autodialer-network
+
+  # フロントエンドアプリ
+  frontend:
+    build:
+      context: ../frontend
+      dockerfile: Dockerfile.prod
+    restart: always
+    ports:
+      - "80:80"  # Nginxでホスト
+    networks:
+      - autodialer-network
+
+  # データベース
+  mysql:
+    image: mysql:5.7
+    restart: always
+    volumes:
+      - mysql_data:/var/lib/mysql
+    environment:
+      - MYSQL_ROOT_PASSWORD=your_secure_password
+      - MYSQL_DATABASE=autodialer
+    networks:
+      - autodialer-network
+
+networks:
+  autodialer-network:
+    driver: bridge
+
+volumes:
+  mysql_data:

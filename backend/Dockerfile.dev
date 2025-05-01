@@ -1,0 +1,18 @@
+FROM node:18-alpine
+
+WORKDIR /app
+
+# パッケージインストール用ファイルのみコピー
+COPY package*.json ./
+
+# 開発依存関係を含むすべてのパッケージをインストール
+RUN npm install
+
+# nodemonをグローバルにインストール
+RUN npm install -g nodemon
+
+# アプリケーションのポートを公開
+EXPOSE 5000
+
+# 開発モードで起動
+CMD ["nodemon", "src/index.js"]
