@@ -10,14 +10,35 @@ services:
       - ./backend:/app
       - /app/node_modules
     environment:
-      - NODE_ENV=development
-      - MYSQL_HOST=mysql
-      - MYSQL_USER=root
-      - MYSQL_PASSWORD=password
-      - MYSQL_DATABASE=autodialer
-      - MOCK_ASTERISK=true
+      NODE_ENV: development
+      MYSQL_HOST: mysql
+      MYSQL_USER: root
+      MYSQL_PASSWORD: password
+      MYSQL_DATABASE: autodialer
+      MOCK_ASTERISK: "true"
     depends_on:
       - mysql
+    networks:
+      - autodialer-network
+
+  # フロントエンドサーバー
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile.dev
+    ports:
+      - "3003:3003"  # 外部ポートを3003に変更
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    environment:
+      NODE_ENV: development
+      REACT_APP_API_URL: http://localhost:5001/api
+      CHOKIDAR_USEPOLLING: "true"
+      WDS_SOCKET_PORT: 3003
+      HOST: "0.0.0.0"
+    depends_on:
+      - backend
     networks:
       - autodialer-network
 
@@ -28,11 +49,15 @@ services:
     ports:
       - "13306:3306"  # 外部ポートは13306のまま
     environment:
-      - MYSQL_ROOT_PASSWORD=password
-      - MYSQL_DATABASE=autodialer
+      MYSQL_ROOT_PASSWORD: password
+      MYSQL_DATABASE: autodialer
     command: --default-authentication-plugin=mysql_native_password
     volumes:
       - mysql_data:/var/lib/mysql
+      # 初期化スクリプトを追加
+      - ./backend/database/schema.sql:/docker-entrypoint-initdb.d/1-schema.sql
+      # サンプルデータがある場合は追加
+      # - ./backend/database/sample-data.sql:/docker-entrypoint-initdb.d/2-sample-data.sql
     networks:
       - autodialer-network
 

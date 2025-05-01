@@ -1,11 +1,12 @@
+// backend/src/index.js
 const express = require('express');
 const cors = require('cors');
 const logger = require('./services/logger');
 const db = require('./services/database');
+const asterisk = require('./services/asterisk');
 
-// ルーターのインポート
-const callerIdRoutes = require('./routes/callerIds');
-const callRoutes = require('./routes/calls');  // callルーターを追加
+// 環境変数の読み込み
+require('dotenv').config();
 
 // Express アプリケーションの初期化
 const app = express();
@@ -14,6 +15,12 @@ const PORT = process.env.PORT || 5000;
 // ミドルウェア
 app.use(cors());
 app.use(express.json());
+
+// リクエストロギングミドルウェア
+app.use((req, res, next) => {
+  logger.debug(`${req.method} ${req.url}`);
+  next();
+});
 
 // ルートエンドポイント
 app.get('/', (req, res) => {
@@ -25,9 +32,75 @@ app.get('/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date() });
 });
 
-// APIルート
-app.use('/api/caller-ids', callerIdRoutes);
-app.use('/api/calls', callRoutes);  // callルートを使用
+// 利用可能なルートを確認して使用
+try {
+  // 発信者番号ルート
+  const callerIdRoutes = require('./routes/callerIds');
+  app.use('/api/caller-ids', callerIdRoutes);
+  logger.info('発信者番号APIを有効化しました');
+} catch (error) {
+  logger.warn('発信者番号APIの読み込みに失敗しました:', error.message);
+}
+
+try {
+  // 通話ルート
+  const callRoutes = require('./routes/calls');
+  app.use('/api/calls', callRoutes);
+  logger.info('通話APIを有効化しました');
+} catch (error) {
+  logger.warn('通話APIの読み込みに失敗しました:', error.message);
+}
+
+try {
+  // 連絡先ルート
+  const contactRoutes = require('./routes/contacts');
+  app.use('/api/contacts', contactRoutes);
+  logger.info('連絡先APIを有効化しました');
+} catch (error) {
+  logger.warn('連絡先APIの読み込みに失敗しました:', error.message);
+}
+
+try {
+  // キャンペーンルート
+  const campaignRoutes = require('./routes/campaigns');
+  app.use('/api/campaigns', campaignRoutes);
+  logger.info('キャンペーンAPIを有効化しました');
+} catch (error) {
+  logger.warn('キャンペーンAPIの読み込みに失敗しました:', error.message);
+}
+
+try {
+  // 認証ルート
+  const authRoutes = require('./routes/auth');
+  app.use('/api/auth', authRoutes);
+  logger.info('認証APIを有効化しました');
+} catch (error) {
+  logger.warn('認証APIの読み込みに失敗しました:', error.message);
+}
+
+try {
+  // コールバックルート
+  const callbackRoutes = require('./routes/callback');
+  app.use('/api/callback', callbackRoutes);
+  logger.info('コールバックAPIを有効化しました');
+} catch (error) {
+  logger.warn('コールバックAPIの読み込みに失敗しました:', error.message);
+}
+
+try {
+  // 統計ルート
+  const statsRoutes = require('./routes/stats');
+  app.use('/api/stats', statsRoutes);
+  logger.info('統計APIを有効化しました');
+} catch (error) {
+  logger.warn('統計APIの読み込みに失敗しました:', error.message);
+}
+
+// エラーハンドリングミドルウェア
+app.use((err, req, res, next) => {
+  logger.error('アプリケーションエラー:', err);
+  res.status(500).json({ message: '内部サーバーエラー', error: err.message });
+});
 
 // サーバー起動
 const startServer = async () => {
@@ -35,6 +108,14 @@ const startServer = async () => {
     // データベース接続確認
     await db.query('SELECT 1');
     logger.info('データベースに接続しました');
+    
+    // Asteriskサービスに接続
+    if (!process.env.MOCK_ASTERISK || process.env.MOCK_ASTERISK !== 'true') {
+      await asterisk.connect();
+      logger.info('Asteriskサービスに接続しました');
+    } else {
+      logger.info('Asteriskサービスはモックモードで実行されています');
+    }
     
     // サーバー起動
     app.listen(PORT, () => {
@@ -48,4 +129,15 @@ const startServer = async () => {
   }
 };
 
+// 未処理のエラーハンドリング
+process.on('unhandledRejection', (reason, promise) => {
+  logger.error('Unhandled Rejection:', reason);
+});
+
+process.on('uncaughtException', (error) => {
+  logger.error('Uncaught Exception:', error);
+  process.exit(1);
+});
+
+// サーバー起動
 startServer();

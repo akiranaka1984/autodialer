@@ -1,0 +1,19 @@
+FROM node:18-alpine
+
+WORKDIR /app
+
+# パッケージインストール用ファイルのみコピー
+COPY package*.json ./
+
+# 依存関係をインストール
+RUN npm install
+
+# 全てのインターフェースでリッスンするように設定
+ENV HOST=0.0.0.0
+ENV WDS_SOCKET_PORT=3001
+
+# アプリケーションのポートを公開
+EXPOSE 3000
+
+# 開発サーバーを起動
+CMD ["npm", "start"]

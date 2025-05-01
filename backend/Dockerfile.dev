@@ -5,7 +5,7 @@ WORKDIR /app
 # パッケージインストール用ファイルのみコピー
 COPY package*.json ./
 
-# 開発依存関係を含むすべてのパッケージをインストール
+# 通常のnpm installを使用して依存関係をインストール
 RUN npm install
 
 # nodemonをグローバルにインストール
