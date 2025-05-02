@@ -13,4 +13,7 @@ router.put('/:id', callerIdController.updateCallerId);
 // 発信者番号の削除
 router.delete('/:id', callerIdController.deleteCallerId);
 
+// backend/src/routes/callerIds.js に追加
+router.post('/import', callerIdController.importCallerIds);
+
 module.exports = router;

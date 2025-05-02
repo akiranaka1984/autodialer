@@ -4,16 +4,34 @@ const asteriskMock = require('../services/asteriskMock');
 // テスト発信
 exports.testCall = async (req, res) => {
   try {
-    const { phoneNumber, callerID } = req.body;
+    const { phoneNumber, callerID, mockMode } = req.body;
     
     if (!phoneNumber) {
       return res.status(400).json({ message: '発信先電話番号は必須です' });
     }
     
+    // テスト用の一時的なモック設定
+    const originalMockMode = process.env.MOCK_ASTERISK;
+    if (mockMode !== undefined) {
+      process.env.MOCK_ASTERISK = mockMode ? 'true' : 'false';
+    }
+    
+    // 発信者番号の検証（指定された場合）
+    let callerIdData = null;
+    if (callerID) {
+      const callerIds = await db.query('SELECT * FROM caller_ids WHERE id = ? AND active = true', [callerID]);
+      
+      if (callerIds.length === 0) {
+        return res.status(400).json({ message: '選択された発信者番号が見つからないか無効です' });
+      }
+      
+      callerIdData = callerIds[0];
+    }
+    
     // 発信パラメータの設定
     const params = {
       phoneNumber,
-      callerID: callerID || '0312345678',
+      callerID: callerIdData ? `"${callerIdData.description || ''}" <${callerIdData.number}>` : '0312345678',
       context: 'autodialer',
       exten: 's',
       priority: 1,
@@ -25,21 +43,43 @@ exports.testCall = async (req, res) => {
       }
     };
     
+    logger.info(`テスト発信実行: 発信先=${phoneNumber}, モード=${process.env.MOCK_ASTERISK}`);
+    
     // 発信実行
-    const result = await asteriskMock.originate(params);
+    const result = await asterisk.originate(params);
+    
+    // 通話ログに記録
+    const [logResult] = await db.query(`
+      INSERT INTO call_logs 
+      (call_id, caller_id_id, phone_number, start_time, status, test_call)
+      VALUES (?, ?, ?, NOW(), 'ORIGINATING', 1)
+    `, [result.ActionID, callerIdData ? callerIdData.id : null, phoneNumber]);
+    
+    // モック設定を元に戻す
+    process.env.MOCK_ASTERISK = originalMockMode;
     
     // 発信結果を返す
     res.json({
       success: true,
       callId: result.ActionID,
-      message: 'テスト発信が開始されました（モックモード）',
+      message: 'テスト発信が開始されました' + (mockMode ? '（モックモード）' : ''),
       data: result
     });
     
-    // 通話終了のシミュレーション（10秒後）
-    setTimeout(() => {
-      asteriskMock.simulateCallEnd(result.ActionID, 'ANSWERED', 10);
-    }, 10000);
+    // 通話終了のシミュレーション（モックモードの場合）
+    if (mockMode) {
+      setTimeout(() => {
+        asterisk.simulateCallEnd(result.ActionID, 'ANSWERED', 10);
+        
+        // 通話ログを更新
+        db.query(`
+          UPDATE call_logs
+          SET end_time = NOW(), duration = 10, status = 'ANSWERED'
+          WHERE call_id = ?
+        `, [result.ActionID]);
+        
+      }, 10000);
+    }
     
   } catch (error) {
     logger.error('テスト発信エラー:', error);

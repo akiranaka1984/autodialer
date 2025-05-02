@@ -1,6 +1,7 @@
 // frontend/src/components/CallerIDManagement.js
 import React, { useState, useEffect } from 'react';
-import { Phone, Edit, Trash2, Check, X } from 'lucide-react';
+import { Phone, Edit, Trash2, Check, X, Upload } from 'lucide-react';
+import CallerIDImport from './CallerIDImport';
 
 const CallerIDManagement = () => {
   const [callerIds, setCallerIds] = useState([]);
@@ -19,6 +20,7 @@ const CallerIDManagement = () => {
   const [isEditing, setIsEditing] = useState(false);
   const [submitError, setSubmitError] = useState(null);
   const [successMessage, setSuccessMessage] = useState(null);
+  const [showImport, setShowImport] = useState(false);
 
   // 環境変数からAPIのベースURLを取得
   const apiBaseUrl = process.env.REACT_APP_API_URL || 'http://localhost:5001/api';
@@ -297,7 +299,28 @@ const CallerIDManagement = () => {
       
       {/* 発信者番号リスト */}
       <div className="mb-8">
-        <h2 className="text-xl font-semibold mb-2">登録済み発信者番号</h2>
+        <div className="flex justify-between items-center mb-4">
+          <h2 className="text-xl font-semibold">登録済み発信者番号</h2>
+          <button
+            onClick={() => setShowImport(!showImport)}
+            className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-opacity-50"
+          >
+            {showImport ? 'インポートを閉じる' : 'CSVからインポート'}
+          </button>
+        </div>
+
+        {/* インポートフォーム */}
+        {showImport && (
+          <div className="mb-6">
+            <CallerIDImport 
+              onImportComplete={() => {
+                setShowImport(false);
+                fetchCallerIds();
+              }} 
+            />
+          </div>
+        )}
+        
         {callerIds.length === 0 ? (
           <p className="text-gray-500">登録されている発信者番号はありません</p>
         ) : (
