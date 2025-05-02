@@ -28,7 +28,7 @@ const Layout = ({ user, onLogout }) => {
         <div className="flex items-center justify-between p-4 text-white">
           <div className="flex items-center">
             <Phone className="h-8 w-8 mr-2" />
-            <span className="text-lg font-bold">オートコーラー</span>
+            <span className="text-lg font-bold">Auto Caller</span>
           </div>
           <button className="md:hidden" onClick={toggleSidebar}>
             <X className="h-6 w-6" />

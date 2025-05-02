@@ -12,13 +12,23 @@ require('dotenv').config();
 const app = express();
 const PORT = process.env.PORT || 5000;
 
-// ミドルウェア
-app.use(cors());
+// CORS設定のカスタマイズ
+app.use(cors({
+  // すべてのオリジンを許可（本番環境では制限することをお勧めします）
+  origin: ['http://localhost:3003', 'http://frontend:3000'],
+  // 許可するHTTPメソッド
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
+  // リクエストヘッダーに認証情報を含める許可
+  credentials: true,
+  // 許可するヘッダー
+  allowedHeaders: ['Content-Type', 'Authorization']
+}));
+
 app.use(express.json());
 
-// リクエストロギングミドルウェア
+// リクエストロギングミドルウェア - デバッグ用に詳細なログを追加
 app.use((req, res, next) => {
-  logger.debug(`${req.method} ${req.url}`);
+  logger.debug(`${req.method} ${req.url} - Origin: ${req.headers.origin || 'none'}`);
   next();
 });
 
@@ -27,9 +37,9 @@ app.get('/', (req, res) => {
   res.json({ message: 'オートコールシステムAPI稼働中' });
 });
 
-// ヘルスチェックエンドポイント
+// ヘルスチェックエンドポイント - CORSのテストにも使用可能
 app.get('/health', (req, res) => {
-  res.json({ status: 'ok', timestamp: new Date() });
+  res.json({ status: 'ok', timestamp: new Date(), cors: 'enabled' });
 });
 
 // 利用可能なルートを確認して使用
@@ -96,6 +106,11 @@ try {
   logger.warn('統計APIの読み込みに失敗しました:', error.message);
 }
 
+// 404エラーハンドリング - すべてのルートに一致しなかった場合
+app.use((req, res, next) => {
+  res.status(404).json({ message: '要求されたリソースが見つかりません' });
+});
+
 // エラーハンドリングミドルウェア
 app.use((err, req, res, next) => {
   logger.error('アプリケーションエラー:', err);
@@ -118,7 +133,7 @@ const startServer = async () => {
     }
     
     // サーバー起動
-    app.listen(PORT, () => {
+    app.listen(PORT, '0.0.0.0', () => {  // 0.0.0.0でリッスンしてすべてのインターフェースでアクセスを許可
       logger.info(`サーバーが起動しました: http://localhost:${PORT}`);
       logger.info(`発信者番号API: http://localhost:${PORT}/api/caller-ids`);
       logger.info(`テスト発信API: http://localhost:${PORT}/api/calls/test`);

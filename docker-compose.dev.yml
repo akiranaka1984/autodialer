@@ -27,15 +27,18 @@ services:
       context: ./frontend
       dockerfile: Dockerfile.dev
     ports:
-      - "3003:3003"  # 外部ポートを3003に変更
+      - "3003:3000"  # 外部ポートを3003に変更
     volumes:
       - ./frontend:/app
       - /app/node_modules
     environment:
       NODE_ENV: development
-      REACT_APP_API_URL: http://localhost:5001/api
+      REACT_APP_API_URL: http://backend:5000/api
       CHOKIDAR_USEPOLLING: "true"
+      WDS_SOCKET_HOST: localhost
       WDS_SOCKET_PORT: 3003
+      DANGEROUSLY_DISABLE_HOST_CHECK: true  # 開発環境のみ
+      PORT : 3000
       HOST: "0.0.0.0"
     depends_on:
       - backend

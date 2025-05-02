@@ -1,3 +1,4 @@
+// frontend/src/components/CallerIDManagement.js
 import React, { useState, useEffect } from 'react';
 import { Phone, Edit, Trash2, Check, X } from 'lucide-react';
 
@@ -19,6 +20,9 @@ const CallerIDManagement = () => {
   const [submitError, setSubmitError] = useState(null);
   const [successMessage, setSuccessMessage] = useState(null);
 
+  // 環境変数からAPIのベースURLを取得
+  const apiBaseUrl = process.env.REACT_APP_API_URL || 'http://localhost:5001/api';
+
   // 発信者番号一覧を取得
   useEffect(() => {
     fetchCallerIds();
@@ -28,7 +32,26 @@ const CallerIDManagement = () => {
     setLoading(true);
     try {
       const token = localStorage.getItem('token');
-      const response = await fetch('/api/caller-ids', {
+      
+      // 開発環境でモックデータを使用するオプション
+      if (process.env.NODE_ENV === 'development' && window.location.hostname === 'localhost') {
+        console.log('開発環境でモックデータを使用');
+        // モックデータのセット
+        setTimeout(() => {
+          const mockData = [
+            { id: 1, number: '0312345678', description: '東京オフィス', provider: 'SIP Provider A', active: true },
+            { id: 2, number: '0312345679', description: '大阪オフィス', provider: 'SIP Provider A', active: true },
+            { id: 3, number: '0501234567', description: 'マーケティング部', provider: 'Twilio', active: false }
+          ];
+          setCallerIds(mockData);
+          setLoading(false);
+        }, 500);
+        return;
+      }
+      
+      console.log('API呼び出し:', `${apiBaseUrl}/caller-ids`);
+      
+      const response = await fetch(`${apiBaseUrl}/caller-ids`, {
         headers: {
           'Authorization': `Bearer ${token}`
         }
@@ -42,6 +65,7 @@ const CallerIDManagement = () => {
       setCallerIds(data);
       setError(null);
     } catch (err) {
+      console.error('API呼び出しエラー:', err);
       setError(err.message);
     } finally {
       setLoading(false);
@@ -94,11 +118,37 @@ const CallerIDManagement = () => {
       const token = localStorage.getItem('token');
       const isUpdate = formData.id !== null;
       
+      // 開発環境でモックデータを使用するオプション
+      if (process.env.NODE_ENV === 'development' && window.location.hostname === 'localhost') {
+        console.log('開発環境でモックデータを使用 - 保存処理');
+        // モックデータのセット
+        setTimeout(() => {
+          if (isUpdate) {
+            // 更新処理のシミュレーション
+            const updatedCallerId = { ...formData };
+            setCallerIds(callerIds.map(c => c.id === updatedCallerId.id ? updatedCallerId : c));
+            setSuccessMessage('発信者番号を更新しました');
+          } else {
+            // 新規作成のシミュレーション
+            const newCallerId = { 
+              ...formData,
+              id: Math.max(...callerIds.map(c => c.id)) + 1
+            };
+            setCallerIds([...callerIds, newCallerId]);
+            setSuccessMessage('新しい発信者番号を登録しました');
+          }
+          resetForm();
+        }, 500);
+        return;
+      }
+      
       const url = isUpdate 
-        ? `/api/caller-ids/${formData.id}`
-        : '/api/caller-ids';
+        ? `${apiBaseUrl}/caller-ids/${formData.id}`
+        : `${apiBaseUrl}/caller-ids`;
       
       const method = isUpdate ? 'PUT' : 'POST';
+      
+      console.log('API呼び出し:', url, method);
       
       const response = await fetch(url, {
         method,
@@ -126,6 +176,7 @@ const CallerIDManagement = () => {
       
       resetForm();
     } catch (err) {
+      console.error('保存エラー:', err);
       setSubmitError(err.message);
     }
   };
@@ -138,7 +189,21 @@ const CallerIDManagement = () => {
     
     try {
       const token = localStorage.getItem('token');
-      const response = await fetch(`/api/caller-ids/${id}`, {
+      
+      // 開発環境でモックデータを使用するオプション
+      if (process.env.NODE_ENV === 'development' && window.location.hostname === 'localhost') {
+        console.log('開発環境でモックデータを使用 - 削除処理');
+        // モックデータのセット
+        setTimeout(() => {
+          setCallerIds(callerIds.filter(c => c.id !== id));
+          setSuccessMessage('発信者番号を削除しました');
+        }, 500);
+        return;
+      }
+      
+      console.log('API呼び出し:', `${apiBaseUrl}/caller-ids/${id}`, 'DELETE');
+      
+      const response = await fetch(`${apiBaseUrl}/caller-ids/${id}`, {
         method: 'DELETE',
         headers: {
           'Authorization': `Bearer ${token}`
@@ -153,6 +218,7 @@ const CallerIDManagement = () => {
       setCallerIds(callerIds.filter(c => c.id !== id));
       setSuccessMessage('発信者番号を削除しました');
     } catch (err) {
+      console.error('削除エラー:', err);
       setSubmitError(err.message);
     }
   };
@@ -163,7 +229,22 @@ const CallerIDManagement = () => {
     
     try {
       const token = localStorage.getItem('token');
-      const response = await fetch(`/api/caller-ids/${id}`, {
+      
+      // 開発環境でモックデータを使用するオプション
+      if (process.env.NODE_ENV === 'development' && window.location.hostname === 'localhost') {
+        console.log('開発環境でモックデータを使用 - ステータス切り替え');
+        // モックデータのセット
+        setTimeout(() => {
+          const updatedCallerId = { ...callerId, active: !callerId.active };
+          setCallerIds(callerIds.map(c => c.id === id ? updatedCallerId : c));
+          setSuccessMessage(`発信者番号を${updatedCallerId.active ? '有効' : '無効'}にしました`);
+        }, 500);
+        return;
+      }
+      
+      console.log('API呼び出し:', `${apiBaseUrl}/caller-ids/${id}`, 'PUT');
+      
+      const response = await fetch(`${apiBaseUrl}/caller-ids/${id}`, {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
@@ -184,6 +265,7 @@ const CallerIDManagement = () => {
       setCallerIds(callerIds.map(c => c.id === id ? updatedCallerId : c));
       setSuccessMessage(`発信者番号を${updatedCallerId.active ? '有効' : '無効'}にしました`);
     } catch (err) {
+      console.error('ステータス切り替えエラー:', err);
       setSubmitError(err.message);
     }
   };

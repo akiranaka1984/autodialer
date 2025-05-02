@@ -12,6 +12,9 @@ const TestCall = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
+  // 環境変数からAPIのベースURLを取得
+  const apiBaseUrl = process.env.REACT_APP_API_URL || 'http://localhost:5001/api';
+
   // 発信者番号の一覧を取得
   useEffect(() => {
     const fetchCallerIds = async () => {
@@ -19,7 +22,27 @@ const TestCall = () => {
         setLoading(true);
         const token = localStorage.getItem('token');
         
-        const response = await fetch('/api/caller-ids?active=true', {
+        // 開発環境でモックデータを使用するオプション
+        if (process.env.NODE_ENV === 'development' && window.location.hostname === 'localhost') {
+          console.log('開発環境でモックデータを使用');
+          // モックデータのセット
+          setTimeout(() => {
+            const mockData = [
+              { id: 1, number: '0312345678', description: '東京オフィス', active: true },
+              { id: 2, number: '0312345679', description: '大阪オフィス', active: true }
+            ];
+            setCallerIds(mockData);
+            if (mockData.length > 0) {
+              setSelectedCallerId(mockData[0].id);
+            }
+            setLoading(false);
+          }, 500);
+          return;
+        }
+        
+        console.log('API呼び出し:', `${apiBaseUrl}/caller-ids?active=true`);
+        
+        const response = await fetch(`${apiBaseUrl}/caller-ids?active=true`, {
           headers: {
             'Authorization': `Bearer ${token}`
           }
@@ -39,6 +62,7 @@ const TestCall = () => {
         
         setError(null);
       } catch (err) {
+        console.error('API呼び出しエラー:', err);
         setError(err.message);
       } finally {
         setLoading(false);
@@ -46,7 +70,7 @@ const TestCall = () => {
     };
     
     fetchCallerIds();
-  }, []);
+  }, [apiBaseUrl]);
 
   // 電話番号の入力処理
   const handlePhoneNumberChange = (e) => {
@@ -80,7 +104,40 @@ const TestCall = () => {
       
       const token = localStorage.getItem('token');
       
-      const response = await fetch('/api/calls/test', {
+      // 開発環境でモックデータを使用するオプション
+      if (process.env.NODE_ENV === 'development' && window.location.hostname === 'localhost') {
+        console.log('開発環境でモックデータを使用 - テスト発信');
+        // モックデータのセット
+        setTimeout(() => {
+          const mockCallDetails = {
+            callId: `mock-${Date.now()}`,
+            success: true,
+            message: 'テスト発信が開始されました（モックモード）',
+            data: {
+              ActionID: `mock-${Date.now()}`,
+              Response: 'Success',
+              Message: 'Originate successfully queued (MOCK MODE)'
+            }
+          };
+          setCallDetails(mockCallDetails);
+          setCallStatus('success');
+          setMessage('テスト発信が開始されました（モックモード）');
+          
+          // 10秒後に通話結果をシミュレーション
+          setTimeout(() => {
+            setCallDetails(prev => ({
+              ...prev,
+              status: 'ANSWERED',
+              duration: '10秒'
+            }));
+          }, 10000);
+        }, 1000);
+        return;
+      }
+      
+      console.log('API呼び出し:', `${apiBaseUrl}/calls/test`);
+      
+      const response = await fetch(`${apiBaseUrl}/calls/test`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -114,6 +171,7 @@ const TestCall = () => {
       }, 10000);
       
     } catch (error) {
+      console.error('テスト発信エラー:', error);
       setCallStatus('error');
       setMessage(`エラー: ${error.message}`);
       setCallDetails(null);
