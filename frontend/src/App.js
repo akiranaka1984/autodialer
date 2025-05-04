@@ -140,7 +140,7 @@ function App() {
             {/* オペレーター用ルート */}
             {user?.role === 'operator' && (
               <Route path="/operator" element={<OperatorLayout user={user} onLogout={handleLogout} />}>
-                <Route index element={<OperatorMain />} />
+                <Route index element={<OperatorMainDashboard />} />
                 <Route path="history" element={<OperatorHistory />} />
                 <Route path="performance" element={<OperatorPerformance />} />
                 <Route path="*" element={<NotFound />} />
