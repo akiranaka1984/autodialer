@@ -187,6 +187,9 @@ const TestCall = () => {
         callerID: selectedCallerId,
         mockMode: mode === 'mock'
       };
+      // API呼び出し前にデバッグ情報を出力
+      console.log('送信データ:', callData);
+      console.log('現在のモード:', mode);
       
       // 開発環境でモックデータを使用するオプション
       if (process.env.NODE_ENV === 'development' && window.location.hostname === 'localhost') {

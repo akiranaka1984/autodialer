@@ -15,13 +15,20 @@ services:
       MYSQL_USER: root
       MYSQL_PASSWORD: password
       MYSQL_DATABASE: autodialer
-      MOCK_ASTERISK: "true"
+      # モックモードを無効化してTwilioを使用
+      MOCK_ASTERISK: "false"
+      USE_TWILIO: "true"
+      # Twilio設定
+      TWILIO_ACCOUNT_SID: ${TWILIO_ACCOUNT_SID}
+      TWILIO_AUTH_TOKEN: ${TWILIO_AUTH_TOKEN}
+      TWILIO_PHONE_NUMBER: ${TWILIO_PHONE_NUMBER}
+      PUBLIC_URL: ${PUBLIC_URL}
     depends_on:
       - mysql
     networks:
       - autodialer-network
 
-  # フロントエンドサーバー
+  # フロントエンドサーバー（変更なし）
   frontend:
     build:
       context: ./frontend
@@ -45,7 +52,7 @@ services:
     networks:
       - autodialer-network
 
-  # データベース
+  # データベース（変更なし）
   mysql:
     image: mysql:8.0
     platform: linux/arm64
@@ -59,8 +66,6 @@ services:
       - mysql_data:/var/lib/mysql
       # 初期化スクリプトを追加
       - ./backend/database/schema.sql:/docker-entrypoint-initdb.d/1-schema.sql
-      # サンプルデータがある場合は追加
-      # - ./backend/database/sample-data.sql:/docker-entrypoint-initdb.d/2-sample-data.sql
     networks:
       - autodialer-network
 

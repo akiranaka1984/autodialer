@@ -73,7 +73,7 @@ const Login = ({ onLogin }) => {
             <Phone className="h-12 w-12 text-blue-600" />
           </div>
           <h2 className="mt-6 text-3xl font-extrabold text-gray-900">
-            オートコールシステム
+            Auto Caller
           </h2>
           <p className="mt-2 text-sm text-gray-600">
             アカウント情報を入力してログイン

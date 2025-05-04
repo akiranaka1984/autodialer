@@ -1,10 +1,20 @@
 const logger = require('../services/logger');
-const asteriskMock = require('../services/asteriskMock');
+const asterisk = require('../services/asterisk');
+const db = require('../services/database');
 
 // テスト発信
 exports.testCall = async (req, res) => {
   try {
     const { phoneNumber, callerID, mockMode } = req.body;
+    
+    // デバッグ情報を追加
+    logger.info('テスト発信リクエスト受信:', {
+      phoneNumber,
+      callerID,
+      mockMode,
+      環境変数_MOCK_ASTERISK: process.env.MOCK_ASTERISK,
+      環境変数_USE_TWILIO: process.env.USE_TWILIO
+    });
     
     if (!phoneNumber) {
       return res.status(400).json({ message: '発信先電話番号は必須です' });
@@ -14,6 +24,7 @@ exports.testCall = async (req, res) => {
     const originalMockMode = process.env.MOCK_ASTERISK;
     if (mockMode !== undefined) {
       process.env.MOCK_ASTERISK = mockMode ? 'true' : 'false';
+      logger.info(`テスト用にMOCK_ASTERISKを${process.env.MOCK_ASTERISK}に変更`);
     }
     
     // 発信者番号の検証（指定された場合）

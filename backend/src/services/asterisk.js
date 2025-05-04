@@ -2,13 +2,21 @@
 const AmiClient = require('asterisk-ami-client');
 const logger = require('./logger');
 const { EventEmitter } = require('events');
+const twilioService = require('./twilioService');
 
 class AsteriskService extends EventEmitter {
   constructor() {
     super();
     this.connected = false;
     this.mockMode = process.env.MOCK_ASTERISK === 'true';
+    this.useTwilio = process.env.USE_TWILIO === 'true';
     this.client = null;
+    
+    // Twilioイベントのリスニング
+    if (this.useTwilio) {
+      twilioService.on('callStarted', (data) => this.emit('callStarted', data));
+      twilioService.on('callEnded', (data) => this.emit('callEnded', data));
+    }
   }
 
   async connect() {
@@ -16,6 +24,10 @@ class AsteriskService extends EventEmitter {
       logger.info('Asteriskサービスにモックモードで接続しました');
       this.connected = true;
       return true;
+    }
+    
+    if (this.useTwilio) {
+      return await twilioService.connect();
     }
 
     try {
@@ -95,6 +107,10 @@ class AsteriskService extends EventEmitter {
         Response: 'Success',
         Message: 'Originate successfully queued (MOCK MODE)'
       };
+    }
+    
+    if (this.useTwilio) {
+      return await twilioService.originate(params);
     }
 
     if (!this.connected || !this.client) {
