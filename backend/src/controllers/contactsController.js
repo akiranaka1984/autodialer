@@ -587,3 +587,38 @@ exports.removeFromDncList = async (req, res) => {
     res.status(500).json({ message: `エラー: ${error.message}` });
   }
 };
+
+// CSVテンプレートのダウンロード
+exports.downloadTemplate = (req, res) => {
+  const template = 'phone,name,company\n0312345678,山田太郎,株式会社サンプル\n0398765432,佐藤花子,テスト工業\n';
+  
+  res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+  res.setHeader('Content-Disposition', 'attachment; filename=contacts_template.csv');
+  res.send('\uFEFF' + template); // BOM付きUTF-8
+};
+
+// 連絡先のステータス一括更新
+exports.batchUpdateStatus = async (req, res) => {
+  try {
+    const { contactIds, status } = req.body;
+    
+    if (!Array.isArray(contactIds) || contactIds.length === 0) {
+      return res.status(400).json({ message: '連絡先IDリストが必要です' });
+    }
+    
+    const validStatuses = ['pending', 'completed', 'failed', 'dnc'];
+    if (!validStatuses.includes(status)) {
+      return res.status(400).json({ message: '無効なステータスです' });
+    }
+    
+    await db.query(
+      'UPDATE contacts SET status = ? WHERE id IN (?)',
+      [status, contactIds]
+    );
+    
+    res.json({ message: 'ステータスを更新しました' });
+  } catch (error) {
+    logger.error('ステータス一括更新エラー:', error);
+    res.status(500).json({ message: 'エラーが発生しました' });
+  }
+};

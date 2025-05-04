@@ -13,15 +13,16 @@
     "react-router-dom": "^7.5.3",
     "react-scripts": "5.0.1",
     "recharts": "^2.15.3",
-    "web-vitals": "^2.1.4"
+    "web-vitals": "^2.1.4",
+    "ws": "^8.18.2"
   },
   "scripts": {
-  "start": "DANGEROUSLY_DISABLE_HOST_CHECK=true WDS_SOCKET_HOST=localhost WDS_SOCKET_PORT=3003 react-scripts start",
-  "build": "react-scripts build",
-  "test": "react-scripts test",
-  "eject": "react-scripts eject"
-},
-"proxy": "http://backend:5000",
+    "start": "DANGEROUSLY_DISABLE_HOST_CHECK=true WDS_SOCKET_HOST=localhost WDS_SOCKET_PORT=3003 react-scripts start",
+    "build": "react-scripts build",
+    "test": "react-scripts test",
+    "eject": "react-scripts eject"
+  },
+  "proxy": "http://backend:5000",
   "eslintConfig": {
     "extends": [
       "react-app",

@@ -1,9 +1,11 @@
 // backend/src/index.js
 const express = require('express');
 const cors = require('cors');
+const http = require('http');
 const logger = require('./services/logger');
 const db = require('./services/database');
 const asterisk = require('./services/asterisk');
+const websocketService = require('./services/websocketService');
 
 // 環境変数の読み込み
 require('dotenv').config();
@@ -11,6 +13,12 @@ require('dotenv').config();
 // Express アプリケーションの初期化
 const app = express();
 const PORT = process.env.PORT || 5000;
+
+// HTTPサーバーの作成
+const server = http.createServer(app);
+
+// WebSocketサービスの初期化
+websocketService.initialize(server);
 
 // CORS設定のカスタマイズ
 app.use(cors({
@@ -106,6 +114,15 @@ try {
   logger.warn('統計APIの読み込みに失敗しました:', error.message);
 }
 
+// レポートルートを追加
+try {
+  const reportRoutes = require('./routes/reports');
+  app.use('/api/reports', reportRoutes);
+  logger.info('レポートAPIを有効化しました');
+} catch (error) {
+  logger.warn('レポートAPIの読み込みに失敗しました:', error.message);
+}
+
 // 404エラーハンドリング - すべてのルートに一致しなかった場合
 app.use((req, res, next) => {
   res.status(404).json({ message: '要求されたリソースが見つかりません' });
@@ -132,8 +149,8 @@ const startServer = async () => {
       logger.info('Asteriskサービスはモックモードで実行されています');
     }
     
-    // サーバー起動
-    app.listen(PORT, '0.0.0.0', () => {  // 0.0.0.0でリッスンしてすべてのインターフェースでアクセスを許可
+    // サーバー起動（HTTPサーバーインスタンスを使用）
+    server.listen(PORT, '0.0.0.0', () => {
       logger.info(`サーバーが起動しました: http://localhost:${PORT}`);
       logger.info(`発信者番号API: http://localhost:${PORT}/api/caller-ids`);
       logger.info(`テスト発信API: http://localhost:${PORT}/api/calls/test`);

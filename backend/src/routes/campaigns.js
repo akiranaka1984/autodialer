@@ -238,4 +238,11 @@ router.patch('/:id/status', auth, async (req, res) => {
   }
 });
 
+// 新しいルートを追加
+router.get('/:id/details', auth, campaignsController.getCampaignDetails);
+router.post('/:id/start', auth, campaignsController.startCampaign);
+router.post('/:id/pause', auth, campaignsController.pauseCampaign);
+router.post('/:id/resume', auth, campaignsController.resumeCampaign);
+
+
 module.exports = router;

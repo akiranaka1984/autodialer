@@ -10,6 +10,8 @@ import CallerIDManagement from './components/CallerIDManagement';
 import ContactsUpload from './components/ContactsUpload';
 import CampaignList from './components/CampaignList';
 import CampaignForm from './components/CampaignForm';
+import CampaignDetail from './components/CampaignDetail';
+import ReportDashboard from './components/ReportDashboard';
 import Layout from './components/Layout';
 import Login from './components/Login';
 import NotFound from './components/NotFound';
@@ -107,15 +109,17 @@ function App() {
         {/* 認証が必要なルート */}
         {isAuthenticated ? (
           <Route path="/" element={<Layout user={user} onLogout={handleLogout} />}>
-          <Route index element={<Dashboard />} />
-          <Route path="test-call" element={<TestCall />} />
-          <Route path="caller-ids" element={<CallerIDManagement />} />
-          <Route path="campaigns" element={<CampaignList />} />
-          <Route path="campaigns/new" element={<CampaignForm />} />
-          <Route path="campaigns/:campaignId/edit" element={<CampaignForm />} />
-          <Route path="campaigns/:campaignId/contacts/upload" element={<ContactsUpload />} />
-          <Route path="*" element={<NotFound />} />
-        </Route>
+            <Route index element={<Dashboard />} />
+            <Route path="test-call" element={<TestCall />} />
+            <Route path="caller-ids" element={<CallerIDManagement />} />
+            <Route path="campaigns" element={<CampaignList />} />
+            <Route path="campaigns/new" element={<CampaignForm />} />
+            <Route path="campaigns/:campaignId/edit" element={<CampaignForm />} />
+            <Route path="campaigns/:id" element={<CampaignDetail />} />
+            <Route path="campaigns/:campaignId/contacts/upload" element={<ContactsUpload />} />
+            <Route path="reports" element={<ReportDashboard />} />
+            <Route path="*" element={<NotFound />} />
+          </Route>
         ) : (
           // 認証されていない場合のルート
           <>
