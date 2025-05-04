@@ -366,6 +366,51 @@ class DialerService {
       return false;
     }
   }
+  // オペレーターへの通話転送
+async transferToOperator(callId, skills = []) {
+  try {
+    // 利用可能なオペレーターを検索
+    const [availableOperators] = await db.query(`
+      SELECT o.*, u.name
+      FROM operators o
+      JOIN users u ON o.user_id = u.id
+      WHERE o.status = 'available'
+      ${skills.length > 0 ? 'AND JSON_CONTAINS(o.skills, ?)' : ''}
+      ORDER BY o.priority DESC
+      LIMIT 1
+    `, skills.length > 0 ? [JSON.stringify(skills)] : []);
+    
+    if (availableOperators.length === 0) {
+      logger.warn('利用可能なオペレーターがいません');
+      return false;
+    }
+    
+    const operator = availableOperators[0];
+    
+    // オペレーターのステータスを更新
+    await db.query(
+      'UPDATE operators SET status = "busy", current_call_id = ? WHERE id = ?',
+      [callId, operator.id]
+    );
+    
+    // 通話を転送
+    // Asterisk APIを使用して転送を実行
+    await asterisk.transfer(callId, operator.extension);
+    
+    // オペレーター通話ログを作成
+    await db.query(
+      'INSERT INTO operator_call_logs (operator_id, call_log_id, start_time) VALUES (?, ?, NOW())',
+      [operator.id, callId]
+    );
+    
+    return true;
+  } catch (error) {
+    logger.error('オペレーター転送エラー:', error);
+    return false;
+  }
+}
+
+
 }
 
 // シングルトンインスタンス

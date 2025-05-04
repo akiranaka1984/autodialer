@@ -12,13 +12,19 @@ import CampaignList from './components/CampaignList';
 import CampaignForm from './components/CampaignForm';
 import CampaignDetail from './components/CampaignDetail';
 import ReportDashboard from './components/ReportDashboard';
-import CallHistory from './components/CallHistory'; // 追加
+import CallHistory from './components/CallHistory';
 import Layout from './components/Layout';
 import Login from './components/Login';
 import NotFound from './components/NotFound';
 import DNCManagement from './components/DNCManagement';
 import SystemSettings from './components/SystemSettings';
 import OperatorDashboard from './components/OperatorDashboard';
+
+// オペレーターインターフェースのインポート
+import OperatorLayout from './components/OperatorInterface/OperatorLayout';
+import OperatorDashboard as OperatorMain from './components/OperatorInterface/OperatorDashboard';
+import OperatorHistory from './components/OperatorInterface/OperatorHistory';
+import OperatorPerformance from './components/OperatorInterface/OperatorPerformance';
 
 // スタイルシートのインポート
 import './App.css';
@@ -46,7 +52,7 @@ function App() {
           setIsAuthenticated(true);
           setUser({ 
             name: '開発ユーザー',
-            role: 'admin'
+            role: 'admin' // または 'operator' でテスト
           });
           setLoading(false);
           return;
@@ -110,22 +116,51 @@ function App() {
       <Routes>
         {/* 認証が必要なルート */}
         {isAuthenticated ? (
-          <Route path="/" element={<Layout user={user} onLogout={handleLogout} />}>
-            <Route index element={<Dashboard />} />
-            <Route path="test-call" element={<TestCall />} />
-            <Route path="caller-ids" element={<CallerIDManagement />} />
-            <Route path="campaigns" element={<CampaignList />} />
-            <Route path="campaigns/new" element={<CampaignForm />} />
-            <Route path="campaigns/:campaignId/edit" element={<CampaignForm />} />
-            <Route path="campaigns/:id" element={<CampaignDetail />} />
-            <Route path="campaigns/:campaignId/contacts/upload" element={<ContactsUpload />} />
-            <Route path="reports" element={<ReportDashboard />} />
-            <Route path="calls" element={<CallHistory />} /> {/* 追加 */}
-            <Route path="dnc" element={<DNCManagement />} />
-            <Route path="operators" element={<OperatorDashboard />} />
-            <Route path="settings" element={<SystemSettings />} />
-            <Route path="*" element={<NotFound />} />
-          </Route>
+          <>
+            {/* 管理者用ルート */}
+            {user?.role === 'admin' && (
+              <Route path="/" element={<Layout user={user} onLogout={handleLogout} />}>
+                <Route index element={<Dashboard />} />
+                <Route path="test-call" element={<TestCall />} />
+                <Route path="caller-ids" element={<CallerIDManagement />} />
+                <Route path="campaigns" element={<CampaignList />} />
+                <Route path="campaigns/new" element={<CampaignForm />} />
+                <Route path="campaigns/:campaignId/edit" element={<CampaignForm />} />
+                <Route path="campaigns/:id" element={<CampaignDetail />} />
+                <Route path="campaigns/:campaignId/contacts/upload" element={<ContactsUpload />} />
+                <Route path="reports" element={<ReportDashboard />} />
+                <Route path="calls" element={<CallHistory />} />
+                <Route path="dnc" element={<DNCManagement />} />
+                <Route path="operators" element={<OperatorDashboard />} />
+                <Route path="settings" element={<SystemSettings />} />
+                <Route path="*" element={<NotFound />} />
+              </Route>
+            )}
+            
+            {/* オペレーター用ルート */}
+            {user?.role === 'operator' && (
+              <Route path="/operator" element={<OperatorLayout user={user} onLogout={handleLogout} />}>
+                <Route index element={<OperatorMain />} />
+                <Route path="history" element={<OperatorHistory />} />
+                <Route path="performance" element={<OperatorPerformance />} />
+                <Route path="*" element={<NotFound />} />
+              </Route>
+            )}
+            
+            {/* ルート権限によるリダイレクト */}
+            <Route path="/" element={
+              user?.role === 'operator' ? <Navigate to="/operator" replace /> : <Navigate to="/dashboard" replace />
+            } />
+            
+            {/* 権限のないユーザーのリダイレクト */}
+            <Route path="/operator/*" element={
+              user?.role === 'operator' ? null : <Navigate to="/" replace />
+            } />
+            
+            <Route path="/*" element={
+              user?.role === 'admin' ? null : <Navigate to="/operator" replace />
+            } />
+          </>
         ) : (
           // 認証されていない場合のルート
           <>

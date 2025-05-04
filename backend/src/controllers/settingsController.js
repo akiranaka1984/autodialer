@@ -26,7 +26,14 @@ exports.getSettings = async (req, res) => {
       recordCalls: 'false',
       enableSMS: 'false',
       smsProvider: '',
-      smsApiKey: ''
+      smsApiKey: '',
+      // オペレーター関連の設定を追加
+      operatorAutoAssign: 'true',
+      operatorMaxWaitTime: '30',
+      operatorCallbackEnabled: 'false',
+      operatorWorkingHours: '09:00-18:00',
+      operatorDefaultPriority: '1',
+      operatorMaxConcurrentCalls: '3'
     };
 
     // 現在の設定を取得
@@ -60,7 +67,14 @@ exports.getSettings = async (req, res) => {
       recordCalls: currentSettings.recordCalls === 'true',
       enableSMS: currentSettings.enableSMS === 'true',
       smsProvider: currentSettings.smsProvider || '',
-      smsApiKey: currentSettings.smsApiKey || ''
+      smsApiKey: currentSettings.smsApiKey || '',
+      // オペレーター設定を追加
+      operatorAutoAssign: currentSettings.operatorAutoAssign === 'true',
+      operatorMaxWaitTime: parseInt(currentSettings.operatorMaxWaitTime) || 30,
+      operatorCallbackEnabled: currentSettings.operatorCallbackEnabled === 'true',
+      operatorWorkingHours: currentSettings.operatorWorkingHours || '09:00-18:00',
+      operatorDefaultPriority: parseInt(currentSettings.operatorDefaultPriority) || 1,
+      operatorMaxConcurrentCalls: parseInt(currentSettings.operatorMaxConcurrentCalls) || 3
     };
 
     res.json(settings);
@@ -69,6 +83,7 @@ exports.getSettings = async (req, res) => {
     res.status(500).json({ message: 'サーバーエラーが発生しました' });
   }
 };
+
 
 // 設定の更新
 exports.updateSettings = async (req, res) => {

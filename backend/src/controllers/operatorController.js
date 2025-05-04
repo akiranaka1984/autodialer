@@ -2,6 +2,7 @@
 
 const db = require('../services/database');
 const logger = require('../services/logger');
+const websocketService = require('../services/websocketService');
 
 // オペレーター一覧取得
 exports.getAllOperators = async (req, res) => {
@@ -54,6 +55,9 @@ exports.updateOperatorStatus = async (req, res) => {
       'INSERT INTO operator_status_logs (operator_id, old_status, new_status, reason) VALUES (?, ?, ?, ?)',
       [id, currentOperator[0].status, status, reason]
     );
+    
+    // WebSocketで通知
+    websocketService.notifyOperatorStatusChange(id, status, reason);
     
     res.json({ message: 'ステータスが更新されました' });
   } catch (error) {
@@ -137,6 +141,85 @@ exports.assignOperator = async (req, res) => {
     res.json({ operator });
   } catch (error) {
     logger.error('オペレーター割り当てエラー:', error);
+    res.status(500).json({ message: 'サーバーエラーが発生しました' });
+  }
+};
+// オペレーター自身のステータス更新
+exports.updateOperatorStatus = async (req, res) => {
+  try {
+    const { status } = req.body;
+    const userId = req.user.id;
+    
+    // ユーザーIDからオペレーターIDを取得
+    const [operator] = await db.query(
+      'SELECT id FROM operators WHERE user_id = ?',
+      [userId]
+    );
+    
+    if (operator.length === 0) {
+      return res.status(404).json({ message: 'オペレーターが見つかりません' });
+    }
+    
+    // ステータスを更新
+    await db.query(
+      'UPDATE operators SET status = ?, updated_at = NOW() WHERE id = ?',
+      [status, operator[0].id]
+    );
+    
+    // WebSocketで通知
+    websocketService.notifyOperatorStatusChange(operator[0].id, status);
+    
+    res.json({ message: 'ステータスが更新されました' });
+  } catch (error) {
+    logger.error('オペレーターステータス更新エラー:', error);
+    res.status(500).json({ message: 'サーバーエラーが発生しました' });
+  }
+};
+
+// 通話アクションの処理
+exports.handleCallAction = async (req, res) => {
+  try {
+    const { action } = req.params;
+    const { callId } = req.body;
+    const userId = req.user.id;
+    
+    const [operator] = await db.query(
+      'SELECT id FROM operators WHERE user_id = ?',
+      [userId]
+    );
+    
+    if (operator.length === 0) {
+      return res.status(404).json({ message: 'オペレーターが見つかりません' });
+    }
+    
+    switch (action) {
+      case 'accept':
+        await db.query(
+          'UPDATE operators SET status = "busy", current_call_id = ? WHERE id = ?',
+          [callId, operator[0].id]
+        );
+        break;
+        
+      case 'end':
+        await db.query(
+          'UPDATE operators SET status = "available", current_call_id = NULL WHERE id = ?',
+          [operator[0].id]
+        );
+        
+        // 通話ログを更新
+        await db.query(
+          'UPDATE operator_call_logs SET end_time = NOW(), disposition = "completed" WHERE operator_id = ? AND call_log_id = ?',
+          [operator[0].id, callId]
+        );
+        break;
+        
+      default:
+        return res.status(400).json({ message: '無効なアクションです' });
+    }
+    
+    res.json({ message: `通話アクション ${action} を実行しました` });
+  } catch (error) {
+    logger.error('通話アクションエラー:', error);
     res.status(500).json({ message: 'サーバーエラーが発生しました' });
   }
 };

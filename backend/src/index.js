@@ -180,5 +180,14 @@ try {
   logger.warn('設定APIの読み込みに失敗しました:', error.message);
 }
 
+// オペレーター管理ルート
+try {
+  const operatorRoutes = require('./routes/operators');
+  app.use('/api/operators', operatorRoutes);
+  logger.info('オペレーター管理APIを有効化しました');
+} catch (error) {
+  logger.warn('オペレーター管理APIの読み込みに失敗しました:', error.message);
+}
+
 // サーバー起動
 startServer();

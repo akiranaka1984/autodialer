@@ -12,7 +12,14 @@ const SystemSettings = () => {
     recordCalls: false,
     enableSMS: false,
     smsProvider: '',
-    smsApiKey: ''
+    smsApiKey: '',
+    // オペレーター設定を追加
+    operatorAutoAssign: true,
+    operatorMaxWaitTime: 30,
+    operatorCallbackEnabled: false,
+    operatorWorkingHours: '09:00-18:00',
+    operatorDefaultPriority: 1,
+    operatorMaxConcurrentCalls: 3
   });
   
   const [loading, setLoading] = useState(true);
@@ -44,7 +51,13 @@ const SystemSettings = () => {
             recordCalls: false,
             enableSMS: false,
             smsProvider: '',
-            smsApiKey: ''
+            smsApiKey: '',
+            operatorAutoAssign: true,
+            operatorMaxWaitTime: 30,
+            operatorCallbackEnabled: false,
+            operatorWorkingHours: '09:00-18:00',
+            operatorDefaultPriority: 1,
+            operatorMaxConcurrentCalls: 3
           });
           setLoading(false);
         }, 500);
@@ -322,6 +335,100 @@ const SystemSettings = () => {
                 </div>
               </div>
             )}
+          </div>
+        </div>
+
+        {/* オペレーター設定セクション */}
+        <div className="bg-white shadow-md rounded-lg p-6">
+          <h2 className="text-lg font-semibold mb-4">オペレーター設定</h2>
+          
+          <div className="space-y-4">
+            <div className="flex items-center">
+              <input
+                type="checkbox"
+                name="operatorAutoAssign"
+                checked={settings.operatorAutoAssign}
+                onChange={handleChange}
+                className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
+              />
+              <label className="ml-2 text-sm font-medium text-gray-700">
+                オペレーターの自動割り当てを有効にする
+              </label>
+            </div>
+            
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  最大待ち時間（秒）
+                </label>
+                <input
+                  type="number"
+                  name="operatorMaxWaitTime"
+                  value={settings.operatorMaxWaitTime}
+                  onChange={handleChange}
+                  min="10"
+                  max="300"
+                  className="w-full border rounded-md shadow-sm p-2"
+                />
+              </div>
+              
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  オペレーター業務時間
+                </label>
+                <input
+                  type="text"
+                  name="operatorWorkingHours"
+                  value={settings.operatorWorkingHours}
+                  onChange={handleChange}
+                  placeholder="例: 09:00-18:00"
+                  className="w-full border rounded-md shadow-sm p-2"
+                />
+              </div>
+              
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  デフォルト優先度
+                </label>
+                <input
+                  type="number"
+                  name="operatorDefaultPriority"
+                  value={settings.operatorDefaultPriority}
+                  onChange={handleChange}
+                  min="1"
+                  max="10"
+                  className="w-full border rounded-md shadow-sm p-2"
+                />
+              </div>
+              
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  最大同時通話数
+                </label>
+                <input
+                  type="number"
+                  name="operatorMaxConcurrentCalls"
+                  value={settings.operatorMaxConcurrentCalls}
+                  onChange={handleChange}
+                  min="1"
+                  max="10"
+                  className="w-full border rounded-md shadow-sm p-2"
+                />
+              </div>
+            </div>
+            
+            <div className="flex items-center">
+              <input
+                type="checkbox"
+                name="operatorCallbackEnabled"
+                checked={settings.operatorCallbackEnabled}
+                onChange={handleChange}
+                className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
+              />
+              <label className="ml-2 text-sm font-medium text-gray-700">
+                コールバック機能を有効にする
+              </label>
+            </div>
           </div>
         </div>
 
