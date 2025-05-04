@@ -28,8 +28,31 @@ const SystemSettings = () => {
 
   const fetchSettings = async () => {
     try {
+      setLoading(true);
+      setError(null);
+      
+      // 開発環境のモックデータ
+      if (process.env.NODE_ENV === 'development') {
+        setTimeout(() => {
+          setSettings({
+            defaultCallerID: '',
+            defaultRetryAttempts: 3,
+            defaultMaxConcurrentCalls: 10,
+            defaultWorkingHoursStart: '09:00',
+            defaultWorkingHoursEnd: '18:00',
+            callTimeout: 30,
+            recordCalls: false,
+            enableSMS: false,
+            smsProvider: '',
+            smsApiKey: ''
+          });
+          setLoading(false);
+        }, 500);
+        return;
+      }
+      
       const token = localStorage.getItem('token');
-      const response = await fetch('/api/settings', {
+      const response = await fetch(`${process.env.REACT_APP_API_URL || '/api'}/settings`, {
         headers: { 'Authorization': `Bearer ${token}` }
       });
       
@@ -73,10 +96,19 @@ const SystemSettings = () => {
     setSaving(true);
     setError(null);
     setSuccessMessage(null);
-
+  
     try {
+      // 開発環境のモック処理
+      if (process.env.NODE_ENV === 'development') {
+        setTimeout(() => {
+          setSuccessMessage('設定を保存しました');
+          setSaving(false);
+        }, 1000);
+        return;
+      }
+      
       const token = localStorage.getItem('token');
-      const response = await fetch('/api/settings', {
+      const response = await fetch(`${process.env.REACT_APP_API_URL || '/api'}/settings`, {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',

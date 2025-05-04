@@ -119,3 +119,63 @@ CREATE TABLE IF NOT EXISTS campaign_audio (
   FOREIGN KEY (campaign_id) REFERENCES campaigns(id),
   FOREIGN KEY (audio_file_id) REFERENCES audio_files(id)
 );
+
+-- オペレーター管理テーブル
+CREATE TABLE IF NOT EXISTS operators (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  user_id INT NOT NULL,
+  operator_id VARCHAR(20) UNIQUE NOT NULL, -- 例: OP001, OP002
+  status ENUM('available', 'busy', 'offline', 'break') DEFAULT 'offline',
+  current_call_id VARCHAR(100) NULL,
+  skills JSON, -- 対応可能な分野やスキル
+  max_concurrent_calls INT DEFAULT 1,
+  priority INT DEFAULT 1, -- 優先度（高いほど優先的に割り当て）
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+
+-- オペレーターのシフト管理
+CREATE TABLE IF NOT EXISTS operator_shifts (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  operator_id INT NOT NULL,
+  shift_date DATE NOT NULL,
+  start_time TIME NOT NULL,
+  end_time TIME NOT NULL,
+  break_start TIME,
+  break_end TIME,
+  status ENUM('scheduled', 'active', 'completed', 'cancelled') DEFAULT 'scheduled',
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (operator_id) REFERENCES operators(id) ON DELETE CASCADE,
+  UNIQUE KEY unique_shift (operator_id, shift_date, start_time)
+);
+
+-- オペレーター対応履歴
+CREATE TABLE IF NOT EXISTS operator_call_logs (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  operator_id INT NOT NULL,
+  call_log_id INT NOT NULL,
+  start_time DATETIME NOT NULL,
+  end_time DATETIME,
+  duration INT, -- 秒
+  disposition ENUM('completed', 'transferred', 'dropped', 'voicemail') DEFAULT 'completed',
+  notes TEXT,
+  customer_satisfaction INT, -- 1-5の評価
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (operator_id) REFERENCES operators(id),
+  FOREIGN KEY (call_log_id) REFERENCES call_logs(id)
+);
+
+-- オペレーターステータス履歴
+CREATE TABLE IF NOT EXISTS operator_status_logs (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  operator_id INT NOT NULL,
+  old_status ENUM('available', 'busy', 'offline', 'break'),
+  new_status ENUM('available', 'busy', 'offline', 'break') NOT NULL,
+  reason VARCHAR(255),
+  changed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (operator_id) REFERENCES operators(id)
+);
+
+-- usersテーブルにoperatorロールを追加
+ALTER TABLE users MODIFY role ENUM('admin', 'user', 'operator') DEFAULT 'user';

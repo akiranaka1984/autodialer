@@ -171,5 +171,14 @@ process.on('uncaughtException', (error) => {
   process.exit(1);
 });
 
+// 設定ルート
+try {
+  const settingsRoutes = require('./routes/settings');
+  app.use('/api/settings', settingsRoutes);
+  logger.info('設定APIを有効化しました');
+} catch (error) {
+  logger.warn('設定APIの読み込みに失敗しました:', error.message);
+}
+
 // サーバー起動
 startServer();

@@ -18,6 +18,7 @@ import Login from './components/Login';
 import NotFound from './components/NotFound';
 import DNCManagement from './components/DNCManagement';
 import SystemSettings from './components/SystemSettings';
+import OperatorDashboard from './components/OperatorDashboard';
 
 // スタイルシートのインポート
 import './App.css';
@@ -121,6 +122,7 @@ function App() {
             <Route path="reports" element={<ReportDashboard />} />
             <Route path="calls" element={<CallHistory />} /> {/* 追加 */}
             <Route path="dnc" element={<DNCManagement />} />
+            <Route path="operators" element={<OperatorDashboard />} />
             <Route path="settings" element={<SystemSettings />} />
             <Route path="*" element={<NotFound />} />
           </Route>
