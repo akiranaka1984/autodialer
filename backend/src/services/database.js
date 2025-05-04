@@ -3,7 +3,7 @@ const logger = require('./logger');
 
 let pool;
 
-// database.js内のinitDb関数を修正
+// データベース接続プールの初期化
 const initDb = async (retries = 5, delay = 5000) => {
   let lastError;
   
@@ -16,7 +16,8 @@ const initDb = async (retries = 5, delay = 5000) => {
         database: process.env.MYSQL_DATABASE || 'autodialer',
         waitForConnections: true,
         connectionLimit: 10,
-        queueLimit: 0
+        queueLimit: 0,
+        charset: 'utf8mb4'  // 文字セットをUTF-8に設定
       });
       
       // 接続テスト
@@ -37,6 +38,7 @@ const initDb = async (retries = 5, delay = 5000) => {
   throw lastError;
 };
 
+// プールを取得する関数
 const getPool = async () => {
   if (!pool) {
     await initDb();
@@ -44,6 +46,7 @@ const getPool = async () => {
   return pool;
 };
 
+// クエリを実行する関数
 const query = async (sql, params = []) => {
   const conn = await getPool();
   try {
@@ -55,7 +58,37 @@ const query = async (sql, params = []) => {
   }
 };
 
+// トランザクション関連の関数
+const beginTransaction = async () => {
+  const conn = await getPool();
+  const connection = await conn.getConnection();
+  await connection.beginTransaction();
+  return connection;
+};
+
+const commit = async (connection) => {
+  await connection.commit();
+  connection.release();
+};
+
+const rollback = async (connection) => {
+  await connection.rollback();
+  connection.release();
+};
+
+const close = async () => {
+  if (pool) {
+    await pool.end();
+    pool = null;
+  }
+};
+
 module.exports = {
   initDb,
-  query
+  query,
+  beginTransaction,
+  commit,
+  rollback,
+  close,
+  getPool
 };

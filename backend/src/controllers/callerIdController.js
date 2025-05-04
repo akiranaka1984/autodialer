@@ -1,5 +1,9 @@
 const db = require('../services/database');
 const logger = require('../services/logger');
+const fs = require('fs');
+const csv = require('csv-parser');
+const multer = require('multer');
+const { promisify } = require('util');
 
 // 全ての発信者番号を取得
 exports.getAllCallerIds = async (req, res) => {
@@ -8,14 +12,105 @@ exports.getAllCallerIds = async (req, res) => {
     res.json(callerIds);
   } catch (error) {
     logger.error('発信者番号取得エラー:', error);
-    res.status(500).json({ message: 'サーバーエラーが発生しました' });
+    res.status(500).json({ message: 'サーバーエラーが発生しました: ' + error.message });
+  }
+};
+
+// 特定の発信者番号を取得
+exports.getCallerIdById = async (req, res) => {
+  try {
+    const callerIds = await db.query('SELECT * FROM caller_ids WHERE id = ?', [req.params.id]);
+    
+    if (callerIds.length === 0) {
+      return res.status(404).json({ message: '発信者番号が見つかりません' });
+    }
+    
+    res.json(callerIds[0]);
+  } catch (error) {
+    logger.error('発信者番号詳細取得エラー:', error);
+    res.status(500).json({ message: 'サーバーエラーが発生しました: ' + error.message });
+  }
+};
+
+// 新しい発信者番号を作成
+exports.createCallerId = async (req, res) => {
+  try {
+    const { number, description, provider, active } = req.body;
+    
+    if (!number) {
+      return res.status(400).json({ message: '電話番号は必須です' });
+    }
+    
+    const result = await db.query(
+      'INSERT INTO caller_ids (number, description, provider, active) VALUES (?, ?, ?, ?)',
+      [number, description, provider, active === false ? 0 : 1]
+    );
+    
+    res.status(201).json({ 
+      id: result.insertId,
+      number,
+      description,
+      provider,
+      active: active === false ? false : true
+    });
+  } catch (error) {
+    logger.error('発信者番号作成エラー:', error);
+    res.status(500).json({ message: 'サーバーエラーが発生しました: ' + error.message });
+  }
+};
+
+// 発信者番号を更新
+exports.updateCallerId = async (req, res) => {
+  try {
+    const { number, description, provider, active } = req.body;
+    
+    if (!number) {
+      return res.status(400).json({ message: '電話番号は必須です' });
+    }
+    
+    const result = await db.query(
+      'UPDATE caller_ids SET number = ?, description = ?, provider = ?, active = ? WHERE id = ?',
+      [number, description, provider, active === false ? 0 : 1, req.params.id]
+    );
+    
+    if (result.affectedRows === 0) {
+      return res.status(404).json({ message: '発信者番号が見つかりません' });
+    }
+    
+    res.json({ 
+      id: parseInt(req.params.id),
+      number,
+      description,
+      provider,
+      active: active === false ? false : true
+    });
+  } catch (error) {
+    logger.error('発信者番号更新エラー:', error);
+    res.status(500).json({ message: 'サーバーエラーが発生しました: ' + error.message });
+  }
+};
+
+// 発信者番号を削除
+exports.deleteCallerId = async (req, res) => {
+  try {
+    const result = await db.query('DELETE FROM caller_ids WHERE id = ?', [req.params.id]);
+    
+    if (result.affectedRows === 0) {
+      return res.status(404).json({ message: '発信者番号が見つかりません' });
+    }
+    
+    res.json({ message: '発信者番号が削除されました' });
+  } catch (error) {
+    logger.error('発信者番号削除エラー:', error);
+    res.status(500).json({ message: 'サーバーエラーが発生しました: ' + error.message });
   }
 };
 
 // CSVからの発信者番号インポート
 exports.importCallerIds = async (req, res) => {
   try {
-    // Multerミドルウェアを適用
+    // Multerミドルウェアを設定
+    const upload = multer({ dest: 'uploads/' });
     const uploadMiddleware = promisify(upload.single('file'));
     await uploadMiddleware(req, res);
     
@@ -131,29 +226,25 @@ exports.importCallerIds = async (req, res) => {
     }
     
     // トランザクション開始
-    await db.beginTransaction();
+    const connection = await db.beginTransaction();
     
     try {
       // 一括挿入処理
       for (const callerId of callerIds) {
-        await db.query(
-          'INSERT INTO caller_ids (number, description, provider, sip_host, auth_username, auth_password, active, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+        await connection.query(
+          'INSERT INTO caller_ids (number, description, provider, active) VALUES (?, ?, ?, ?)',
           [
             callerId.number,
             callerId.description,
             callerId.provider,
-            callerId.sip_host,
-            callerId.auth_username,
-            callerId.auth_password,
-            callerId.active ? 1 : 0,
-            callerId.created_at
+            callerId.active ? 1 : 0
           ]
         );
       }
       
-      await db.commit();
+      await db.commit(connection);
     } catch (error) {
-      await db.rollback();
+      await db.rollback(connection);
       throw error;
     }
     
@@ -181,95 +272,5 @@ exports.importCallerIds = async (req, res) => {
     }
     
     res.status(500).json({ message: `エラー: ${error.message}` });
-  }
-};
-
-// 特定の発信者番号を取得
-exports.getCallerIdById = async (req, res) => {
-  try {
-    const callerIds = await db.query('SELECT * FROM caller_ids WHERE id = ?', [req.params.id]);
-    
-    if (callerIds.length === 0) {
-      return res.status(404).json({ message: '発信者番号が見つかりません' });
-    }
-    
-    res.json(callerIds[0]);
-  } catch (error) {
-    logger.error('発信者番号詳細取得エラー:', error);
-    res.status(500).json({ message: 'サーバーエラーが発生しました' });
-  }
-};
-
-// 新しい発信者番号を作成
-exports.createCallerId = async (req, res) => {
-  try {
-    const { number, description, provider, active } = req.body;
-    
-    if (!number) {
-      return res.status(400).json({ message: '電話番号は必須です' });
-    }
-    
-    const result = await db.query(
-      'INSERT INTO caller_ids (number, description, provider, active) VALUES (?, ?, ?, ?)',
-      [number, description, provider, active === false ? 0 : 1]
-    );
-    
-    res.status(201).json({ 
-      id: result.insertId,
-      number,
-      description,
-      provider,
-      active: active === false ? false : true
-    });
-  } catch (error) {
-    logger.error('発信者番号作成エラー:', error);
-    res.status(500).json({ message: 'サーバーエラーが発生しました' });
-  }
-};
-
-// 発信者番号を更新
-exports.updateCallerId = async (req, res) => {
-  try {
-    const { number, description, provider, active } = req.body;
-    
-    if (!number) {
-      return res.status(400).json({ message: '電話番号は必須です' });
-    }
-    
-    const result = await db.query(
-      'UPDATE caller_ids SET number = ?, description = ?, provider = ?, active = ? WHERE id = ?',
-      [number, description, provider, active === false ? 0 : 1, req.params.id]
-    );
-    
-    if (result.affectedRows === 0) {
-      return res.status(404).json({ message: '発信者番号が見つかりません' });
-    }
-    
-    res.json({ 
-      id: parseInt(req.params.id),
-      number,
-      description,
-      provider,
-      active: active === false ? false : true
-    });
-  } catch (error) {
-    logger.error('発信者番号更新エラー:', error);
-    res.status(500).json({ message: 'サーバーエラーが発生しました' });
-  }
-};
-
-// 発信者番号を削除
-exports.deleteCallerId = async (req, res) => {
-  try {
-    const result = await db.query('DELETE FROM caller_ids WHERE id = ?', [req.params.id]);
-    
-    if (result.affectedRows === 0) {
-      return res.status(404).json({ message: '発信者番号が見つかりません' });
-    }
-    
-    res.json({ message: '発信者番号が削除されました' });
-  } catch (error) {
-    logger.error('発信者番号削除エラー:', error);
-    res.status(500).json({ message: 'サーバーエラーが発生しました' });
   }
 };

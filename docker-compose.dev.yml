@@ -16,8 +16,8 @@ services:
       MYSQL_PASSWORD: password
       MYSQL_DATABASE: autodialer
       # モックモードを無効化してTwilioを使用
-      MOCK_ASTERISK: "false"
-      USE_TWILIO: "true"
+      MOCK_ASTERISK: "true"
+      USE_TWILIO: "false"
       # Twilio設定
       TWILIO_ACCOUNT_SID: ${TWILIO_ACCOUNT_SID}
       TWILIO_AUTH_TOKEN: ${TWILIO_AUTH_TOKEN}
@@ -57,14 +57,19 @@ services:
     image: mysql:8.0
     platform: linux/arm64
     ports:
-      - "13306:3306"  # 外部ポートは13306のまま
+      - "13306:3306"
     environment:
       MYSQL_ROOT_PASSWORD: password
       MYSQL_DATABASE: autodialer
-    command: --default-authentication-plugin=mysql_native_password
+      MYSQL_CHARSET: utf8mb4
+      MYSQL_COLLATION: utf8mb4_unicode_ci
+    command: 
+      - --default-authentication-plugin=mysql_native_password
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+      - --init-connect='SET NAMES utf8mb4'
     volumes:
       - mysql_data:/var/lib/mysql
-      # 初期化スクリプトを追加
       - ./backend/database/schema.sql:/docker-entrypoint-initdb.d/1-schema.sql
     networks:
       - autodialer-network

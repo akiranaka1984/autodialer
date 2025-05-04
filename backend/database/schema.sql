@@ -2,11 +2,11 @@
 CREATE TABLE IF NOT EXISTS caller_ids (
   id INT AUTO_INCREMENT PRIMARY KEY,
   number VARCHAR(20) NOT NULL,
-  description VARCHAR(255),
-  provider VARCHAR(100),
+  description VARCHAR(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci,
+  provider VARCHAR(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci,
   active BOOLEAN DEFAULT true,
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
+) DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- キャンペーンテーブル
 CREATE TABLE IF NOT EXISTS campaigns (

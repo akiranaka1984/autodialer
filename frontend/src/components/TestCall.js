@@ -192,7 +192,7 @@ const TestCall = () => {
       console.log('現在のモード:', mode);
       
       // 開発環境でモックデータを使用するオプション
-      if (process.env.NODE_ENV === 'development' && window.location.hostname === 'localhost') {
+      if (process.env.NODE_ENV === 'development' && window.location.hostname === 'localhost' && mode === 'mock') {
         console.log('開発環境でモックデータを使用 - テスト発信');
         // モックデータのセット
         setTimeout(() => {
