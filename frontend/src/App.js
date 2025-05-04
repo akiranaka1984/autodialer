@@ -12,9 +12,12 @@ import CampaignList from './components/CampaignList';
 import CampaignForm from './components/CampaignForm';
 import CampaignDetail from './components/CampaignDetail';
 import ReportDashboard from './components/ReportDashboard';
+import CallHistory from './components/CallHistory'; // 追加
 import Layout from './components/Layout';
 import Login from './components/Login';
 import NotFound from './components/NotFound';
+import DNCManagement from './components/DNCManagement';
+import SystemSettings from './components/SystemSettings';
 
 // スタイルシートのインポート
 import './App.css';
@@ -94,9 +97,7 @@ function App() {
     return (
       <div className="flex items-center justify-center h-screen">
         <div className="text-center">
-          <div className="spinner-border text-primary" role="status">
-            <span className="visually-hidden">読み込み中...</span>
-          </div>
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-500"></div>
           <p className="mt-2">読み込み中...</p>
         </div>
       </div>
@@ -118,6 +119,9 @@ function App() {
             <Route path="campaigns/:id" element={<CampaignDetail />} />
             <Route path="campaigns/:campaignId/contacts/upload" element={<ContactsUpload />} />
             <Route path="reports" element={<ReportDashboard />} />
+            <Route path="calls" element={<CallHistory />} /> {/* 追加 */}
+            <Route path="dnc" element={<DNCManagement />} />
+            <Route path="settings" element={<SystemSettings />} />
             <Route path="*" element={<NotFound />} />
           </Route>
         ) : (

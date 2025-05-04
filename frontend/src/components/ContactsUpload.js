@@ -1,4 +1,3 @@
-// frontend/src/components/ContactsUpload.js
 import React, { useState, useEffect } from 'react';
 import { Upload, AlertCircle, Check, X, File } from 'lucide-react';
 import { useParams, useNavigate } from 'react-router-dom';
@@ -10,7 +9,7 @@ const ContactsUpload = () => {
   const [campaignName, setCampaignName] = useState('');
   const [file, setFile] = useState(null);
   const [preview, setPreview] = useState([]);
-  const [uploadStatus, setUploadStatus] = useState('idle'); // idle, loading, success, error
+  const [uploadStatus, setUploadStatus] = useState('idle');
   const [message, setMessage] = useState('');
   const [mappings, setMappings] = useState({
     phone: '',
@@ -19,12 +18,21 @@ const ContactsUpload = () => {
   });
   const [headers, setHeaders] = useState([]);
   const [uploadProgress, setUploadProgress] = useState(0);
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    // キャンペーン情報を取得
     const fetchCampaignData = async () => {
       try {
         const token = localStorage.getItem('token');
+        
+        if (process.env.NODE_ENV === 'development') {
+          setTimeout(() => {
+            setCampaignName('サンプルキャンペーン');
+            setLoading(false);
+          }, 500);
+          return;
+        }
+        
         const response = await fetch(`/api/campaigns/${campaignId}`, {
           headers: {
             'Authorization': `Bearer ${token}`
@@ -40,6 +48,8 @@ const ContactsUpload = () => {
       } catch (error) {
         setMessage(`エラー: ${error.message}`);
         setUploadStatus('error');
+      } finally {
+        setLoading(false);
       }
     };
     
@@ -71,38 +81,29 @@ const ContactsUpload = () => {
         const rows = text.split('\n');
         const headers = rows[0].split(',').map(header => header.trim());
         
-        // ヘッダー行を設定
         setHeaders(headers);
         
-        // 自動的にマッピングを試みる
-        const possiblePhoneHeaders = ['電話番号', '電話', 'tel', 'phone', 'mobile', '携帯'];
-        const possibleNameHeaders = ['名前', '氏名', 'name', 'contact_name', '担当者名'];
-        const possibleCompanyHeaders = ['会社', '会社名', 'company', 'organization', '組織名'];
-        
+        // 自動マッピング
         const newMappings = { ...mappings };
-        
         headers.forEach((header, index) => {
           const lowerHeader = header.toLowerCase();
-          
-          if (possiblePhoneHeaders.some(h => lowerHeader.includes(h.toLowerCase()))) {
+          if (lowerHeader.includes('電話') || lowerHeader.includes('phone') || lowerHeader.includes('tel')) {
             newMappings.phone = index.toString();
           }
-          
-          if (possibleNameHeaders.some(h => lowerHeader.includes(h.toLowerCase()))) {
+          if (lowerHeader.includes('名前') || lowerHeader.includes('name')) {
             newMappings.name = index.toString();
           }
-          
-          if (possibleCompanyHeaders.some(h => lowerHeader.includes(h.toLowerCase()))) {
+          if (lowerHeader.includes('会社') || lowerHeader.includes('company')) {
             newMappings.company = index.toString();
           }
         });
         
         setMappings(newMappings);
         
-        // プレビューデータを設定（最大5行）
-        const previewRows = rows.slice(1, 6).map(row => {
-          return row.split(',').map(cell => cell.trim());
-        }).filter(row => row.length === headers.length && row.some(cell => cell));
+        // プレビューデータを設定
+        const previewRows = rows.slice(1, 6)
+          .map(row => row.split(',').map(cell => cell.trim()))
+          .filter(row => row.length === headers.length && row.some(cell => cell));
         
         setPreview(previewRows);
       };
@@ -146,7 +147,22 @@ const ContactsUpload = () => {
       
       const token = localStorage.getItem('token');
       
-      // プログレスイベントを処理するための設定
+      if (process.env.NODE_ENV === 'development') {
+        // モックアップロード進捗
+        for (let i = 0; i <= 100; i += 10) {
+          await new Promise(resolve => setTimeout(resolve, 100));
+          setUploadProgress(i);
+        }
+        
+        setMessage('50件の連絡先をインポートしました。');
+        setUploadStatus('success');
+        
+        setTimeout(() => {
+          navigate(`/campaigns/${campaignId}`);
+        }, 2000);
+        return;
+      }
+      
       const xhr = new XMLHttpRequest();
       
       xhr.upload.addEventListener('progress', (event) => {
@@ -162,7 +178,6 @@ const ContactsUpload = () => {
           setMessage(`${response.imported_count}件の連絡先をインポートしました。`);
           setUploadStatus('success');
           
-          // 3秒後にキャンペーン詳細ページに戻る
           setTimeout(() => {
             navigate(`/campaigns/${campaignId}`);
           }, 3000);
@@ -193,8 +208,19 @@ const ContactsUpload = () => {
     }
   };
 
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center h-64">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-500 mx-auto"></div>
+          <p className="mt-2 text-gray-600">読み込み中...</p>
+        </div>
+      </div>
+    );
+  }
+
   return (
-    <div className="p-4">
+    <div className="p-4 max-w-4xl mx-auto">
       <h1 className="text-2xl font-bold mb-2">連絡先のアップロード</h1>
       <h2 className="text-lg text-gray-600 mb-6">キャンペーン: {campaignName}</h2>
       
@@ -251,7 +277,7 @@ const ContactsUpload = () => {
             </div>
             <div className="w-full bg-gray-200 rounded-full h-2.5">
               <div 
-                className="bg-blue-600 h-2.5 rounded-full" 
+                className="bg-blue-600 h-2.5 rounded-full transition-all duration-300" 
                 style={{ width: `${uploadProgress}%` }}
               ></div>
             </div>

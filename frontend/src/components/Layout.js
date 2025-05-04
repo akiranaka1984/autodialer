@@ -1,7 +1,7 @@
 // frontend/src/components/Layout.js
 import React, { useState } from 'react';
 import { Outlet, Link, useLocation } from 'react-router-dom';
-import { Phone, Users, BarChart2, Settings, LogOut, Menu, X, User, Bell, FileText } from 'lucide-react';
+import { Phone, Users, BarChart2, Settings, LogOut, Menu, X, User, Bell, FileText, History } from 'lucide-react';
 
 const Layout = ({ user, onLogout }) => {
  const [sidebarOpen, setSidebarOpen] = useState(true);
@@ -19,12 +19,15 @@ const Layout = ({ user, onLogout }) => {
 
  // サイドバーのリンク設定
  const navLinks = [
-   { path: '/', label: 'ダッシュボード', icon: <BarChart2 className="h-5 w-5 mr-3" /> },
-   { path: '/test-call', label: 'テスト発信', icon: <Phone className="h-5 w-5 mr-3" /> },
-   { path: '/caller-ids', label: '発信者番号管理', icon: <Settings className="h-5 w-5 mr-3" /> },
-   { path: '/campaigns', label: 'キャンペーン管理', icon: <Users className="h-5 w-5 mr-3" /> },
-   { path: '/reports', label: 'レポート', icon: <FileText className="h-5 w-5 mr-3" /> },
- ];
+  { path: '/', label: 'ダッシュボード', icon: <BarChart2 className="h-5 w-5 mr-3" /> },
+  { path: '/test-call', label: 'テスト発信', icon: <Phone className="h-5 w-5 mr-3" /> },
+  { path: '/caller-ids', label: '発信者番号管理', icon: <Settings className="h-5 w-5 mr-3" /> },
+  { path: '/campaigns', label: 'キャンペーン管理', icon: <Users className="h-5 w-5 mr-3" /> },
+  { path: '/calls', label: '通話履歴', icon: <History className="h-5 w-5 mr-3" /> },
+  { path: '/dnc', label: 'DNCリスト', icon: <Ban className="h-5 w-5 mr-3" /> },
+  { path: '/reports', label: 'レポート', icon: <FileText className="h-5 w-5 mr-3" /> },
+  { path: '/settings', label: 'システム設定', icon: <Settings className="h-5 w-5 mr-3" /> },
+];
  
  return (
    <div className="flex h-screen bg-gray-100">

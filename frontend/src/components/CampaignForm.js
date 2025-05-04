@@ -1,10 +1,11 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
+import { AlertCircle, Loader } from 'lucide-react';
 
 const CampaignForm = () => {
   const navigate = useNavigate();
-  const { id } = useParams();
-  const isEditing = !!id;
+  const { campaignId } = useParams();
+  const isEditing = !!campaignId;
   
   const [formData, setFormData] = useState({
     name: '',
@@ -21,14 +22,57 @@ const CampaignForm = () => {
   
   const [callerIds, setCallerIds] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
   const [error, setError] = useState(null);
+  const [validationErrors, setValidationErrors] = useState({});
   const [submitError, setSubmitError] = useState(null);
   
-  // 初期データの読み込み
+  // データの初期読み込み
   useEffect(() => {
     const fetchData = async () => {
       try {
+        setLoading(true);
+        setError(null);
         const token = localStorage.getItem('token');
+        
+        // 開発環境用モックデータ
+        if (process.env.NODE_ENV === 'development') {
+          await new Promise(resolve => setTimeout(resolve, 500));
+          
+          // 発信者番号のモックデータ
+          const mockCallerIds = [
+            { id: 1, number: '0312345678', description: '東京オフィス', active: true },
+            { id: 2, number: '0312345679', description: '大阪オフィス', active: true },
+            { id: 3, number: '0501234567', description: 'マーケティング部', active: false }
+          ];
+          setCallerIds(mockCallerIds);
+          
+          // 編集時は既存のキャンペーンデータをロード
+          if (isEditing) {
+            const mockCampaign = {
+              id: parseInt(campaignId),
+              name: 'テストキャンペーン',
+              description: '既存のキャンペーンの説明',
+              caller_id_id: 1,
+              script: 'こんにちは、{会社名}の{担当者名}です。',
+              retry_attempts: 2,
+              max_concurrent_calls: 10,
+              schedule_start: '2025-05-10T09:00',
+              schedule_end: '2025-05-20T18:00',
+              working_hours_start: '09:00',
+              working_hours_end: '18:00'
+            };
+            setFormData(mockCampaign);
+          } else if (mockCallerIds.length > 0) {
+            setFormData(prev => ({
+              ...prev,
+              caller_id_id: mockCallerIds[0].id
+            }));
+          }
+          
+          setLoading(false);
+          return;
+        }
         
         // 発信者番号の取得
         const callerIdResponse = await fetch('/api/caller-ids', {
@@ -46,7 +90,7 @@ const CampaignForm = () => {
         
         // 編集時はキャンペーンデータを取得
         if (isEditing) {
-          const campaignResponse = await fetch(`/api/campaigns/${id}`, {
+          const campaignResponse = await fetch(`/api/campaigns/${campaignId}`, {
             headers: {
               'Authorization': `Bearer ${token}`
             }
@@ -69,14 +113,16 @@ const CampaignForm = () => {
           
           setFormData(formattedData);
         } else if (callerIdData.length > 0) {
-          // 新規作成時に最初の発信者番号を選択
-          setFormData(prev => ({
-            ...prev,
-            caller_id_id: callerIdData[0].id
-          }));
+          // 新規作成時にアクティブな発信者番号の最初のものを選択
+          const activeCallerIds = callerIdData.filter(ci => ci.active);
+          if (activeCallerIds.length > 0) {
+            setFormData(prev => ({
+              ...prev,
+              caller_id_id: activeCallerIds[0].id
+            }));
+          }
         }
         
-        setError(null);
       } catch (err) {
         setError(err.message);
       } finally {
@@ -85,7 +131,49 @@ const CampaignForm = () => {
     };
     
     fetchData();
-  }, [id, isEditing]);
+  }, [campaignId, isEditing]);
+  
+  // フォームバリデーション
+  const validateForm = () => {
+    const errors = {};
+    
+    if (!formData.name.trim()) {
+      errors.name = 'キャンペーン名は必須です';
+    }
+    
+    if (!formData.caller_id_id) {
+      errors.caller_id_id = '発信者番号を選択してください';
+    }
+    
+    if (formData.retry_attempts < 0 || formData.retry_attempts > 5) {
+      errors.retry_attempts = 'リトライ回数は0〜5の間で設定してください';
+    }
+    
+    if (formData.max_concurrent_calls < 1 || formData.max_concurrent_calls > 50) {
+      errors.max_concurrent_calls = '最大同時発信数は1〜50の間で設定してください';
+    }
+    
+    if (formData.schedule_start && formData.schedule_end) {
+      const start = new Date(formData.schedule_start);
+      const end = new Date(formData.schedule_end);
+      if (start >= end) {
+        errors.schedule_end = '終了日時は開始日時より後に設定してください';
+      }
+    }
+    
+    if (formData.working_hours_start && formData.working_hours_end) {
+      const start = formData.working_hours_start.split(':').map(Number);
+      const end = formData.working_hours_end.split(':').map(Number);
+      const startMinutes = start[0] * 60 + start[1];
+      const endMinutes = end[0] * 60 + end[1];
+      
+      if (startMinutes >= endMinutes) {
+        errors.working_hours_end = '終了時間は開始時間より後に設定してください';
+      }
+    }
+    
+    return errors;
+  };
   
   // 入力変更ハンドラ
   const handleInputChange = (e) => {
@@ -95,16 +183,40 @@ const CampaignForm = () => {
       ...formData,
       [name]: type === 'number' ? parseInt(value, 10) : value
     });
+    
+    // バリデーションエラーをクリア
+    if (validationErrors[name]) {
+      setValidationErrors({
+        ...validationErrors,
+        [name]: null
+      });
+    }
   };
   
   // フォーム送信ハンドラ
   const handleSubmit = async (e) => {
     e.preventDefault();
-    setSubmitError(null);
+    
+    // バリデーション
+    const errors = validateForm();
+    if (Object.keys(errors).length > 0) {
+      setValidationErrors(errors);
+      return;
+    }
     
     try {
+      setSaving(true);
+      setSubmitError(null);
       const token = localStorage.getItem('token');
-      const url = isEditing ? `/api/campaigns/${id}` : '/api/campaigns';
+      
+      // 開発環境での処理
+      if (process.env.NODE_ENV === 'development') {
+        await new Promise(resolve => setTimeout(resolve, 1000));
+        navigate('/campaigns');
+        return;
+      }
+      
+      const url = isEditing ? `/api/campaigns/${campaignId}` : '/api/campaigns';
       const method = isEditing ? 'PUT' : 'POST';
       
       const response = await fetch(url, {
@@ -126,188 +238,264 @@ const CampaignForm = () => {
     } catch (err) {
       setSubmitError(err.message);
       window.scrollTo(0, 0);
+    } finally {
+      setSaving(false);
     }
   };
   
   if (loading) {
-    return <div className="text-center p-4">読み込み中...</div>;
+    return (
+      <div className="flex items-center justify-center h-64">
+        <div className="text-center">
+          <Loader className="h-8 w-8 animate-spin text-blue-500 mx-auto" />
+          <p className="mt-2 text-gray-600">読み込み中...</p>
+        </div>
+      </div>
+    );
+  }
+  
+  if (error) {
+    return (
+      <div className="p-4">
+        <div className="bg-red-100 border-l-4 border-red-500 text-red-700 p-4">
+          <div className="flex">
+            <AlertCircle className="h-5 w-5 mr-2" />
+            <p>{error}</p>
+          </div>
+        </div>
+      </div>
+    );
   }
   
   return (
-    <div className="p-4">
-      <h1 className="text-2xl font-bold mb-4">
+    <div className="p-4 max-w-4xl mx-auto">
+      <h1 className="text-2xl font-bold mb-6">
         {isEditing ? 'キャンペーンの編集' : '新規キャンペーン作成'}
       </h1>
       
-      {(error || submitError) && (
-        <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded mb-4">
-          {error || submitError}
+      {submitError && (
+        <div className="bg-red-100 border-l-4 border-red-500 text-red-700 p-4 mb-6">
+          <div className="flex">
+            <AlertCircle className="h-5 w-5 mr-2" />
+            <p>{submitError}</p>
+          </div>
         </div>
       )}
       
       <form onSubmit={handleSubmit} className="bg-white shadow-md rounded px-8 pt-6 pb-8 mb-4">
-        <div className="mb-4">
-          <label className="block text-gray-700 text-sm font-bold mb-2" htmlFor="name">
-            キャンペーン名 *
-          </label>
-          <input
-            id="name"
-            name="name"
-            type="text"
-            placeholder="キャンペーン名"
-            value={formData.name}
-            onChange={handleInputChange}
-            className="shadow appearance-none border rounded w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:shadow-outline"
-            required
-          />
-        </div>
-        
-        <div className="mb-4">
-          <label className="block text-gray-700 text-sm font-bold mb-2" htmlFor="description">
-            説明
-          </label>
-          <textarea
-            id="description"
-            name="description"
-            placeholder="キャンペーンの説明"
-            value={formData.description || ''}
-            onChange={handleInputChange}
-            className="shadow appearance-none border rounded w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:shadow-outline"
-            rows="3"
-          />
-        </div>
-        
-        <div className="mb-4">
-          <label className="block text-gray-700 text-sm font-bold mb-2" htmlFor="caller_id_id">
-            発信者番号 *
-          </label>
-          <select
-            id="caller_id_id"
-            name="caller_id_id"
-            value={formData.caller_id_id}
-            onChange={handleInputChange}
-            className="shadow appearance-none border rounded w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:shadow-outline"
-            required
-          >
-            <option value="">発信者番号を選択してください</option>
-            {callerIds.map(callerId => (
-              <option key={callerId.id} value={callerId.id} disabled={!callerId.active}>
-                {callerId.number} - {callerId.description} {!callerId.active && '(無効)'}
-              </option>
-            ))}
-          </select>
-        </div>
-        
-        <div className="mb-4">
-          <label className="block text-gray-700 text-sm font-bold mb-2" htmlFor="script">
-            通話スクリプト
-          </label>
-          <textarea
-            id="script"
-            name="script"
-            placeholder="通話スクリプトを入力してください"
-            value={formData.script || ''}
-            onChange={handleInputChange}
-            className="shadow appearance-none border rounded w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:shadow-outline"
-            rows="5"
-          />
-        </div>
-        
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        {/* 基本情報 */}
+        <div className="mb-6">
+          <h2 className="text-lg font-semibold mb-4">基本情報</h2>
+          
           <div className="mb-4">
-            <label className="block text-gray-700 text-sm font-bold mb-2" htmlFor="retry_attempts">
-              リトライ回数
+            <label className="block text-gray-700 text-sm font-bold mb-2" htmlFor="name">
+              キャンペーン名 *
             </label>
             <input
-              id="retry_attempts"
-              name="retry_attempts"
-              type="number"
-              min="0"
-              max="5"
-              value={formData.retry_attempts}
+              id="name"
+              name="name"
+              type="text"
+              value={formData.name}
+              onChange={handleInputChange}
+              className={`shadow appearance-none border rounded w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:shadow-outline ${
+                validationErrors.name ? 'border-red-500' : ''
+              }`}
+              placeholder="例：新規顧客開拓キャンペーン"
+            />
+            {validationErrors.name && (
+              <p className="text-red-500 text-xs italic mt-1">{validationErrors.name}</p>
+            )}
+          </div>
+          
+          <div className="mb-4">
+            <label className="block text-gray-700 text-sm font-bold mb-2" htmlFor="description">
+              説明
+            </label>
+            <textarea
+              id="description"
+              name="description"
+              value={formData.description}
               onChange={handleInputChange}
               className="shadow appearance-none border rounded w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:shadow-outline"
+              rows="3"
+              placeholder="キャンペーンの目的や概要を入力してください"
             />
           </div>
           
           <div className="mb-4">
-            <label className="block text-gray-700 text-sm font-bold mb-2" htmlFor="max_concurrent_calls">
-              最大同時発信数
+            <label className="block text-gray-700 text-sm font-bold mb-2" htmlFor="caller_id_id">
+              発信者番号 *
             </label>
-            <input
-              id="max_concurrent_calls"
-              name="max_concurrent_calls"
-              type="number"
-              min="1"
-              max="50"
-              value={formData.max_concurrent_calls}
+            <select
+              id="caller_id_id"
+              name="caller_id_id"
+              value={formData.caller_id_id}
               onChange={handleInputChange}
-              className="shadow appearance-none border rounded w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:shadow-outline"
-            />
+              className={`shadow appearance-none border rounded w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:shadow-outline ${
+                validationErrors.caller_id_id ? 'border-red-500' : ''
+              }`}
+            >
+              <option value="">選択してください</option>
+              {callerIds.map(callerId => (
+                <option key={callerId.id} value={callerId.id} disabled={!callerId.active}>
+                  {callerId.number} - {callerId.description} {!callerId.active && '(無効)'}
+                </option>
+              ))}
+            </select>
+            {validationErrors.caller_id_id && (
+              <p className="text-red-500 text-xs italic mt-1">{validationErrors.caller_id_id}</p>
+            )}
           </div>
         </div>
         
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <div className="mb-4">
-            <label className="block text-gray-700 text-sm font-bold mb-2" htmlFor="schedule_start">
-              スケジュール開始日時
-            </label>
-            <input
-              id="schedule_start"
-              name="schedule_start"
-              type="datetime-local"
-              value={formData.schedule_start}
-              onChange={handleInputChange}
-              className="shadow appearance-none border rounded w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:shadow-outline"
-            />
-          </div>
+        {/* スクリプト設定 */}
+        <div className="mb-6">
+          <h2 className="text-lg font-semibold mb-4">スクリプト設定</h2>
           
           <div className="mb-4">
-            <label className="block text-gray-700 text-sm font-bold mb-2" htmlFor="schedule_end">
-              スケジュール終了日時
+            <label className="block text-gray-700 text-sm font-bold mb-2" htmlFor="script">
+              通話スクリプト
             </label>
-            <input
-              id="schedule_end"
-              name="schedule_end"
-              type="datetime-local"
-              value={formData.schedule_end}
+            <textarea
+              id="script"
+              name="script"
+              value={formData.script}
               onChange={handleInputChange}
               className="shadow appearance-none border rounded w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:shadow-outline"
+              rows="5"
+              placeholder="通話時に使用するスクリプトを入力してください。&#10;変数を使用できます：{会社名}, {担当者名}, {商品名} など"
             />
+            <p className="text-gray-600 text-xs mt-1">
+              利用可能な変数: {'{会社名}'}, {'{担当者名}'}, {'{商品名}'}
+            </p>
           </div>
         </div>
         
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <div className="mb-4">
-            <label className="block text-gray-700 text-sm font-bold mb-2" htmlFor="working_hours_start">
-              発信開始時間
-            </label>
-            <input
-              id="working_hours_start"
-              name="working_hours_start"
-              type="time"
-              value={formData.working_hours_start}
-              onChange={handleInputChange}
-              className="shadow appearance-none border rounded w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:shadow-outline"
-            />
+        {/* 発信設定 */}
+        <div className="mb-6">
+          <h2 className="text-lg font-semibold mb-4">発信設定</h2>
+          
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div className="mb-4">
+              <label className="block text-gray-700 text-sm font-bold mb-2" htmlFor="retry_attempts">
+                リトライ回数
+              </label>
+              <input
+                id="retry_attempts"
+                name="retry_attempts"
+                type="number"
+                min="0"
+                max="5"
+                value={formData.retry_attempts}
+                onChange={handleInputChange}
+                className={`shadow appearance-none border rounded w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:shadow-outline ${
+                  validationErrors.retry_attempts ? 'border-red-500' : ''
+                }`}
+              />
+              {validationErrors.retry_attempts && (
+                <p className="text-red-500 text-xs italic mt-1">{validationErrors.retry_attempts}</p>
+              )}
+            </div>
+            
+            <div className="mb-4">
+              <label className="block text-gray-700 text-sm font-bold mb-2" htmlFor="max_concurrent_calls">
+                最大同時発信数
+              </label>
+              <input
+                id="max_concurrent_calls"
+                name="max_concurrent_calls"
+                type="number"
+                min="1"
+                max="50"
+                value={formData.max_concurrent_calls}
+                onChange={handleInputChange}
+                className={`shadow appearance-none border rounded w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:shadow-outline ${
+                  validationErrors.max_concurrent_calls ? 'border-red-500' : ''
+                }`}
+              />
+              {validationErrors.max_concurrent_calls && (
+                <p className="text-red-500 text-xs italic mt-1">{validationErrors.max_concurrent_calls}</p>
+              )}
+            </div>
+          </div>
+        </div>
+        
+        {/* スケジュール設定 */}
+        <div className="mb-6">
+          <h2 className="text-lg font-semibold mb-4">スケジュール設定</h2>
+          
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div className="mb-4">
+              <label className="block text-gray-700 text-sm font-bold mb-2" htmlFor="schedule_start">
+                開始日時
+              </label>
+              <input
+                id="schedule_start"
+                name="schedule_start"
+                type="datetime-local"
+                value={formData.schedule_start}
+                onChange={handleInputChange}
+                className="shadow appearance-none border rounded w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:shadow-outline"
+              />
+            </div>
+            
+            <div className="mb-4">
+              <label className="block text-gray-700 text-sm font-bold mb-2" htmlFor="schedule_end">
+                終了日時
+              </label>
+              <input
+                id="schedule_end"
+                name="schedule_end"
+                type="datetime-local"
+                value={formData.schedule_end}
+                onChange={handleInputChange}
+                className={`shadow appearance-none border rounded w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:shadow-outline ${
+                  validationErrors.schedule_end ? 'border-red-500' : ''
+                }`}
+              />
+              {validationErrors.schedule_end && (
+                <p className="text-red-500 text-xs italic mt-1">{validationErrors.schedule_end}</p>
+              )}
+            </div>
           </div>
           
-          <div className="mb-4">
-            <label className="block text-gray-700 text-sm font-bold mb-2" htmlFor="working_hours_end">
-              発信終了時間
-            </label>
-            <input
-              id="working_hours_end"
-              name="working_hours_end"
-              type="time"
-              value={formData.working_hours_end}
-              onChange={handleInputChange}
-              className="shadow appearance-none border rounded w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:shadow-outline"
-            />
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div className="mb-4">
+              <label className="block text-gray-700 text-sm font-bold mb-2" htmlFor="working_hours_start">
+                営業時間（開始）
+              </label>
+              <input
+                id="working_hours_start"
+                name="working_hours_start"
+                type="time"
+                value={formData.working_hours_start}
+                onChange={handleInputChange}
+                className="shadow appearance-none border rounded w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:shadow-outline"
+              />
+            </div>
+            
+            <div className="mb-4">
+              <label className="block text-gray-700 text-sm font-bold mb-2" htmlFor="working_hours_end">
+                営業時間（終了）
+              </label>
+              <input
+                id="working_hours_end"
+                name="working_hours_end"
+                type="time"
+                value={formData.working_hours_end}
+                onChange={handleInputChange}
+                className={`shadow appearance-none border rounded w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:shadow-outline ${
+                  validationErrors.working_hours_end ? 'border-red-500' : ''
+                }`}
+              />
+              {validationErrors.working_hours_end && (
+                <p className="text-red-500 text-xs italic mt-1">{validationErrors.working_hours_end}</p>
+              )}
+            </div>
           </div>
         </div>
         
-        <div className="flex items-center justify-between mt-6">
+        <div className="flex items-center justify-between">
           <button
             type="button"
             onClick={() => navigate('/campaigns')}
@@ -317,9 +505,19 @@ const CampaignForm = () => {
           </button>
           <button
             type="submit"
-            className="bg-blue-500 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded focus:outline-none focus:shadow-outline"
+            disabled={saving}
+            className={`bg-blue-500 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded focus:outline-none focus:shadow-outline ${
+              saving ? 'opacity-50 cursor-not-allowed' : ''
+            }`}
           >
-            {isEditing ? '更新' : '作成'}
+            {saving ? (
+              <span className="flex items-center">
+                <Loader className="animate-spin h-5 w-5 mr-2" />
+                保存中...
+              </span>
+            ) : (
+              isEditing ? '更新' : '作成'
+            )}
           </button>
         </div>
       </form>

@@ -1,10 +1,11 @@
 // frontend/src/components/Dashboard.js
 import React, { useState, useEffect, useCallback } from 'react';
-import { Phone, Users, Calendar, BarChart2, PieChart, Clock, AlertCircle } from 'lucide-react';
+import { Phone, Users, Calendar, BarChart2, PieChart, Clock, AlertCircle, TrendingUp, TrendingDown } from 'lucide-react';
 import { 
   BarChart, Bar, LineChart, Line, PieChart as RechartsPieChart, Pie, Cell,
   XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer 
 } from 'recharts';
+import { Link } from 'react-router-dom';
 
 const Dashboard = () => {
   const [loading, setLoading] = useState(true);
@@ -13,7 +14,10 @@ const Dashboard = () => {
     activeCampaigns: 0,
     totalContacts: 0,
     completedCalls: 0,
-    successRate: 0
+    successRate: 0,
+    todayCalls: 0,
+    weeklyCallsChange: 0,
+    answerRateChange: 0
   });
   const [recentCalls, setRecentCalls] = useState([]);
   const [activeCampaigns, setActiveCampaigns] = useState([]);
@@ -35,14 +39,17 @@ const Dashboard = () => {
       if (process.env.NODE_ENV === 'development' && window.location.hostname === 'localhost') {
         console.log('開発環境でモックデータを使用');
         
-        // モックデータの生成
+        // モックデータのセット
         setTimeout(() => {
           // 基本統計情報
           setStats({
-            activeCampaigns: 2,
-            totalContacts: 150,
-            completedCalls: 87,
-            successRate: 68
+            activeCampaigns: 3,
+            totalContacts: 450,
+            completedCalls: 287,
+            successRate: 72,
+            todayCalls: 45,
+            weeklyCallsChange: 15,
+            answerRateChange: -5
           });
 
           // アクティブなキャンペーン
@@ -56,7 +63,8 @@ const Dashboard = () => {
               contact_count: 100,
               completed_calls: 45,
               progress: 45,
-              started_at: '2025-05-01T09:00:00Z'
+              started_at: '2025-05-01T09:00:00Z',
+              answerRate: 75
             },
             {
               id: 2,
@@ -67,7 +75,20 @@ const Dashboard = () => {
               contact_count: 50,
               completed_calls: 42,
               progress: 84,
-              started_at: '2025-04-28T14:00:00Z'
+              started_at: '2025-04-28T14:00:00Z',
+              answerRate: 68
+            },
+            {
+              id: 3,
+              name: '顧客満足度調査',
+              status: 'active',
+              caller_id_number: '0501234567',
+              caller_id_description: 'マーケティング部',
+              contact_count: 75,
+              completed_calls: 30,
+              progress: 40,
+              started_at: '2025-05-02T10:00:00Z',
+              answerRate: 82
             }
           ]);
 
@@ -75,45 +96,50 @@ const Dashboard = () => {
           setRecentCalls([
             {
               id: 1,
-              start_time: '2025-05-01T15:30:00Z',
+              start_time: '2025-05-05T15:30:00Z',
               campaign_name: 'サマーセール案内',
               contact_phone: '09012345678',
+              contact_name: '山田太郎',
               status: 'ANSWERED',
               duration: 45,
               keypress: '1'
             },
             {
               id: 2,
-              start_time: '2025-05-01T15:25:00Z',
+              start_time: '2025-05-05T15:25:00Z',
               campaign_name: 'サマーセール案内',
               contact_phone: '09023456789',
+              contact_name: '佐藤花子',
               status: 'NO ANSWER',
               duration: 0,
               keypress: null
             },
             {
               id: 3,
-              start_time: '2025-05-01T15:20:00Z',
+              start_time: '2025-05-05T15:20:00Z',
               campaign_name: '新規顧客フォローアップ',
               contact_phone: '09034567890',
+              contact_name: '鈴木一郎',
               status: 'ANSWERED',
               duration: 32,
               keypress: '9'
             },
             {
               id: 4,
-              start_time: '2025-05-01T15:15:00Z',
-              campaign_name: '新規顧客フォローアップ',
+              start_time: '2025-05-05T15:15:00Z',
+              campaign_name: '顧客満足度調査',
               contact_phone: '09045678901',
+              contact_name: '高橋次郎',
               status: 'ANSWERED',
               duration: 68,
               keypress: '1'
             },
             {
               id: 5,
-              start_time: '2025-05-01T15:10:00Z',
+              start_time: '2025-05-05T15:10:00Z',
               campaign_name: 'サマーセール案内',
               contact_phone: '09056789012',
+              contact_name: '田中三郎',
               status: 'BUSY',
               duration: 0,
               keypress: null
@@ -130,25 +156,28 @@ const Dashboard = () => {
 
           // 日別通話数のモックデータ
           setCallsByDay([
-            { date: '4/25', total: 32, answered: 21 },
-            { date: '4/26', total: 28, answered: 18 },
-            { date: '4/27', total: 15, answered: 10 },
-            { date: '4/28', total: 40, answered: 28 },
-            { date: '4/29', total: 45, answered: 32 },
-            { date: '4/30', total: 50, answered: 38 },
-            { date: '5/1', total: 35, answered: 24 }
+            { date: '4/29', total: 42, answered: 28 },
+            { date: '4/30', total: 38, answered: 25 },
+            { date: '5/1', total: 45, answered: 32 },
+            { date: '5/2', total: 52, answered: 38 },
+            { date: '5/3', total: 48, answered: 35 },
+            { date: '5/4', total: 55, answered: 42 },
+            { date: '5/5', total: 45, answered: 32 }
           ]);
 
           // 時間帯別通話数のモックデータ
-          const hourlyData = [];
-          for (let i = 9; i <= 18; i++) {
-            hourlyData.push({
-              hour: `${i}:00`,
-              total: Math.floor(Math.random() * 20) + 5,
-              answered: Math.floor(Math.random() * 15) + 3
-            });
-          }
-          setCallsByHour(hourlyData);
+          setCallsByHour([
+            { hour: '9:00', total: 15, answered: 12 },
+            { hour: '10:00', total: 22, answered: 18 },
+            { hour: '11:00', total: 25, answered: 20 },
+            { hour: '12:00', total: 12, answered: 8 },
+            { hour: '13:00', total: 18, answered: 14 },
+            { hour: '14:00', total: 24, answered: 19 },
+            { hour: '15:00', total: 28, answered: 22 },
+            { hour: '16:00', total: 26, answered: 20 },
+            { hour: '17:00', total: 20, answered: 15 },
+            { hour: '18:00', total: 15, answered: 11 }
+          ]);
 
           setLoading(false);
         }, 800);
@@ -170,71 +199,13 @@ const Dashboard = () => {
       
       const data = await response.json();
       
-      // 基本統計情報を設定
-      setStats({
-        activeCampaigns: data.active_campaigns || 0,
-        totalContacts: data.total_contacts || 0,
-        completedCalls: data.completed_calls || 0,
-        successRate: data.success_rate || 0
-      });
-      
-      // アクティブキャンペーンの取得
-      const campaignsResponse = await fetch(`${apiBaseUrl}/campaigns?status=active`, {
-        headers: {
-          'Authorization': `Bearer ${token}`
-        }
-      });
-      
-      if (campaignsResponse.ok) {
-        const campaignsData = await campaignsResponse.json();
-        setActiveCampaigns(campaignsData);
-      }
-      
-      // 最近の通話履歴の取得
-      const callsResponse = await fetch(`${apiBaseUrl}/calls?limit=10`, {
-        headers: {
-          'Authorization': `Bearer ${token}`
-        }
-      });
-      
-      if (callsResponse.ok) {
-        const callsData = await callsResponse.json();
-        setRecentCalls(callsData);
-      }
-      
-      // 統計データの取得
-      const statsResponse = await fetch(`${apiBaseUrl}/stats/calls?period=${selectedPeriod}`, {
-        headers: {
-          'Authorization': `Bearer ${token}`
-        }
-      });
-      
-      if (statsResponse.ok) {
-        const statsData = await statsResponse.json();
-        
-        // 通話ステータスの設定
-        const statusData = [
-          { name: '応答', value: statsData.total.answered || 0 },
-          { name: '不応答', value: statsData.total.no_answer || 0 },
-          { name: '話中', value: statsData.total.busy || 0 },
-          { name: '失敗', value: statsData.total.failed || 0 }
-        ];
-        setCallStatus(statusData);
-        
-        // 日別データの設定
-        setCallsByDay(statsData.daily.map(item => ({
-          date: formatDateShort(item.date),
-          total: item.total,
-          answered: item.answered
-        })));
-        
-        // 時間帯別データの設定
-        setCallsByHour(statsData.hourly.map(item => ({
-          hour: `${item.hour}:00`,
-          total: item.total,
-          answered: item.answered
-        })));
-      }
+      // データの設定
+      setStats(data.stats);
+      setActiveCampaigns(data.activeCampaigns);
+      setRecentCalls(data.recentCalls);
+      setCallStatus(data.callStatus);
+      setCallsByDay(data.callsByDay);
+      setCallsByHour(data.callsByHour);
       
       setError(null);
     } catch (err) {
@@ -248,6 +219,11 @@ const Dashboard = () => {
   // コンポーネントマウント時にデータ取得
   useEffect(() => {
     fetchDashboardData();
+    
+    // 5分ごとにデータを更新
+    const interval = setInterval(fetchDashboardData, 5 * 60 * 1000);
+    
+    return () => clearInterval(interval);
   }, [fetchDashboardData]);
 
   // 期間選択の変更ハンドラ
@@ -255,15 +231,7 @@ const Dashboard = () => {
     setSelectedPeriod(period);
   };
 
-  // 日付のフォーマット（短い形式）
-  const formatDateShort = (dateString) => {
-    if (!dateString) return '';
-    
-    const date = new Date(dateString);
-    return `${date.getMonth() + 1}/${date.getDate()}`;
-  };
-
-  // 日付のフォーマット（詳細）
+  // 日付のフォーマット
   const formatDate = (dateString) => {
     if (!dateString) return '';
     
@@ -277,7 +245,7 @@ const Dashboard = () => {
     });
   };
 
-  // 通話ステータスに基づく色を取得
+  // 通話ステータスに基づく色
   const getStatusColor = (status) => {
     switch (status) {
       case 'ANSWERED':
@@ -288,8 +256,6 @@ const Dashboard = () => {
         return 'text-red-600';
       case 'FAILED':
         return 'text-red-800';
-      case 'active':
-        return 'text-blue-600';
       default:
         return 'text-gray-600';
     }
@@ -342,7 +308,23 @@ const Dashboard = () => {
 
   return (
     <div className="p-4">
-      <h1 className="text-2xl font-bold mb-6">ダッシュボード</h1>
+      <div className="flex justify-between items-center mb-6">
+        <h1 className="text-2xl font-bold">ダッシュボード</h1>
+        <div className="space-x-2">
+          <Link
+            to="/campaigns/new"
+            className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700"
+          >
+            新規キャンペーン
+          </Link>
+          <Link
+            to="/reports"
+            className="px-4 py-2 border border-gray-300 rounded hover:bg-gray-50"
+          >
+            詳細レポート
+          </Link>
+        </div>
+      </div>
       
       {error && (
         <div className="bg-red-100 border-l-4 border-red-500 text-red-700 p-4 mb-6">
@@ -356,49 +338,65 @@ const Dashboard = () => {
       {/* 統計カード */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
         <div className="bg-white rounded-lg shadow-md p-4">
-          <div className="flex items-center">
-            <div className="p-3 rounded-full bg-blue-100 text-blue-500 mr-4">
-              <Calendar className="h-6 w-6" />
-            </div>
-            <div>
-              <p className="text-sm text-gray-500">アクティブキャンペーン</p>
-              <p className="text-xl font-semibold">{stats.activeCampaigns}</p>
-            </div>
-          </div>
-        </div>
-        
-        <div className="bg-white rounded-lg shadow-md p-4">
-          <div className="flex items-center">
-            <div className="p-3 rounded-full bg-green-100 text-green-500 mr-4">
-              <Users className="h-6 w-6" />
-            </div>
-            <div>
-              <p className="text-sm text-gray-500">総連絡先数</p>
-              <p className="text-xl font-semibold">{stats.totalContacts}</p>
+          <div className="flex items-center justify-between">
+            <div className="flex items-center">
+              <div className="p-3 rounded-full bg-blue-100 text-blue-500 mr-4">
+                <Calendar className="h-6 w-6" />
+              </div>
+              <div>
+                <p className="text-sm text-gray-500">アクティブキャンペーン</p>
+                <p className="text-xl font-semibold">{stats.activeCampaigns}</p>
+              </div>
             </div>
           </div>
         </div>
         
         <div className="bg-white rounded-lg shadow-md p-4">
-          <div className="flex items-center">
-            <div className="p-3 rounded-full bg-purple-100 text-purple-500 mr-4">
-              <Phone className="h-6 w-6" />
-            </div>
-            <div>
-              <p className="text-sm text-gray-500">完了した通話</p>
-              <p className="text-xl font-semibold">{stats.completedCalls}</p>
+          <div className="flex items-center justify-between">
+            <div className="flex items-center">
+              <div className="p-3 rounded-full bg-green-100 text-green-500 mr-4">
+                <Users className="h-6 w-6" />
+              </div>
+              <div>
+                <p className="text-sm text-gray-500">総連絡先数</p>
+                <p className="text-xl font-semibold">{stats.totalContacts}</p>
+              </div>
             </div>
           </div>
         </div>
         
         <div className="bg-white rounded-lg shadow-md p-4">
-          <div className="flex items-center">
-            <div className="p-3 rounded-full bg-yellow-100 text-yellow-500 mr-4">
-              <BarChart2 className="h-6 w-6" />
+          <div className="flex items-center justify-between">
+            <div className="flex items-center">
+              <div className="p-3 rounded-full bg-purple-100 text-purple-500 mr-4">
+                <Phone className="h-6 w-6" />
+              </div>
+              <div>
+                <p className="text-sm text-gray-500">本日の通話数</p>
+                <p className="text-xl font-semibold">{stats.todayCalls}</p>
+              </div>
             </div>
-            <div>
-              <p className="text-sm text-gray-500">成功率</p>
-              <p className="text-xl font-semibold">{stats.successRate}%</p>
+            <div className={`flex items-center ${stats.weeklyCallsChange >= 0 ? 'text-green-500' : 'text-red-500'}`}>
+              {stats.weeklyCallsChange >= 0 ? <TrendingUp className="h-4 w-4" /> : <TrendingDown className="h-4 w-4" />}
+              <span className="text-sm ml-1">{Math.abs(stats.weeklyCallsChange)}%</span>
+            </div>
+          </div>
+        </div>
+        
+        <div className="bg-white rounded-lg shadow-md p-4">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center">
+              <div className="p-3 rounded-full bg-yellow-100 text-yellow-500 mr-4">
+                <BarChart2 className="h-6 w-6" />
+              </div>
+              <div>
+                <p className="text-sm text-gray-500">応答率</p>
+                <p className="text-xl font-semibold">{stats.successRate}%</p>
+              </div>
+            </div>
+            <div className={`flex items-center ${stats.answerRateChange >= 0 ? 'text-green-500' : 'text-red-500'}`}>
+              {stats.answerRateChange >= 0 ? <TrendingUp className="h-4 w-4" /> : <TrendingDown className="h-4 w-4" />}
+              <span className="text-sm ml-1">{Math.abs(stats.answerRateChange)}%</span>
             </div>
           </div>
         </div>
@@ -413,7 +411,7 @@ const Dashboard = () => {
             <div className="flex space-x-2">
               <button 
                 onClick={() => handlePeriodChange('week')}
-                className={`px-2 py-1 text-xs rounded ${
+                className={`px-3 py-1 rounded text-sm ${
                   selectedPeriod === 'week' 
                     ? 'bg-blue-500 text-white' 
                     : 'bg-gray-200 text-gray-700'
@@ -423,7 +421,7 @@ const Dashboard = () => {
               </button>
               <button 
                 onClick={() => handlePeriodChange('month')}
-                className={`px-2 py-1 text-xs rounded ${
+                className={`px-3 py-1 rounded text-sm ${
                   selectedPeriod === 'month' 
                     ? 'bg-blue-500 text-white' 
                     : 'bg-gray-200 text-gray-700'
@@ -473,30 +471,35 @@ const Dashboard = () => {
             </RechartsPieChart>
           </ResponsiveContainer>
         </div>
-        
-        {/* 時間帯別通話グラフ */}
-        <div className="bg-white rounded-lg shadow-md p-4">
-          <h2 className="text-lg font-semibold mb-4">時間帯別通話数</h2>
-          <ResponsiveContainer width="100%" height={250}>
-            <LineChart
-              data={callsByHour}
-              margin={{ top: 5, right: 30, left: 20, bottom: 5 }}
-            >
-              <CartesianGrid strokeDasharray="3 3" />
-              <XAxis dataKey="hour" />
-              <YAxis />
-              <Tooltip />
-              <Legend />
-              <Line type="monotone" dataKey="total" name="総通話数" stroke="#8884d8" activeDot={{ r: 8 }} />
-              <Line type="monotone" dataKey="answered" name="応答数" stroke="#82ca9d" />
-            </LineChart>
-          </ResponsiveContainer>
-        </div>
+      </div>
+      
+      {/* 時間帯別通話グラフ */}
+      <div className="bg-white rounded-lg shadow-md p-4 mb-8">
+        <h2 className="text-lg font-semibold mb-4">時間帯別通話数</h2>
+        <ResponsiveContainer width="100%" height={250}>
+          <LineChart
+            data={callsByHour}
+            margin={{ top: 5, right: 30, left: 20, bottom: 5 }}
+          >
+            <CartesianGrid strokeDasharray="3 3" />
+            <XAxis dataKey="hour" />
+            <YAxis />
+            <Tooltip />
+            <Legend />
+            <Line type="monotone" dataKey="total" name="総通話数" stroke="#8884d8" activeDot={{ r: 8 }} />
+            <Line type="monotone" dataKey="answered" name="応答数" stroke="#82ca9d" />
+          </LineChart>
+        </ResponsiveContainer>
       </div>
       
       {/* アクティブキャンペーン */}
       <div className="bg-white rounded-lg shadow-md p-4 mb-8">
-        <h2 className="text-lg font-semibold mb-4">アクティブなキャンペーン</h2>
+        <div className="flex justify-between items-center mb-4">
+          <h2 className="text-lg font-semibold">アクティブなキャンペーン</h2>
+          <Link to="/campaigns" className="text-blue-600 hover:text-blue-800">
+            すべて表示
+          </Link>
+        </div>
         
         {activeCampaigns.length === 0 ? (
           <p className="text-gray-500">現在アクティブなキャンペーンはありません</p>
@@ -504,32 +507,48 @@ const Dashboard = () => {
           <div className="overflow-x-auto">
             <table className="min-w-full bg-white">
               <thead>
-                <tr>
-                  <th className="py-2 px-4 border-b text-left">キャンペーン名</th>
-                  <th className="py-2 px-4 border-b text-left">発信者番号</th>
-                  <th className="py-2 px-4 border-b text-left">ステータス</th>
-                  <th className="py-2 px-4 border-b text-left">進捗</th>
-                  <th className="py-2 px-4 border-b text-left">実行開始</th>
+                <tr className="bg-gray-50">
+                  <th className="py-3 px-4 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">キャンペーン名</th>
+                  <th className="py-3 px-4 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">ステータス</th>
+                  <th className="py-3 px-4 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">進捗</th>
+                  <th className="py-3 px-4 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">応答率</th>
+                  <th className="py-3 px-4 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">開始日時</th>
+                  <th className="py-3 px-4 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">操作</th>
                 </tr>
               </thead>
-              <tbody>
+              <tbody className="divide-y divide-gray-200">
                 {activeCampaigns.map(campaign => (
                   <tr key={campaign.id}>
-                    <td className="py-2 px-4 border-b">{campaign.name}</td>
-                    <td className="py-2 px-4 border-b">{campaign.caller_id_number}</td>
-                    <td className="py-2 px-4 border-b">
+                    <td className="py-3 px-4">
+                      <div className="text-sm font-medium text-gray-900">{campaign.name}</div>
+                      <div className="text-sm text-gray-500">{campaign.caller_id_number}</div>
+                    </td>
+                    <td className="py-3 px-4">
                       <CampaignStatusBadge status={campaign.status} />
                     </td>
-                    <td className="py-2 px-4 border-b">
-                      <div className="w-full bg-gray-200 rounded-full h-2.5">
-                        <div 
-                          className="bg-blue-600 h-2.5 rounded-full" 
-                          style={{ width: `${campaign.progress || 0}%` }}
-                        ></div>
+                    <td className="py-3 px-4">
+                      <div className="flex items-center">
+                        <div className="w-full bg-gray-200 rounded-full h-2.5 mr-2">
+                          <div 
+                            className="bg-blue-600 h-2.5 rounded-full" 
+                            style={{ width: `${campaign.progress || 0}%` }}
+                          ></div>
+                        </div>
+                        <span className="text-sm text-gray-500">{campaign.progress || 0}%</span>
                       </div>
-                      <span className="text-xs text-gray-500">{campaign.progress || 0}%</span>
                     </td>
-                    <td className="py-2 px-4 border-b">{formatDate(campaign.started_at)}</td>
+                    <td className="py-3 px-4">
+                      <span className="text-sm text-gray-900">{campaign.answerRate}%</span>
+                    </td>
+                    <td className="py-3 px-4 text-sm text-gray-500">{formatDate(campaign.started_at)}</td>
+                    <td className="py-3 px-4">
+                      <Link
+                        to={`/campaigns/${campaign.id}`}
+                        className="text-blue-600 hover:text-blue-800 text-sm"
+                      >
+                        詳細
+                      </Link>
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -540,7 +559,12 @@ const Dashboard = () => {
       
       {/* 最近の通話 */}
       <div className="bg-white rounded-lg shadow-md p-4">
-        <h2 className="text-lg font-semibold mb-4">最近の通話</h2>
+        <div className="flex justify-between items-center mb-4">
+          <h2 className="text-lg font-semibold">最近の通話</h2>
+          <Link to="/calls" className="text-blue-600 hover:text-blue-800">
+            すべて表示
+          </Link>
+        </div>
         
         {recentCalls.length === 0 ? (
           <p className="text-gray-500">通話履歴がありません</p>
@@ -548,26 +572,34 @@ const Dashboard = () => {
           <div className="overflow-x-auto">
             <table className="min-w-full bg-white">
               <thead>
-                <tr>
-                  <th className="py-2 px-4 border-b text-left">時間</th>
-                  <th className="py-2 px-4 border-b text-left">キャンペーン</th>
-                  <th className="py-2 px-4 border-b text-left">電話番号</th>
-                  <th className="py-2 px-4 border-b text-left">ステータス</th>
-                  <th className="py-2 px-4 border-b text-left">通話時間</th>
-                  <th className="py-2 px-4 border-b text-left">キー入力</th>
+                <tr className="bg-gray-50">
+                  <th className="py-3 px-4 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">時間</th>
+                  <th className="py-3 px-4 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">キャンペーン</th>
+                  <th className="py-3 px-4 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">連絡先</th>
+                  <th className="py-3 px-4 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">ステータス</th>
+                  <th className="py-3 px-4 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">通話時間</th>
+                  <th className="py-3 px-4 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">キー入力</th>
                 </tr>
               </thead>
-              <tbody>
+              <tbody className="divide-y divide-gray-200">
                 {recentCalls.map(call => (
                   <tr key={call.id}>
-                    <td className="py-2 px-4 border-b">{formatDate(call.start_time)}</td>
-                    <td className="py-2 px-4 border-b">{call.campaign_name}</td>
-                    <td className="py-2 px-4 border-b">{call.contact_phone}</td>
-                    <td className={`py-2 px-4 border-b ${getStatusColor(call.status)}`}>
-                      {call.status}
+                    <td className="py-3 px-4 text-sm text-gray-500">{formatDate(call.start_time)}</td>
+                    <td className="py-3 px-4 text-sm text-gray-900">{call.campaign_name}</td>
+                    <td className="py-3 px-4">
+                      <div className="text-sm text-gray-900">{call.contact_phone}</div>
+                      <div className="text-sm text-gray-500">{call.contact_name || '-'}</div>
                     </td>
-                    <td className="py-2 px-4 border-b">{call.duration ? `${call.duration}秒` : '-'}</td>
-                    <td className="py-2 px-4 border-b">
+                    <td className={`py-3 px-4 text-sm ${getStatusColor(call.status)}`}>
+                      {call.status === 'ANSWERED' ? '応答' :
+                       call.status === 'NO ANSWER' ? '不応答' :
+                       call.status === 'BUSY' ? '話中' :
+                       call.status === 'FAILED' ? '失敗' : call.status}
+                    </td>
+                    <td className="py-3 px-4 text-sm text-gray-500">
+                      {call.duration ? `${call.duration}秒` : '-'}
+                    </td>
+                    <td className="py-3 px-4 text-sm text-gray-500">
                       {call.keypress ? (
                         call.keypress === '1' ? (
                           <span className="text-green-600">オペレーター接続 (1)</span>
