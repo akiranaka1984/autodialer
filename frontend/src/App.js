@@ -22,7 +22,7 @@ import OperatorDashboard from './components/OperatorDashboard';
 
 // オペレーターインターフェースのインポート
 import OperatorLayout from './components/OperatorInterface/OperatorLayout';
-import OperatorDashboard as OperatorMain from './components/OperatorInterface/OperatorDashboard';
+import OperatorMainDashboard from './components/OperatorInterface/OperatorDashboard';
 import OperatorHistory from './components/OperatorInterface/OperatorHistory';
 import OperatorPerformance from './components/OperatorInterface/OperatorPerformance';
 
