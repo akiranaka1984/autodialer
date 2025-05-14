@@ -30,19 +30,28 @@ exports.testCall = async (req, res) => {
     // 発信者番号の検証（指定された場合）
     let callerIdData = null;
     if (callerID) {
-      const [callerIds] = await db.query('SELECT * FROM caller_ids WHERE id = ? AND active = true', [callerID]);
-      
-      if (callerIds.length === 0) {
-        return res.status(400).json({ message: '選択された発信者番号が見つからないか無効です' });
+      try {
+        // db.queryの結果を[rows, fields]として受け取る
+        const results = await db.query('SELECT * FROM caller_ids WHERE id = ? AND active = true', [callerID]);
+        const callerIds = results[0]; // 最初の要素が行データの配列
+        
+        if (!callerIds || callerIds.length === 0) {
+          return res.status(400).json({ message: '選択された発信者番号が見つからないか無効です' });
+        }
+        
+        callerIdData = callerIds[0];
+      } catch (dbError) {
+        logger.error('発信者番号データ取得エラー:', dbError);
+        return res.status(500).json({ message: 'データベースエラーが発生しました' });
       }
-      
-      callerIdData = callerIds[0];
     }
     
     // 発信パラメータの設定
     const params = {
       phoneNumber,
-      callerID: callerIdData ? `"${callerIdData.description || ''}" <${callerIdData.number}>` : '0312345678',
+      callerID: callerIdData 
+        ? `"${callerIdData.description || ''}" <${callerIdData.number}>` 
+        : process.env.DEFAULT_CALLER_ID || '"Auto Dialer" <03-5946-8520>',
       context: 'autodialer',
       exten: 's',
       priority: 1,
@@ -56,45 +65,86 @@ exports.testCall = async (req, res) => {
     
     logger.info(`テスト発信実行: 発信先=${phoneNumber}, モード=${process.env.MOCK_ASTERISK}`);
     
-    // 発信実行
-    const result = await asterisk.originate(params);
-    
-    // 通話ログに記録
-    const [logResult] = await db.query(`
-      INSERT INTO call_logs 
-      (call_id, caller_id_id, phone_number, start_time, status, test_call)
-      VALUES (?, ?, ?, NOW(), 'ORIGINATING', 1)
-    `, [result.ActionID, callerIdData ? callerIdData.id : null, phoneNumber]);
-    
-    // モック設定を元に戻す
-    process.env.MOCK_ASTERISK = originalMockMode;
-    
-    // 発信結果を返す
-    res.json({
-      success: true,
-      callId: result.ActionID,
-      message: 'テスト発信が開始されました' + (mockMode ? '（モックモード）' : ''),
-      data: result
-    });
-    
-    // 通話終了のシミュレーション（モックモードの場合）
-    if (mockMode) {
-      setTimeout(() => {
-        asterisk.simulateCallEnd(result.ActionID, 'ANSWERED', 10);
-        
-        // 通話ログを更新
-        db.query(`
-          UPDATE call_logs
-          SET end_time = NOW(), duration = 10, status = 'ANSWERED'
-          WHERE call_id = ?
-        `, [result.ActionID]);
-        
-      }, 10000);
+    try {
+      // 発信実行
+      const result = await asterisk.originate(params);
+      
+      // 通話ログに記録
+      try {
+        // db.queryの結果を[logResult, fields]として受け取る
+        const [logResult] = await db.query(`
+          INSERT INTO call_logs 
+          (call_id, caller_id_id, phone_number, start_time, status, test_call)
+          VALUES (?, ?, ?, NOW(), 'ORIGINATING', 1)
+        `, [result.ActionID, callerIdData ? callerIdData.id : null, phoneNumber]);
+      } catch (logError) {
+        logger.error('通話ログ記録エラー:', logError);
+        // エラーはスローせず、処理を続行
+      }
+      
+      // モック設定を元に戻す
+      process.env.MOCK_ASTERISK = originalMockMode;
+      
+      // 発信結果を返す（SIPアカウント情報を含める）
+      const responseData = {
+        success: true,
+        callId: result.ActionID,
+        message: 'テスト発信が開始されました' + (mockMode ? '（モックモード）' : ''),
+        data: result
+      };
+      
+      // SIPアカウント情報がある場合は追加
+      if (result.SipAccount) {
+        responseData.sipAccount = result.SipAccount;
+      }
+      
+      res.json(responseData);
+      
+      // 通話終了のシミュレーション（モックモードの場合）
+      if (mockMode) {
+        setTimeout(() => {
+          try {
+            asterisk.simulateCallEnd(result.ActionID, 'ANSWERED', 10);
+            
+            // 通話ログを更新
+            db.query(`
+              UPDATE call_logs
+              SET end_time = NOW(), duration = 10, status = 'ANSWERED'
+              WHERE call_id = ?
+            `, [result.ActionID]).catch(err => {
+              logger.error('通話ログ更新エラー:', err);
+            });
+            
+            // SIPアカウントを解放（リソース管理）
+            if (typeof asterisk.releaseCallResource === 'function') {
+              asterisk.releaseCallResource(result.ActionID).catch(err => {
+                logger.error('SIPリソース解放エラー:', err);
+              });
+            }
+          } catch (simulateError) {
+            logger.error('テスト発信シミュレーションエラー:', simulateError);
+          }
+        }, 10000);
+      }
+    } catch (originateError) {
+      logger.error('発信処理エラー:', originateError);
+      
+      // モック設定を元に戻す
+      process.env.MOCK_ASTERISK = originalMockMode;
+      
+      return res.status(500).json({ 
+        message: 'テスト発信に失敗しました', 
+        error: originateError.message,
+        isSipError: originateError.message.includes('SIP') || originateError.message.includes('利用可能なSIPアカウント')
+      });
     }
-    
   } catch (error) {
     logger.error('テスト発信エラー:', error);
-    res.status(500).json({ message: 'テスト発信に失敗しました', error: error.message });
+    res.status(500).json({ 
+      message: 'テスト発信に失敗しました', 
+      error: error.message,
+      isSipError: error.message.includes('SIP') || error.message.includes('利用可能なSIPアカウント')
+    });
   }
 };
 
@@ -165,9 +215,12 @@ exports.getAllCalls = async (req, res) => {
     query += ' ORDER BY cl.start_time DESC LIMIT ? OFFSET ?';
     params.push(parseInt(limit), offset);
     
+    // db.queryの結果を[rows, fields]として受け取る
     const [calls] = await db.query(query, params);
-    const [totalResult] = await db.query(countQuery, countParams);
-    const total = totalResult[0].total;
+    const [totalResults] = await db.query(countQuery, countParams);
+    
+    // totalResults[0]を使用
+    const total = totalResults[0].total;
     
     res.json({
       calls,
@@ -233,6 +286,7 @@ exports.exportCalls = async (req, res) => {
     
     query += ' ORDER BY cl.start_time DESC';
     
+    // db.queryの結果を[rows, fields]として受け取る
     const [calls] = await db.query(query, params);
     
     // CSVヘッダーを作成
@@ -278,6 +332,7 @@ exports.exportCalls = async (req, res) => {
 // 特定の通話の詳細を取得
 exports.getCallById = async (req, res) => {
   try {
+    // db.queryの結果を[rows, fields]として受け取る
     const [calls] = await db.query(`
       SELECT cl.*, 
              c.phone as contact_phone, c.name as contact_name, c.company as contact_company,
@@ -335,6 +390,7 @@ exports.getCallStats = async (req, res) => {
       params.push(campaignId);
     }
     
+    // db.queryの結果を[rows, fields]として受け取る
     const [stats] = await db.query(query, params);
     
     res.json(stats[0]);
@@ -354,6 +410,7 @@ exports.handleCallEnd = async (req, res) => {
     }
     
     // 通話ログを更新
+    // db.queryの結果を[result, fields]として受け取る
     const [result] = await db.query(`
       UPDATE call_logs
       SET end_time = NOW(), 
@@ -368,24 +425,37 @@ exports.handleCallEnd = async (req, res) => {
     }
     
     // 連絡先のステータスを更新（該当する場合）
-    const [callInfo] = await db.query('SELECT contact_id FROM call_logs WHERE call_id = ?', [callId]);
+    // db.queryの結果を[rows, fields]として受け取る
+    const [callInfoResult] = await db.query('SELECT contact_id FROM call_logs WHERE call_id = ?', [callId]);
     
-    if (callInfo.length > 0 && callInfo[0].contact_id) {
+    if (callInfoResult.length > 0 && callInfoResult[0].contact_id) {
+      const contactId = callInfoResult[0].contact_id;
       let contactStatus = 'completed';
       
       if (keypress === '9') {
         contactStatus = 'dnc';
         // DNCリストに追加
-        const [contact] = await db.query('SELECT phone FROM contacts WHERE id = ?', [callInfo[0].contact_id]);
-        if (contact.length > 0) {
+        const [contactResult] = await db.query('SELECT phone FROM contacts WHERE id = ?', [contactId]);
+        
+        if (contactResult.length > 0) {
           await db.query(
             'INSERT IGNORE INTO dnc_list (phone, reason, created_at) VALUES (?, ?, NOW())',
-            [contact[0].phone, 'ユーザーリクエスト（キーパッド入力9）']
+            [contactResult[0].phone, 'ユーザーリクエスト（キーパッド入力9）']
           );
         }
       }
       
-      await db.query('UPDATE contacts SET status = ? WHERE id = ?', [contactStatus, callInfo[0].contact_id]);
+      await db.query('UPDATE contacts SET status = ? WHERE id = ?', [contactStatus, contactId]);
+    }
+    
+    // SIPアカウントを解放
+    if (typeof asterisk.releaseCallResource === 'function') {
+      try {
+        await asterisk.releaseCallResource(callId);
+        logger.info(`通話終了時にSIPリソースを解放: callId=${callId}`);
+      } catch (sipError) {
+        logger.warn(`SIPリソース解放エラー: ${sipError.message}`);
+      }
     }
     
     res.json({ success: true, message: '通話終了が記録されました' });
