@@ -14,6 +14,9 @@ const TestCall = () => {
   const [callHistory, setCallHistory] = useState([]);
   const [showHistory, setShowHistory] = useState(false);
   const [mode, setMode] = useState(localStorage.getItem('callTestMode') || 'mock');
+  const [provider, setProvider] = useState('');
+  const [providers, setProviders] = useState([]);
+  const [loadingProviders, setLoadingProviders] = useState(false);
 
   // 環境変数からAPIのベースURLを取得
   const apiBaseUrl = process.env.REACT_APP_API_URL || 'http://localhost:5001/api';
@@ -25,67 +28,102 @@ const TestCall = () => {
     localStorage.setItem('callTestMode', newMode);
   };
 
-  // 発信者番号の一覧を取得
+  // プロバイダ情報を取得
   useEffect(() => {
-    const fetchCallerIds = async () => {
+    const fetchProviders = async () => {
       try {
-        setLoading(true);
+        setLoadingProviders(true);
         const token = localStorage.getItem('token');
         
         // 開発環境でモックデータを使用するオプション
         if (process.env.NODE_ENV === 'development' && window.location.hostname === 'localhost') {
-          console.log('開発環境でモックデータを使用');
-          // モックデータのセット
+          // モックデータ
           setTimeout(() => {
-            const mockData = [
-              { id: 1, number: '0312345678', description: '東京オフィス', active: true },
-              { id: 2, number: '0312345679', description: '大阪オフィス', active: true }
-            ];
-            setCallerIds(mockData);
-            if (mockData.length > 0) {
-              setSelectedCallerId(mockData[0].id);
-            }
-            setLoading(false);
+            setProviders([
+              { name: 'asterisk', connected: true, activeCallCount: 2 },
+              { name: 'sip', connected: true, activeCallCount: 0 },
+              { name: 'twilio', connected: false, activeCallCount: 0 }
+            ]);
+            setLoadingProviders(false);
           }, 500);
           return;
         }
         
-        console.log('API呼び出し:', `${apiBaseUrl}/caller-ids?active=true`);
-        
-        const response = await fetch(`${apiBaseUrl}/caller-ids?active=true`, {
-          headers: {
-            'Authorization': `Bearer ${token}`
-          }
+        const response = await fetch(`${apiBaseUrl}/calls/providers/status`, {
+          headers: { 'Authorization': `Bearer ${token}` }
         });
         
         if (!response.ok) {
-          throw new Error('発信者番号の取得に失敗しました');
+          throw new Error('プロバイダ情報の取得に失敗しました');
         }
         
         const data = await response.json();
-        setCallerIds(data);
+        setProviders(data.providers.filter(p => p.connected));
         
-        // アクティブな発信者番号が存在する場合は最初の番号を選択
-        if (data.length > 0) {
-          setSelectedCallerId(data[0].id);
-        }
-        
-        setError(null);
-      } catch (err) {
-        console.error('API呼び出しエラー:', err);
-        setError(err.message);
+      } catch (error) {
+        console.error('プロバイダ情報取得エラー:', error);
       } finally {
-        setLoading(false);
+        setLoadingProviders(false);
       }
     };
     
+    fetchProviders();
+  }, [apiBaseUrl]);
+
+  // 発信者番号の一覧を取得
+  useEffect(() => {
     fetchCallerIds();
-    
-    // テスト発信履歴も取得
-    fetchCallHistory();
   }, [apiBaseUrl]);
   
-  // テスト発信履歴を取得
+  // テスト発信履歴も取得
+  useEffect(() => {
+    fetchCallHistory();
+  }, [apiBaseUrl]);
+
+  const fetchCallerIds = async () => {
+    setLoading(true);
+    try {
+      const token = localStorage.getItem('token');
+      
+      // 開発環境でモックデータを使用するオプション
+      if (process.env.NODE_ENV === 'development' && window.location.hostname === 'localhost') {
+        console.log('開発環境でモックデータを使用');
+        // モックデータのセット
+        setTimeout(() => {
+          const mockData = [
+            { id: 1, number: '0312345678', description: '東京オフィス', provider: 'SIP Provider A', active: true },
+            { id: 2, number: '0312345679', description: '大阪オフィス', provider: 'SIP Provider A', active: true },
+            { id: 3, number: '0501234567', description: 'マーケティング部', provider: 'Twilio', active: false }
+          ];
+          setCallerIds(mockData);
+          setLoading(false);
+        }, 500);
+        return;
+      }
+      
+      console.log('API呼び出し:', `${apiBaseUrl}/caller-ids`);
+      
+      const response = await fetch(`${apiBaseUrl}/caller-ids`, {
+        headers: {
+          'Authorization': `Bearer ${token}`
+        }
+      });
+      
+      if (!response.ok) {
+        throw new Error('データの取得に失敗しました');
+      }
+      
+      const data = await response.json();
+      setCallerIds(data);
+      setError(null);
+    } catch (err) {
+      console.error('API呼び出しエラー:', err);
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const fetchCallHistory = async () => {
     try {
       const token = localStorage.getItem('token');
@@ -103,7 +141,8 @@ const TestCall = () => {
               callerIdDescription: '東京オフィス',
               status: 'ANSWERED',
               duration: 12,
-              timestamp: new Date(Date.now() - 3600000).toISOString()
+              timestamp: new Date(Date.now() - 3600000).toISOString(),
+              call_provider: 'asterisk'
             },
             {
               id: 2,
@@ -113,7 +152,8 @@ const TestCall = () => {
               callerIdDescription: '大阪オフィス',
               status: 'NO ANSWER',
               duration: 0,
-              timestamp: new Date(Date.now() - 7200000).toISOString()
+              timestamp: new Date(Date.now() - 7200000).toISOString(),
+              call_provider: 'sip'
             },
             {
               id: 3,
@@ -123,7 +163,8 @@ const TestCall = () => {
               callerIdDescription: '東京オフィス',
               status: 'BUSY',
               duration: 0,
-              timestamp: new Date(Date.now() - 86400000).toISOString()
+              timestamp: new Date(Date.now() - 86400000).toISOString(),
+              call_provider: 'asterisk'
             }
           ];
           setCallHistory(mockHistory);
@@ -181,34 +222,38 @@ const TestCall = () => {
       
       const token = localStorage.getItem('token');
       
-      // モード情報を送信データに追加
-      const callData = {
+      // 送信データを設定
+      const data = {
         phoneNumber,
         callerID: selectedCallerId,
-        mockMode: mode === 'mock'
+        mockMode: mode === 'mock',
+        provider: provider || undefined // 空文字列の場合はundefinedにしてパラメータから除外
       };
+      
       // API呼び出し前にデバッグ情報を出力
-      console.log('送信データ:', callData);
+      console.log('送信データ:', data);
       console.log('現在のモード:', mode);
       
       // 開発環境でモックデータを使用するオプション
-      if (process.env.NODE_ENV === 'development' && window.location.hostname === 'localhost' && mode === 'mock') {
+      if (process.env.NODE_ENV === 'development' && window.location.hostname === 'localhost') {
         console.log('開発環境でモックデータを使用 - テスト発信');
         // モックデータのセット
         setTimeout(() => {
+          const selectedProvider = provider || (Math.random() > 0.5 ? 'asterisk' : 'sip');
           const mockCallDetails = {
             callId: `mock-${Date.now()}`,
             success: true,
-            message: 'テスト発信が開始されました（モックモード）',
+            message: `テスト発信が開始されました（${selectedProvider}モード）`,
             data: {
               ActionID: `mock-${Date.now()}`,
               Response: 'Success',
-              Message: 'Originate successfully queued (MOCK MODE)'
+              Message: `Originate successfully queued (${selectedProvider.toUpperCase()})`,
+              provider: selectedProvider
             }
           };
           setCallDetails(mockCallDetails);
           setCallStatus('success');
-          setMessage('テスト発信が開始されました（モックモード）');
+          setMessage(`テスト発信が開始されました（${selectedProvider}モード）`);
           
           // 10秒後に通話結果をシミュレーション
           setTimeout(() => {
@@ -229,7 +274,8 @@ const TestCall = () => {
                 callerIdDescription: selectedCaller?.description || '発信者番号',
                 status: 'ANSWERED',
                 duration: 10,
-                timestamp: new Date().toISOString()
+                timestamp: new Date().toISOString(),
+                call_provider: selectedProvider
               },
               ...prev
             ]);
@@ -246,7 +292,7 @@ const TestCall = () => {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${token}`
         },
-        body: JSON.stringify(callData)
+        body: JSON.stringify(data)
       });
       
       if (!response.ok) {
@@ -254,11 +300,11 @@ const TestCall = () => {
         throw new Error(errorData.message || 'テスト発信に失敗しました');
       }
       
-      const data = await response.json();
+      const responseData = await response.json();
       
-      setCallDetails(data);
+      setCallDetails(responseData);
       setCallStatus('success');
-      setMessage('テスト発信が開始されました' + (mode === 'mock' ? '（モックモード）' : ''));
+      setMessage(responseData.message || 'テスト発信が開始されました');
       
       // 発信成功後、履歴を更新
       fetchCallHistory();
@@ -299,6 +345,34 @@ const TestCall = () => {
         return 'text-red-800';
       default:
         return 'text-gray-600';
+    }
+  };
+  
+  // プロバイダに基づく色を取得
+  const getProviderColor = (provider) => {
+    switch (provider) {
+      case 'asterisk':
+        return 'text-blue-600';
+      case 'sip':
+        return 'text-purple-600';
+      case 'twilio':
+        return 'text-red-600';
+      default:
+        return 'text-gray-600';
+    }
+  };
+  
+  // プロバイダの表示名を取得
+  const getProviderDisplayName = (provider) => {
+    switch (provider) {
+      case 'asterisk':
+        return 'Asterisk';
+      case 'sip':
+        return 'SIP直接';
+      case 'twilio':
+        return 'Twilio';
+      default:
+        return provider || '不明';
     }
   };
   
@@ -424,13 +498,44 @@ const TestCall = () => {
               {callerIds.length === 0 ? (
                 <option value="">有効な発信者番号がありません</option>
               ) : (
-                callerIds.map(callerId => (
-                  <option key={callerId.id} value={callerId.id}>
-                    {callerId.number} - {callerId.description}
-                  </option>
-                ))
+                <>
+                  <option value="">発信者番号を選択</option>
+                  {callerIds.map(callerId => (
+                    <option key={callerId.id} value={callerId.id}>
+                      {callerId.number} - {callerId.description}
+                      {callerId.provider ? ` (${callerId.provider})` : ''}
+                    </option>
+                  ))}
+                </>
               )}
             </select>
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">
+              プロバイダ選択
+            </label>
+            <select
+              id="provider"
+              name="provider"
+              className="mt-1 block w-full pl-3 pr-10 py-2 text-base border-gray-300 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm rounded-md"
+              value={provider}
+              onChange={(e) => setProvider(e.target.value)}
+              disabled={loadingProviders}
+            >
+              <option value="">自動選択</option>
+              {providers.map(p => (
+                <option key={p.name} value={p.name}>
+                  {p.name === 'asterisk' ? 'Asterisk' : 
+                   p.name === 'sip' ? 'SIP直接' : 
+                   p.name === 'twilio' ? 'Twilio' : p.name}
+                  {p.activeCallCount !== null ? ` (アクティブ: ${p.activeCallCount})` : ''}
+                </option>
+              ))}
+            </select>
+            {loadingProviders && (
+              <p className="mt-1 text-xs text-gray-500">プロバイダ情報を読み込み中...</p>
+            )}
           </div>
         </div>
         
@@ -502,6 +607,9 @@ const TestCall = () => {
                     <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                       通話時間
                     </th>
+                    <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      プロバイダ
+                    </th>
                   </tr>
                 </thead>
                 <tbody className="bg-white divide-y divide-gray-200">
@@ -524,6 +632,11 @@ const TestCall = () => {
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
                         {call.duration > 0 ? `${call.duration}秒` : '-'}
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap">
+                        <span className={`${getProviderColor(call.call_provider)}`}>
+                          {getProviderDisplayName(call.call_provider)}
+                        </span>
                       </td>
                     </tr>
                   ))}
@@ -591,6 +704,14 @@ const TestCall = () => {
                   </dd>
                 </div>
                 
+                {/* プロバイダ情報 */}
+                <div className="sm:col-span-1">
+                  <dt className="text-sm font-medium text-gray-500">使用プロバイダ</dt>
+                  <dd className={`mt-1 text-sm ${getProviderColor(callDetails.data?.provider || '')}`}>
+                    {getProviderDisplayName(callDetails.data?.provider || '')}
+                  </dd>
+                </div>
+                
                 {callDetails.data && (
                   <div className="sm:col-span-2 mt-2">
                     <details>
@@ -620,6 +741,7 @@ const TestCall = () => {
           <ul className="list-disc pl-5 mb-2 space-y-1">
             <li>発信先電話番号に、テストに使用する電話番号を入力します</li>
             <li>発信者番号から、使用する発信者IDを選択します</li>
+            <li>プロバイダを選択します（自動選択の場合はシステムが最適なプロバイダを使用）</li>
             <li>モードを選択します（モックモードでは実発信されません）</li>
             <li>「テスト発信」ボタンをクリックすると発信が開始されます</li>
             <li>発信結果は画面上部に表示されます</li>

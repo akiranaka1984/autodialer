@@ -477,6 +477,48 @@ class SipService extends EventEmitter {
       lastUsed: account.lastUsed
     }));
   }
+  // src/services/sipService.js に追加
+
+  setMockMode(mode) {
+    this.mockMode = mode === true;
+    logger.info(`SIPサービスのモックモードを${this.mockMode ? '有効' : '無効'}に設定`);
+    return this.mockMode;
+  }
+
+  // 通話IDの存在確認
+  async hasCall(callId) {
+    if (!callId) return false;
+    return this.callToAccountMap.has(callId);
+  }
+
+  // アクティブコール数の取得
+  getActiveCallCount() {
+    return this.callToAccountMap.size;
+  }
+
+  // アカウント状態の取得
+  getAccountStatus() {
+    return this.sipAccounts.map(account => ({
+      username: account.username,
+      status: account.status,
+      lastUsed: account.lastUsed
+    }));
+  }
+
+  // 通話終了処理
+  async handleCallEnd(callId, duration, status, keypress) {
+    logger.info(`SIP通話終了処理: callId=${callId}, status=${status}, duration=${duration}`);
+    
+    // 通話終了イベントをエミット
+    this.emit('callEnded', {
+      callId,
+      status,
+      duration
+    });
+    
+    // リソースの解放
+    return await this.releaseCallResource(callId);
+  }
 }
 
 // シングルトンインスタンスを作成

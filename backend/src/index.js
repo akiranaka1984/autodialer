@@ -4,7 +4,7 @@ const cors = require('cors');
 const http = require('http');
 const logger = require('./services/logger');
 const db = require('./services/database');
-const asterisk = require('./services/asterisk');
+const callService = require('./services/callService');
 const websocketService = require('./services/websocketService');
 
 // 環境変数の読み込み
@@ -42,12 +42,27 @@ app.use((req, res, next) => {
 
 // ルートエンドポイント
 app.get('/', (req, res) => {
-  res.json({ message: 'オートコールシステムAPI稼働中' });
+  res.json({ 
+    message: 'オートコールシステムAPI稼働中',
+    version: '1.1.0',
+    mode: process.env.MOCK_ASTERISK === 'true' ? 'モックモード' : '本番モード',
+    defaultProvider: process.env.DEFAULT_CALL_PROVIDER || 'asterisk'
+  });
 });
 
 // ヘルスチェックエンドポイント - CORSのテストにも使用可能
 app.get('/health', (req, res) => {
-  res.json({ status: 'ok', timestamp: new Date(), cors: 'enabled' });
+  res.json({ 
+    status: 'ok', 
+    timestamp: new Date(), 
+    cors: 'enabled',
+    providers: {
+      default: process.env.DEFAULT_CALL_PROVIDER,
+      mockMode: process.env.MOCK_ASTERISK === 'true',
+      fallbackEnabled: process.env.FALLBACK_ENABLED === 'true',
+      loadBalancingEnabled: process.env.LOAD_BALANCING_ENABLED === 'true'
+    }
+  });
 });
 
 // 利用可能なルートを確認して使用
@@ -123,6 +138,33 @@ try {
   logger.warn('レポートAPIの読み込みに失敗しました:', error.message);
 }
 
+// 設定ルート
+try {
+  const settingsRoutes = require('./routes/settings');
+  app.use('/api/settings', settingsRoutes);
+  logger.info('設定APIを有効化しました');
+} catch (error) {
+  logger.warn('設定APIの読み込みに失敗しました:', error.message);
+}
+
+// オペレーター管理ルート
+try {
+  const operatorRoutes = require('./routes/operators');
+  app.use('/api/operators', operatorRoutes);
+  logger.info('オペレーター管理APIを有効化しました');
+} catch (error) {
+  logger.warn('オペレーター管理APIの読み込みに失敗しました:', error.message);
+}
+
+// DNCリストルート
+try {
+  const dncRoutes = require('./routes/dnc');
+  app.use('/api/dnc', dncRoutes);
+  logger.info('DNCリストAPIを有効化しました');
+} catch (error) {
+  logger.warn('DNCリストAPIの読み込みに失敗しました:', error.message);
+}
+
 // 404エラーハンドリング - すべてのルートに一致しなかった場合
 app.use((req, res, next) => {
   res.status(404).json({ message: '要求されたリソースが見つかりません' });
@@ -141,19 +183,16 @@ const startServer = async () => {
     await db.query('SELECT 1');
     logger.info('データベースに接続しました');
     
-    // Asteriskサービスに接続
-    if (process.env.MOCK_ASTERISK !== 'true'){
-      await asterisk.connect();
-      logger.info('Asteriskサービスに接続しました');
-    } else {
-      logger.info('Asteriskサービスはモックモードで実行されています');
-    }
+    // 統合コールサービスを初期化
+    await callService.initialize();
+    logger.info('統合コールサービスを初期化しました');
     
     // サーバー起動（HTTPサーバーインスタンスを使用）
     server.listen(PORT, '0.0.0.0', () => {
       logger.info(`サーバーが起動しました: http://localhost:${PORT}`);
-      logger.info(`発信者番号API: http://localhost:${PORT}/api/caller-ids`);
-      logger.info(`テスト発信API: http://localhost:${PORT}/api/calls/test`);
+      logger.info(`実行モード: ${process.env.NODE_ENV}`);
+      logger.info(`コールサービス: デフォルトプロバイダ=${process.env.DEFAULT_CALL_PROVIDER}, モックモード=${process.env.MOCK_ASTERISK === 'true'}`);
+      logger.info(`フォールバック: ${process.env.FALLBACK_ENABLED === 'true' ? '有効' : '無効'}, ロードバランシング: ${process.env.LOAD_BALANCING_ENABLED === 'true' ? '有効' : '無効'}`);
     });
   } catch (error) {
     logger.error('サーバー起動エラー:', error);
@@ -171,23 +210,30 @@ process.on('uncaughtException', (error) => {
   process.exit(1);
 });
 
-// 設定ルート
-try {
-  const settingsRoutes = require('./routes/settings');
-  app.use('/api/settings', settingsRoutes);
-  logger.info('設定APIを有効化しました');
-} catch (error) {
-  logger.warn('設定APIの読み込みに失敗しました:', error.message);
-}
-
-// オペレーター管理ルート
-try {
-  const operatorRoutes = require('./routes/operators');
-  app.use('/api/operators', operatorRoutes);
-  logger.info('オペレーター管理APIを有効化しました');
-} catch (error) {
-  logger.warn('オペレーター管理APIの読み込みに失敗しました:', error.message);
-}
+// アプリケーションの終了処理
+process.on('SIGINT', async () => {
+  logger.info('アプリケーションを終了します...');
+  
+  try {
+    // コールサービスの終了処理
+    if (callService.shutdown) {
+      await callService.shutdown();
+      logger.info('コールサービスを正常に終了しました');
+    }
+    
+    // データベース接続のクローズ
+    if (db.close) {
+      await db.close();
+      logger.info('データベース接続を閉じました');
+    }
+    
+    logger.info('正常に終了しました');
+    process.exit(0);
+  } catch (error) {
+    logger.error('終了処理中にエラーが発生しました:', error);
+    process.exit(1);
+  }
+});
 
 // サーバー起動
 startServer();
