@@ -1,27 +1,27 @@
-const AmiClient = require('asterisk-ami-client');
+// src/services/sipService.js
+const SIP = require('sip.js'); // または適切なSIPライブラリ
 const logger = require('./logger');
 const { EventEmitter } = require('events');
 
-class AsteriskService extends EventEmitter {
+class SipService extends EventEmitter {
   constructor() {
     super();
     this.connected = false;
-    this.mockMode = false; // process.env.MOCK_ASTERISK === 'true' から変更
-    this.client = null;
+    this.mockMode = process.env.MOCK_SIP === 'true';
     this.sipAccounts = [];
     this.callToAccountMap = new Map();
     
-    logger.info(`AsteriskService初期化: mockMode=${this.mockMode}`);
+    logger.info(`SipService初期化: mockMode=${this.mockMode}`);
     
     // 自身のイベントハンドラーを設定
     this.on('callEnded', this.handleCallEnded.bind(this));
   }
 
   async connect() {
-    logger.info('AsteriskService.connect() 開始');
+    logger.info('SipService.connect() 開始');
     
     if (this.mockMode) {
-      logger.info('Asteriskサービスにモックモードで接続しました');
+      logger.info('SIPサービスにモックモードで接続しました');
       this.connected = true;
       
       // SIPアカウントのロード
@@ -32,8 +32,8 @@ class AsteriskService extends EventEmitter {
         logger.error('SIPアカウントロードエラー（モックモード）:', err);
         // デフォルトアカウントを設定
         this.sipAccounts = [
-          { username: 'mock-user1', password: 'mock-pass1', status: 'available' },
-          { username: 'mock-user2', password: 'mock-pass2', status: 'available' }
+          { username: 'mock-user1', password: 'mock-pass1', status: 'available', callerID: '0359468520' },
+          { username: 'mock-user2', password: 'mock-pass2', status: 'available', callerID: '0335289538' }
         ];
       }
       
@@ -41,65 +41,72 @@ class AsteriskService extends EventEmitter {
     }
 
     try {
-      logger.info('Asteriskサービスに接続を試みています...');
+      logger.info('SIPサービスに接続を試みています...');
       
-      // AMIクライアントを初期化
-      this.client = new AmiClient({
-        reconnect: true,
-        maxRetries: 5,
-        maxRetryTime: 5000,
-        keepAlive: true
-      });
-      
-      // AMIイベントハンドラーの設定
-      this.client.on('connect', () => {
-        logger.info('Asteriskサービスに接続しました');
-        this.connected = true;
-      });
-      
-      this.client.on('disconnect', () => {
-        logger.warn('Asteriskサービスから切断されました');
-        this.connected = false;
-      });
-      
-      this.client.on('reconnection', () => {
-        logger.info('Asteriskサービスに再接続しています...');
-      });
-      
-      this.client.on('event', (event) => {
-        // 通話イベント処理
-        if (event.Event === 'Hangup') {
-          this.emit('callEnded', {
-            callId: event.Uniqueid,
-            status: this.getHangupStatusFromCause(event.Cause),
-            duration: parseInt(event.Duration || 0)
-          });
-        } else if (event.Event === 'OriginateResponse' && event.Response === 'Success') {
-          this.emit('callStarted', {
-            callId: event.Uniqueid,
-            number: event.CallerIDNum,
-            callerID: event.CallerID
-          });
-        }
-      });
-      
-      // AMIに接続
-      await this.client.connect(
-        process.env.ASTERISK_USERNAME || 'admin',
-        process.env.ASTERISK_PASSWORD || 'password',
-        {
-          host: 'ito258258.site', // 直接サーバー名を指定
-          port: 5060 // SIPの標準ポート 
-        }
-      );
-      
-      // SIPアカウントの初期化
+      // SIPアカウント情報をロード
       this.sipAccounts = this.loadSipAccounts();
+      
+      if (this.sipAccounts.length === 0) {
+        throw new Error('SIPアカウントが設定されていません');
+      }
+      
       logger.info(`${this.sipAccounts.length}個のSIPアカウントを読み込みました`);
+      
+      // SIPクライアントの初期化
+      // 注意: 実際にはSIPライブラリによって初期化方法が異なります
+      try {
+        // SIP.jsを使用した例
+        this.client = new SIP.UA({
+          uri: `sip:${this.sipAccounts[0].username}@${process.env.SIP_HOST}`,
+          transportOptions: {
+            wsServers: [`ws://${process.env.SIP_HOST}:${process.env.SIP_WS_PORT || 8088}`]
+          },
+          authorizationUser: this.sipAccounts[0].username,
+          password: this.sipAccounts[0].password,
+          displayName: this.sipAccounts[0].callerID,
+          register: true,
+          registerExpires: 300, // 5分
+          iceCheckingTimeout: 5000,
+          hackIpInContact: true,
+          log: {
+            level: process.env.NODE_ENV === 'production' ? 'error' : 'debug'
+          }
+        });
+        
+        // SIP.jsイベントハンドラー
+        this.client.on('registered', () => {
+          logger.info('SIPサービスに登録成功');
+          this.connected = true;
+        });
+        
+        this.client.on('unregistered', () => {
+          logger.warn('SIPサービスから登録解除');
+          this.connected = false;
+        });
+        
+        this.client.on('registrationFailed', (response, cause) => {
+          logger.error(`SIP登録失敗: ${cause}`);
+          this.connected = false;
+        });
+        
+        // 通話イベント監視
+        this.client.on('invite', (session) => {
+          // 着信処理（必要に応じて実装）
+          logger.info(`SIP着信: ${session.remoteIdentity.uri}`);
+        });
+        
+        // 接続確立
+        this.client.start();
+        
+        logger.info('SIPクライアントを初期化しました');
+      } catch (sipError) {
+        logger.error('SIPクライアント初期化エラー:', sipError);
+        throw sipError;
+      }
       
       return true;
     } catch (error) {
-      logger.error('Asterisk接続エラー:', error);
+      logger.error('SIP接続エラー:', error);
       this.connected = false;
       throw error;
     }
@@ -121,7 +128,7 @@ class AsteriskService extends EventEmitter {
         
         logger.info(`モックモードで使用するSIPアカウント: ${JSON.stringify(sipAccount)}`);
         
-        const callId = `mock-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
+        const callId = `sip-mock-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
         
         // SIPアカウントを使用中にマーク
         sipAccount.status = 'busy';
@@ -136,7 +143,7 @@ class AsteriskService extends EventEmitter {
         this.emit('callStarted', {
           callId,
           number: params.phoneNumber,
-          callerID: params.callerID || 'デフォルト番号',
+          callerID: params.callerID || sipAccount.callerID || '0359468520',
           variables: params.variables || {},
           sipAccount: sipAccount.username
         });
@@ -144,17 +151,17 @@ class AsteriskService extends EventEmitter {
         return {
           ActionID: callId,
           Response: 'Success',
-          Message: 'Originate successfully queued (MOCK MODE)',
+          Message: 'SIP call successfully queued (MOCK MODE)',
           SipAccount: sipAccount.username
         };
       } catch (error) {
-        logger.error('モックモード発信エラー:', error);
+        logger.error('モックモードSIP発信エラー:', error);
         throw error;
       }
     }
 
-    if (!this.connected || !this.client) {
-      logger.info('Asteriskに未接続のため、接続を試行します');
+    if (!this.connected) {
+      logger.info('SIPサービスに未接続のため、接続を試行します');
       await this.connect();
     }
 
@@ -170,44 +177,75 @@ class AsteriskService extends EventEmitter {
       
       logger.info(`発信処理を実行: 発信先=${params.phoneNumber}, SIPアカウント=${sipAccount.username}`);
       
-      const actionId = `call-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
+      const actionId = `sip-call-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
       
-      // SIPアカウント情報を設定
-      const channel = `SIP/${sipAccount.username}/${params.phoneNumber}`;
+      // 発信先番号のフォーマット処理
+      const formattedNumber = this.formatPhoneNumber(params.phoneNumber);
       
-      logger.info(`AMIアクション送信: Channel=${channel}, CallerID=${params.callerID}`);
+      // 発信者番号の設定
+      const callerID = params.callerID || sipAccount.callerID || process.env.DEFAULT_CALLER_ID;
       
-      // Asterisk AMIに発信リクエストを送信
-      const result = await this.client.action({
-        Action: 'Originate',
-        ActionID: actionId,
-        Channel: channel,
-        Context: params.context || 'autodialer',
-        Exten: params.exten || 's',
-        Priority: params.priority || 1,
-        CallerID: params.callerID || `"Auto Dialer" <${process.env.DEFAULT_CALLER_ID || '03-5946-8520'}>`,
-        Timeout: 30000,
-        Async: true,
-        Variable: this.formatVariables(params.variables)
-      });
-      
-      logger.info('AMI発信結果:', JSON.stringify(result));
-      
-      // SIPアカウントのステータスを更新
-      sipAccount.status = 'busy';
-      sipAccount.lastUsed = new Date();
-      
-      // 通話IDとSIPアカウントを関連付け
-      this.callToAccountMap.set(actionId, sipAccount);
-      
-      logger.info(`SIPアカウント使用中マーク: ID=${actionId}, アカウント=${sipAccount.username}`);
-      
-      return {
-        ActionID: actionId,
-        Response: result.Response,
-        Message: result.Message,
-        SipAccount: sipAccount.username
-      };
+      try {
+        // SIP.jsを使った発信例
+        const session = this.client.invite(`sip:${formattedNumber}@${process.env.SIP_HOST}`, {
+          extraHeaders: [
+            `P-Asserted-Identity: <sip:${callerID}@${process.env.SIP_HOST}>`,
+            `X-Call-ID: ${actionId}`
+          ],
+          media: {
+            constraints: { audio: true, video: false }
+          },
+          sessionDescriptionHandlerOptions: {
+            constraints: { audio: true, video: false }
+          }
+        });
+        
+        // セッションイベントのハンドリング
+        session.on('accepted', () => {
+          logger.info(`SIP通話応答: ${actionId}`);
+          // 通話応答イベントをエミット（必要に応じて）
+        });
+        
+        session.on('terminated', (message, cause) => {
+          logger.info(`SIP通話終了: ${actionId}, cause=${cause}`);
+          this.emit('callEnded', {
+            callId: actionId,
+            status: this.mapSipStatus(cause),
+            duration: Math.round((Date.now() - session.startTime) / 1000) || 0
+          });
+        });
+        
+        // 通話開始時間を記録
+        session.startTime = Date.now();
+        
+        // セッションを保存
+        this.callToAccountMap.set(actionId, {
+          sipAccount,
+          session,
+          startTime: Date.now()
+        });
+        
+        // 発信開始イベントをエミット
+        this.emit('callStarted', {
+          callId: actionId,
+          number: params.phoneNumber,
+          callerID: callerID,
+          variables: params.variables || {}
+        });
+        
+        logger.info(`SIP発信成功: ${actionId}`);
+        
+        // 結果を返す
+        return {
+          ActionID: actionId,
+          Response: 'Success',
+          Message: 'SIP call successfully placed',
+          SipAccount: sipAccount.username
+        };
+      } catch (sipError) {
+        logger.error(`SIP発信エラー: ${sipError.message}`);
+        throw sipError;
+      }
     } catch (error) {
       logger.error('発信エラー:', error);
       logger.error('スタックトレース:', error.stack);
@@ -215,51 +253,33 @@ class AsteriskService extends EventEmitter {
     }
   }
 
-  // 変数を Asterisk AMI 形式にフォーマット
-  formatVariables(variables) {
-    logger.debug('formatVariables() 呼び出し:', JSON.stringify(variables));
-    
-    if (!variables) {
-      logger.debug('variables が null/undefined のため空配列を返します');
-      return [];
-    }
-    
-    if (typeof variables !== 'object') {
-      logger.debug(`variables がオブジェクトではありません: ${typeof variables}`);
-      return [];
-    }
-    
-    try {
-      const entries = Object.entries(variables);
-      logger.debug(`変数エントリー: ${JSON.stringify(entries)}`);
-      
-      const formatted = entries.map(([key, value]) => `${key}=${value}`);
-      logger.debug(`フォーマット後: ${JSON.stringify(formatted)}`);
-      
-      return formatted;
-    } catch (error) {
-      logger.error('変数フォーマットエラー:', error);
-      return [];  // エラー時は空配列を返す
-    }
-  }
-
-  // 切断原因コードからステータスを取得
-  getHangupStatusFromCause(cause) {
-    const causeCode = parseInt(cause);
-    
-    switch (causeCode) {
-      case 16: // NORMAL_CLEARING
+  // SIPステータスをシステム用ステータスにマッピング
+  mapSipStatus(sipStatus) {
+    switch (sipStatus) {
+      case 'Answered':
+      case 'Normal Clearing':
         return 'ANSWERED';
-      case 17: // USER_BUSY
+      case 'Busy':
+      case 'User Busy':
         return 'BUSY';
-      case 18: // NO_USER_RESPONSE
-      case 19: // NO_ANSWER
+      case 'No Answer':
+      case 'No User Response':
         return 'NO ANSWER';
-      case 21: // CALL_REJECTED
+      case 'Rejected':
+      case 'Call Rejected':
         return 'REJECTED';
       default:
         return 'FAILED';
     }
+  }
+
+  // 電話番号を適切な形式にフォーマット
+  formatPhoneNumber(phoneNumber) {
+    // 日本の国内番号の場合、先頭の0を除去して国際形式に変換
+    if (phoneNumber.startsWith('0')) {
+      return phoneNumber.replace(/^0/, '81');
+    }
+    return phoneNumber;
   }
 
   // 通話終了イベントハンドラ
@@ -324,8 +344,8 @@ class AsteriskService extends EventEmitter {
         logger.warn('SIPアカウントが設定されていません。デフォルトアカウントを使用します。');
         // デモ用のアカウントを追加
         accounts = [
-          { username: '03080001', password: '56110478' },
-          { username: '03080002', password: '51448459' }
+          { username: 'sip1', password: 'password1', callerID: '0359468520' },
+          { username: 'sip2', password: 'password2', callerID: '0335289538' }
         ];
       }
       
@@ -342,10 +362,10 @@ class AsteriskService extends EventEmitter {
       logger.error('SIPアカウント読み込みエラー:', error);
       logger.error('スタックトレース:', error.stack);
       
-      // エラー時は添付ファイルの情報を元にデフォルトアカウントを返す
+      // エラー時はデフォルトアカウントを返す
       return [
-        { username: '03080001', password: '56110478', status: 'available' },
-        { username: '03080002', password: '51448459', status: 'available' }
+        { username: 'sip1', password: 'password1', status: 'available', callerID: '0359468520' },
+        { username: 'sip2', password: 'password2', status: 'available', callerID: '0335289538' }
       ];
     }
   }
@@ -394,15 +414,33 @@ class AsteriskService extends EventEmitter {
     try {
       // 通話IDに関連するSIPアカウントを検索
       if (this.callToAccountMap && this.callToAccountMap.has(callId)) {
-        const sipAccount = this.callToAccountMap.get(callId);
+        const callData = this.callToAccountMap.get(callId);
         
-        // SIPアカウントのステータスを利用可能に戻す
-        sipAccount.status = 'available';
+        if (this.mockMode) {
+          // モックモードの場合は単純にステータス変更
+          callData.status = 'available';
+        } else {
+          // 実モードの場合はセッション終了処理
+          const sipAccount = callData.sipAccount;
+          const session = callData.session;
+          
+          // アクティブなセッションの場合は終了
+          if (session && session.isEstablished()) {
+            try {
+              session.terminate();
+            } catch (sessionError) {
+              logger.warn(`セッション終了エラー: ${sessionError.message}`);
+            }
+          }
+          
+          // SIPアカウントのステータスを利用可能に戻す
+          sipAccount.status = 'available';
+        }
         
         // マッピングから削除
         this.callToAccountMap.delete(callId);
         
-        logger.info(`SIPアカウント解放: callId=${callId}, account=${sipAccount.username}`);
+        logger.info(`SIPアカウント解放: callId=${callId}`);
       } else {
         logger.warn(`通話IDに関連するSIPアカウントが見つかりません: ${callId}`);
       }
@@ -414,18 +452,34 @@ class AsteriskService extends EventEmitter {
     }
   }
 
-  // AMI接続の切断
+  // SIP接続の切断
   async disconnect() {
     if (this.client && !this.mockMode) {
-      await this.client.disconnect();
+      try {
+        // SIPクライアントを停止
+        await this.client.stop();
+        logger.info('SIPクライアントを停止しました');
+      } catch (error) {
+        logger.error('SIP切断エラー:', error);
+      }
     }
     
     this.connected = false;
-    logger.info('Asteriskサービスから切断しました');
+    logger.info('SIPサービスから切断しました');
+  }
+
+  // 全ての利用可能なSIPアカウント情報を取得（管理画面用）
+  getAccountStatus() {
+    return this.sipAccounts.map(account => ({
+      username: account.username,
+      status: account.status,
+      callerID: account.callerID,
+      lastUsed: account.lastUsed
+    }));
   }
 }
 
 // シングルトンインスタンスを作成
-const asteriskService = new AsteriskService();
+const sipService = new SipService();
 
-module.exports = asteriskService;
+module.exports = sipService;

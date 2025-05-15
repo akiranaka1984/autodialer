@@ -16,7 +16,7 @@ services:
       MYSQL_PASSWORD: password
       MYSQL_DATABASE: autodialer
       # モックモードを無効化してTwilioを使用
-      MOCK_ASTERISK: "true"
+      MOCK_ASTERISK: "false"
       USE_TWILIO: "false"
       # Twilio設定
       TWILIO_ACCOUNT_SID: ${TWILIO_ACCOUNT_SID}
@@ -70,7 +70,7 @@ services:
       - --init-connect='SET NAMES utf8mb4'
     volumes:
       - mysql_data:/var/lib/mysql
-      - ./backend/database/schema.sql:/docker-entrypoint-initdb.d/1-schema.sql
+      - ./backend/database/init-only:/docker-entrypoint-initdb.d
     networks:
       - autodialer-network
 

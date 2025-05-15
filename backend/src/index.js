@@ -142,7 +142,7 @@ const startServer = async () => {
     logger.info('データベースに接続しました');
     
     // Asteriskサービスに接続
-    if (!process.env.MOCK_ASTERISK || process.env.MOCK_ASTERISK !== 'true') {
+    if (process.env.MOCK_ASTERISK !== 'true'){
       await asterisk.connect();
       logger.info('Asteriskサービスに接続しました');
     } else {
