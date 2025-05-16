@@ -410,6 +410,195 @@ async transferToOperator(callId, skills = []) {
   }
 }
 
+// 発信速度調整機能を追加
+async setMaxConcurrentCalls(maxCalls, campaignId = null) {
+  try {
+    if (campaignId) {
+      // 特定のキャンペーンの発信数を設定
+      if (this.activeCampaigns.has(campaignId)) {
+        const campaign = this.activeCampaigns.get(campaignId);
+        const oldValue = campaign.maxConcurrentCalls;
+        campaign.maxConcurrentCalls = maxCalls;
+        this.activeCampaigns.set(campaignId, campaign);
+        
+        // DBにも反映
+        await db.query(
+          'UPDATE campaigns SET max_concurrent_calls = ? WHERE id = ?',
+          [maxCalls, campaignId]
+        );
+        
+        logger.info(`キャンペーン ${campaignId} の最大同時発信数を ${oldValue} から ${maxCalls} に変更しました`);
+      }
+    } else {
+      // 全キャンペーンの発信数を調整
+      let count = 0;
+      
+      for (const [id, campaign] of this.activeCampaigns.entries()) {
+        const oldValue = campaign.maxConcurrentCalls;
+        campaign.maxConcurrentCalls = maxCalls;
+        this.activeCampaigns.set(id, campaign);
+        
+        // DBにも反映
+        await db.query(
+          'UPDATE campaigns SET max_concurrent_calls = ? WHERE id = ?',
+          [maxCalls, id]
+        );
+        
+        count++;
+        logger.info(`キャンペーン ${id} の最大同時発信数を ${oldValue} から ${maxCalls} に変更しました`);
+      }
+      
+      logger.info(`${count}個のキャンペーンの最大同時発信数を ${maxCalls} に設定しました`);
+    }
+    
+    return true;
+  } catch (error) {
+    logger.error(`最大同時発信数設定エラー: ${error.message}`);
+    return false;
+  }
+}
+
+// 発信処理にオペレーター転送率の考慮を追加
+async processDialerQueue() {
+  try {
+    // 現在の時間帯をチェック（発信可能時間内かどうか）
+    const now = new Date();
+    const currentHour = now.getHours();
+    const currentMinute = now.getMinutes();
+    const currentTime = currentHour * 60 + currentMinute;
+    
+    // キューサービスからオペレーター状況を取得
+    const callQueueService = require('./callQueueService');
+    
+    // 各アクティブキャンペーンを処理
+    for (const [campaignId, campaign] of this.activeCampaigns.entries()) {
+      if (campaign.status !== 'active') continue;
+      
+      // キャンペーン情報の最新化
+      const [campaigns] = await db.query(`
+        SELECT c.working_hours_start, c.working_hours_end, c.status
+        FROM campaigns c
+        WHERE c.id = ?
+      `, [campaignId]);
+      
+      if (campaigns.length === 0 || campaigns[0].status !== 'active') {
+        // キャンペーンが存在しないか、アクティブでなくなった場合
+        this.activeCampaigns.delete(campaignId);
+        continue;
+      }
+      
+      // 発信時間のチェック
+      const workingHoursStart = campaigns[0].working_hours_start.split(':');
+      const workingHoursEnd = campaigns[0].working_hours_end.split(':');
+      const startTime = parseInt(workingHoursStart[0]) * 60 + parseInt(workingHoursStart[1]);
+      const endTime = parseInt(workingHoursEnd[0]) * 60 + parseInt(workingHoursEnd[1]);
+      
+      if (currentTime < startTime || currentTime > endTime) {
+        logger.debug(`キャンペーン ${campaignId} は発信時間外です: ${currentHour}:${currentMinute}`);
+        continue;
+      }
+      
+      // オペレーター転送の状況を考慮
+      // キューのキャパシティに基づいて発信数を調整
+      let availableSlots = campaign.maxConcurrentCalls - campaign.activeCalls;
+      
+      // オペレーターキューの状態を考慮
+      const queueStatus = await callQueueService.getQueueStatus();
+      if (queueStatus) {
+        // キャパシティに余裕がないか、オペレーターがいない場合は調整
+        if (queueStatus.currentSize >= queueStatus.maxSize * 0.8 || queueStatus.activeOperators === 0) {
+          // キューがほぼ満杯、またはオペレーターがいない場合は発信数を制限
+          availableSlots = Math.min(availableSlots, 1);
+          logger.info(`オペレーターキューの状態により発信数を制限: キャンペーン=${campaignId}, 利用可能スロット=${availableSlots}`);
+        }
+      }
+      
+      if (availableSlots <= 0) {
+        logger.debug(`キャンペーン ${campaignId} は最大同時発信数に達しています: ${campaign.activeCalls}/${campaign.maxConcurrentCalls}`);
+        continue;
+      }
+      
+      // 発信する連絡先を取得
+      const [contacts] = await db.query(`
+        SELECT id, phone, name, company
+        FROM contacts
+        WHERE campaign_id = ? AND status = 'pending'
+        LIMIT ?
+      `, [campaignId, availableSlots]);
+      
+      if (contacts.length === 0) {
+        logger.debug(`キャンペーン ${campaignId} には発信待ちの連絡先がありません`);
+        continue;
+      }
+      
+      // 各連絡先に発信
+      for (const contact of contacts) {
+        await this.dialContact(campaign, contact);
+      }
+    }
+  } catch (error) {
+    logger.error('発信キュー処理エラー:', error);
+  }
+}
+
+// キャンペーンの進捗状況を更新
+async updateCampaignProgress(campaignId) {
+  try {
+    // 全連絡先数
+    const [totalResult] = await db.query(
+      'SELECT COUNT(*) as count FROM contacts WHERE campaign_id = ?',
+      [campaignId]
+    );
+    
+    // 完了した連絡先数
+    const [completedResult] = await db.query(
+      'SELECT COUNT(*) as count FROM contacts WHERE campaign_id = ? AND status IN ("completed", "dnc")',
+      [campaignId]
+    );
+    
+    const total = totalResult[0].count;
+    const completed = completedResult[0].count;
+    
+    // 進捗率を計算
+    const progress = total > 0 ? Math.floor((completed / total) * 100) : 0;
+    
+    // キャンペーン情報を更新
+    await db.query(
+      'UPDATE campaigns SET progress = ? WHERE id = ?',
+      [progress, campaignId]
+    );
+    
+    // キャンペーンが完了したかチェック
+    if (total > 0 && completed >= total) {
+      await this.completeCampaign(campaignId);
+    }
+    
+    return progress;
+  } catch (error) {
+    logger.error(`キャンペーン進捗更新エラー: ${campaignId}`, error);
+    return null;
+  }
+}
+
+// キャンペーンを完了状態に設定
+async completeCampaign(campaignId) {
+  try {
+    await db.query(
+      'UPDATE campaigns SET status = ? WHERE id = ?',
+      ['completed', campaignId]
+    );
+    
+    // アクティブキャンペーンから削除
+    this.activeCampaigns.delete(campaignId);
+    
+    logger.info(`キャンペーン ${campaignId} を完了状態に設定しました`);
+    return true;
+  } catch (error) {
+    logger.error(`キャンペーン完了設定エラー: ${campaignId}`, error);
+    return false;
+  }
+}
+
 
 }
 
