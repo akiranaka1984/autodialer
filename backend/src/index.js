@@ -176,6 +176,9 @@ app.use((err, req, res, next) => {
   res.status(500).json({ message: '内部サーバーエラー', error: err.message });
 });
 
+// src/index.js (一部抜粋 - 起動処理部分)
+const callService = require('./services/callService');
+
 // サーバー起動
 const startServer = async () => {
   try {
@@ -199,16 +202,6 @@ const startServer = async () => {
     process.exit(1);
   }
 };
-
-// 未処理のエラーハンドリング
-process.on('unhandledRejection', (reason, promise) => {
-  logger.error('Unhandled Rejection:', reason);
-});
-
-process.on('uncaughtException', (error) => {
-  logger.error('Uncaught Exception:', error);
-  process.exit(1);
-});
 
 // アプリケーションの終了処理
 process.on('SIGINT', async () => {

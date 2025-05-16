@@ -1,17 +1,14 @@
 // src/services/callService.js
 const asterisk = require('./asterisk');
 const sipService = require('./sipService');
-const twilioService = require('./twilioService');
 const logger = require('./logger');
 
 class CallService {
   constructor() {
     this.asterisk = asterisk;
     this.sip = sipService;
-    this.twilio = twilioService;
-    this.defaultProvider = process.env.DEFAULT_CALL_PROVIDER || 'asterisk';
-    this.mockMode = process.env.MOCK_ASTERISK === 'true';
-    this.useTwilio = process.env.USE_TWILIO === 'true';
+    this.defaultProvider = process.env.DEFAULT_CALL_PROVIDER || 'sip';
+    this.mockMode = process.env.MOCK_ASTERISK === 'true' || process.env.MOCK_SIP === 'true';
     this.enableFallback = process.env.FALLBACK_ENABLED === 'true';
     this.enableLoadBalancing = process.env.LOAD_BALANCING_ENABLED === 'true';
     
@@ -21,11 +18,7 @@ class CallService {
       sip: this.sip
     };
     
-    if (this.useTwilio) {
-      this.providers.twilio = this.twilio;
-    }
-    
-    logger.info(`コールサービスを初期化しました。デフォルトプロバイダ: ${this.defaultProvider}`);
+    logger.info(`コールサービスを初期化しました。デフォルトプロバイダ: ${this.defaultProvider}, フォールバック: ${this.enableFallback ? '有効' : '無効'}, モックモード: ${this.mockMode ? '有効' : '無効'}`);
   }
   
   async initialize() {
@@ -46,14 +39,6 @@ class CallService {
         logger.error('SIPサービス初期化エラー:', err);
         return false;
       }));
-      
-      // Twilioの初期化（有効な場合）
-      if (this.useTwilio) {
-        initPromises.push(this.twilio.connect().catch(err => {
-          logger.error('Twilio初期化エラー:', err);
-          return false;
-        }));
-      }
       
       const results = await Promise.all(initPromises);
       
@@ -87,11 +72,8 @@ class CallService {
       }
       
       // プロバイダがモックモードに対応しているか確認
-      if (params.mockMode && typeof service.simulateCallEnd === 'function') {
-        // モックモードをサービスに設定（対応している場合）
-        if (typeof service.setMockMode === 'function') {
-          service.setMockMode(true);
-        }
+      if (params.mockMode && typeof service.setMockMode === 'function') {
+        service.setMockMode(true);
       }
       
       // 発信実行
@@ -131,14 +113,9 @@ class CallService {
   }
   
   selectProvider(params) {
-    // モックモードの場合は対応するプロバイダを選択
-    if (params.mockMode === true) {
-      // モックに対応しているプロバイダを優先
-      if (typeof this.asterisk.simulateCallEnd === 'function') {
-        return 'asterisk';
-      } else if (typeof this.sip.simulateCallEnd === 'function') {
-        return 'sip';
-      }
+    // 明示的なプロバイダ指定がある場合はそれを使用
+    if (params.provider && this.providers[params.provider]) {
+      return params.provider;
     }
     
     // 発信者番号に関連付けられたプロバイダを使用
@@ -149,9 +126,18 @@ class CallService {
       }
     }
     
-    // 明示的なプロバイダ指定がある場合はそれを使用
-    if (params.provider && this.providers[params.provider]) {
-      return params.provider;
+    // SIPアカウントが利用可能かチェック
+    const sipAvailable = this.sip.connected && 
+      (typeof this.sip.getAvailableSipAccountCount === 'function' ? 
+       this.sip.getAvailableSipAccountCount() > 0 : true);
+       
+    if (sipAvailable) {
+      return 'sip'; // SIPを優先
+    }
+    
+    // SIPが利用できない場合はAsteriskにフォールバック
+    if (this.asterisk.connected) {
+      return 'asterisk';
     }
     
     // ロードバランシングが有効な場合
@@ -159,7 +145,7 @@ class CallService {
       return this.selectProviderWithLoadBalancing();
     }
     
-    // デフォルトプロバイダを使用
+    // どちらも利用できない場合はデフォルト
     return this.defaultProvider;
   }
   
@@ -170,7 +156,6 @@ class CallService {
     
     if (name.includes('asterisk')) return 'asterisk';
     if (name.includes('sip')) return 'sip';
-    if (name.includes('twilio')) return 'twilio';
     
     return null;
   }
@@ -211,13 +196,11 @@ class CallService {
       return null;
     }
     
-    // 優先順位: asterisk > sip > twilio
-    if (availableProviders.includes('asterisk')) {
-      return 'asterisk';
-    } else if (availableProviders.includes('sip')) {
+    // 優先順位: sip > asterisk
+    if (availableProviders.includes('sip')) {
       return 'sip';
-    } else if (availableProviders.includes('twilio')) {
-      return 'twilio';
+    } else if (availableProviders.includes('asterisk')) {
+      return 'asterisk';
     }
     
     // デフォルトはリストの最初のプロバイダ
@@ -322,6 +305,30 @@ class CallService {
         ? service.getAccountStatus()
         : null
     }));
+  }
+  
+  // システムシャットダウン時の処理
+  async shutdown() {
+    logger.info('コールサービスのシャットダウンを開始します');
+    
+    // 各プロバイダのシャットダウン
+    const shutdownPromises = [];
+    
+    for (const [name, service] of Object.entries(this.providers)) {
+      if (service.connected && typeof service.disconnect === 'function') {
+        shutdownPromises.push(service.disconnect().catch(err => {
+          logger.error(`${name}プロバイダの切断エラー:`, err);
+          return false;
+        }));
+      }
+    }
+    
+    if (shutdownPromises.length > 0) {
+      await Promise.all(shutdownPromises);
+    }
+    
+    logger.info('コールサービスのシャットダウンが完了しました');
+    return true;
   }
 }
 

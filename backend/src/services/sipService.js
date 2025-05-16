@@ -1,6 +1,9 @@
-const JsSIP = require('jssip');
+// src/services/sipService.js
+const { spawn } = require('child_process');
 const logger = require('./logger');
 const { EventEmitter } = require('events');
+const path = require('path');
+const fs = require('fs');
 
 class SipService extends EventEmitter {
   constructor() {
@@ -9,9 +12,12 @@ class SipService extends EventEmitter {
     this.mockMode = process.env.MOCK_SIP === 'true';
     this.sipAccounts = [];
     this.callToAccountMap = new Map();
-    this.sessions = new Map();
+    this.activeCallsMap = new Map();
     
-    logger.info(`SipService初期化: mockMode=${this.mockMode}`);
+    // SIPコマンドのパス
+    this.sipcmdPath = process.env.SIPCMD_PATH || '/usr/local/bin/sipcmd';
+    
+    logger.info(`SipService初期化: mockMode=${this.mockMode}, sipcmdPath=${this.sipcmdPath}`);
     
     // 自身のイベントハンドラーを設定
     this.on('callEnded', this.handleCallEnded.bind(this));
@@ -24,8 +30,8 @@ class SipService extends EventEmitter {
       
       // モックアカウントの設定
       this.sipAccounts = [
-        { username: 'mock-user1', password: 'mock-pass1', status: 'available', callerID: '0359468520' },
-        { username: 'mock-user2', password: 'mock-pass2', status: 'available', callerID: '0335289538' }
+        { username: '03080001', password: '56110478', status: 'available', callerID: '0359468520' },
+        { username: '03080002', password: '51448459', status: 'available', callerID: '0335289538' }
       ];
       
       return true;
@@ -33,6 +39,15 @@ class SipService extends EventEmitter {
 
     try {
       logger.info('SIPサービスに接続を試みています...');
+      
+      // sipcmdコマンドの存在チェック
+      try {
+        fs.accessSync(this.sipcmdPath, fs.constants.X_OK);
+        logger.info(`SIPコマンド確認済み: ${this.sipcmdPath}`);
+      } catch (error) {
+        logger.error(`sipcmdコマンドが見つからないか実行できません: ${this.sipcmdPath}`);
+        throw new Error(`SIP発信コマンドが使用できません: ${error.message}`);
+      }
       
       // SIPアカウント情報をロード
       this.sipAccounts = this.loadSipAccounts();
@@ -43,10 +58,8 @@ class SipService extends EventEmitter {
       
       logger.info(`${this.sipAccounts.length}個のSIPアカウントを読み込みました`);
       
-      // 各SIPアカウントへの接続を試みる
-      for (const account of this.sipAccounts) {
-        await this.initializeAccount(account);
-      }
+      // 定期的なステータスモニタリングを開始
+      this.startStatusMonitoring();
       
       this.connected = true;
       logger.info('SIPサービスへの接続が完了しました');
@@ -59,62 +72,67 @@ class SipService extends EventEmitter {
     }
   }
   
-  async initializeAccount(account) {
+  // SIPアカウント情報の取得
+  loadSipAccounts() {
+    logger.info('SIPアカウントを読み込み中...');
+    
     try {
-      // JsSIPの設定
-      const sipServer = process.env.SIP_SERVER || 'sip.provider.com';
-      const wsServer = process.env.SIP_WS_SERVER || 'wss://sip.provider.com:8089/ws';
+      // 環境変数から読み込む
+      let accounts = [];
       
-      // SocketインスタンスとUAの作成
-      const socket = new JsSIP.WebSocketInterface(wsServer);
-      const configuration = {
-        sockets: [socket],
-        uri: `sip:${account.username}@${sipServer}`,
-        password: account.password,
-        display_name: account.callerID || account.username,
-        register: true
-      };
-      
-      const ua = new JsSIP.UA(configuration);
-      
-      // イベントリスナーを設定
-      ua.on('registered', () => {
-        logger.info(`SIPアカウント ${account.username} が登録されました`);
-        account.status = 'available';
-        account.ua = ua;
-      });
-      
-      ua.on('unregistered', () => {
-        logger.warn(`SIPアカウント ${account.username} の登録が解除されました`);
-        account.status = 'offline';
-      });
-      
-      ua.on('registrationFailed', (ev) => {
-        logger.error(`SIPアカウント ${account.username} の登録に失敗しました: ${ev.cause}`);
-        account.status = 'error';
-      });
-      
-      // 着信処理
-      ua.on('newRTCSession', (ev) => {
-        const session = ev.session;
-        
-        if (session.direction === 'incoming') {
-          // 着信拒否（このシステムは発信専用）
-          session.terminate();
+      // まずJSON文字列から読み込み
+      const accountsStr = process.env.SIP_ACCOUNTS || '[]';
+      if (accountsStr && accountsStr !== '[]') {
+        try {
+          accounts = JSON.parse(accountsStr);
+          logger.info(`環境変数からSIPアカウント ${accounts.length}個 を読み込みました`);
+        } catch (err) {
+          logger.error('SIPアカウント形式エラー（環境変数）:', err);
         }
-      });
+      }
       
-      // UA起動
-      ua.start();
+      // アカウントが空なら、ファイルから読み込み
+      if (accounts.length === 0) {
+        const accountsFile = process.env.SIP_ACCOUNTS_FILE || path.join(__dirname, '../../config/sip-accounts.json');
+        
+        try {
+          if (fs.existsSync(accountsFile)) {
+            const fileContent = fs.readFileSync(accountsFile, 'utf8');
+            accounts = JSON.parse(fileContent);
+            logger.info(`ファイルから ${accounts.length}個 のSIPアカウントを読み込みました: ${accountsFile}`);
+          }
+        } catch (fileErr) {
+          logger.error(`SIPアカウントファイル読み込みエラー: ${accountsFile}`, fileErr);
+        }
+      }
       
-      account.ua = ua;
-      logger.info(`SIPアカウント ${account.username} の初期化が完了しました`);
+      // それでも空なら、ハードコードされたデフォルトアカウントを使用
+      if (accounts.length === 0) {
+        logger.warn('SIPアカウントが設定されていません。デフォルトアカウントを使用します。');
+        accounts = [
+          { username: '03080001', password: '56110478', callerID: '0359468520' },
+          { username: '03080002', password: '51448459', callerID: '0335289538' }
+        ];
+      }
       
-      return true;
+      // アカウントの初期状態を設定
+      const formattedAccounts = accounts.map(account => ({
+        ...account,
+        status: 'available', // 初期状態は利用可能
+        lastUsed: null,
+        failCount: 0
+      }));
+      
+      logger.info(`${formattedAccounts.length}個のSIPアカウントを初期化しました`);
+      return formattedAccounts;
     } catch (error) {
-      logger.error(`SIPアカウント ${account.username} の初期化エラー:`, error);
-      account.status = 'error';
-      return false;
+      logger.error('SIPアカウント読み込みエラー:', error);
+      
+      // エラー時はデフォルトアカウントを返す
+      return [
+        { username: '03080001', password: '56110478', callerID: '0359468520', status: 'available', lastUsed: null, failCount: 0 },
+        { username: '03080002', password: '51448459', callerID: '0335289538', status: 'available', lastUsed: null, failCount: 0 }
+      ];
     }
   }
   
@@ -129,81 +147,33 @@ class SipService extends EventEmitter {
       // 利用可能なSIPアカウントを取得
       const sipAccount = await this.getAvailableSipAccount();
       
-      if (!sipAccount || !sipAccount.ua) {
+      if (!sipAccount) {
         throw new Error('利用可能なSIPアカウントが見つかりません');
       }
       
       // 発信先電話番号のフォーマット処理
       const formattedNumber = this.formatPhoneNumber(params.phoneNumber);
-      const targetUri = `sip:${formattedNumber}@${process.env.SIP_SERVER || 'sip.provider.com'}`;
-      
-      // 発信の設定
-      const callOptions = {
-        mediaConstraints: { audio: true, video: false },
-        pcConfig: {
-          iceServers: [
-            { urls: ['stun:stun.l.google.com:19302'] }
-          ]
-        },
-        extraHeaders: [
-          `P-Asserted-Identity: <sip:${params.callerID || sipAccount.callerID}@${process.env.SIP_SERVER || 'sip.provider.com'}>`
-        ]
-      };
+      const sipServer = process.env.SIP_SERVER || 'ito258258.site';
+      const sipPort = process.env.SIP_PORT || '5060';
       
       // 発信IDの生成
-      const callId = 'sip-' + Date.now();
+      const callId = 'sip-' + Date.now() + '-' + Math.floor(Math.random() * 10000);
       
-      // 発信実行
-      logger.info(`SIP発信実行: ${sipAccount.username} -> ${targetUri}`);
-      const session = sipAccount.ua.call(targetUri, callOptions);
+      // sipcmdコマンドの引数を生成
+      // 具体的な引数はsipcmdツールのバージョンによって異なる場合があります
+      const args = [
+        '-u', sipAccount.username,          // ユーザー名
+        '-p', sipAccount.password,          // パスワード
+        '-P', 'udp',                        // プロトコル
+        '-a', sipAccount.username,          // 認証ユーザー名
+        '-h', sipServer,                    // SIPサーバー
+        '-d', sipPort,                      // SIPサーバーポート
+        '-t', formattedNumber,              // 発信先
+        '--from-name', params.callerID ? params.callerID.replace(/[<>]/g, '') : (sipAccount.callerID || '0359468520'),
+        '--timeout', '60'                   // 発信タイムアウト（秒）
+      ];
       
-      // セッションイベントの処理
-      session.on('connecting', () => {
-        logger.info(`SIP発信中: ${callId}`);
-      });
-      
-      session.on('progress', () => {
-        logger.info(`SIP呼び出し中: ${callId}`);
-      });
-      
-      session.on('accepted', () => {
-        logger.info(`SIP通話応答: ${callId}`);
-        // 通話開始時間を記録
-        this.sessions.set(callId, {
-          session,
-          startTime: Date.now()
-        });
-      });
-      
-      session.on('ended', () => {
-        logger.info(`SIP通話終了: ${callId}`);
-        // 通話終了イベントを発火
-        const sessionData = this.sessions.get(callId);
-        const duration = sessionData ? Math.round((Date.now() - sessionData.startTime) / 1000) : 0;
-        
-        this.emit('callEnded', {
-          callId,
-          status: 'ANSWERED',
-          duration
-        });
-        
-        // セッション情報をクリーンアップ
-        this.sessions.delete(callId);
-      });
-      
-      session.on('failed', (e) => {
-        logger.info(`SIP通話失敗: ${callId}, 理由: ${e.cause}`);
-        
-        // 通話終了イベントを発火
-        this.emit('callEnded', {
-          callId,
-          status: this.mapSipStatus(e.cause),
-          duration: 0
-        });
-        
-        // セッション情報をクリーンアップ
-        this.sessions.delete(callId);
-      });
+      logger.debug(`sipcmdコマンド実行: ${this.sipcmdPath} ${args.join(' ')}`);
       
       // SIPアカウントを使用中にマーク
       sipAccount.status = 'busy';
@@ -211,6 +181,95 @@ class SipService extends EventEmitter {
       
       // 通話IDとSIPアカウントを関連付け
       this.callToAccountMap.set(callId, sipAccount);
+      
+      // sipcmdプロセスを起動
+      const sipcmdProcess = spawn(this.sipcmdPath, args);
+      
+      // アクティブコールマップに追加
+      this.activeCallsMap.set(callId, {
+        process: sipcmdProcess,
+        startTime: Date.now(),
+        status: 'calling',
+        phoneNumber: formattedNumber
+      });
+      
+      // プロセス出力の処理
+      sipcmdProcess.stdout.on('data', (data) => {
+        const output = data.toString();
+        logger.debug(`sipcmd出力: ${output}`);
+        
+        // 発信状況の処理
+        if (output.includes('Call established') || output.includes('Connected')) {
+          const callData = this.activeCallsMap.get(callId);
+          if (callData) {
+            callData.status = 'answered';
+            this.activeCallsMap.set(callId, callData);
+            logger.info(`通話確立: callId=${callId}, number=${formattedNumber}`);
+          }
+        }
+      });
+      
+      // エラー出力の処理
+      sipcmdProcess.stderr.on('data', (data) => {
+        logger.error(`sipcmd エラー: ${data.toString()}`);
+      });
+      
+      // プロセス終了時の処理
+      sipcmdProcess.on('close', (code) => {
+        logger.info(`sipcmdプロセス終了: コード=${code}, callId=${callId}`);
+        
+        // 通話終了イベントをエミット
+        const callData = this.activeCallsMap.get(callId);
+        
+        if (callData) {
+          const duration = Math.round((Date.now() - callData.startTime) / 1000);
+          let status = 'COMPLETED';
+          
+          if (code !== 0) {
+            if (callData.status === 'calling') {
+              status = code === 1 ? 'NO ANSWER' : (code === 2 ? 'BUSY' : 'FAILED');
+            } else if (callData.status === 'answered') {
+              status = 'ANSWERED'; // 応答後の終了は正常終了
+            } else {
+              status = 'FAILED';
+            }
+            
+            // エラーコードが発生した場合、アカウントの失敗カウントを増やす
+            if (status === 'FAILED') {
+              sipAccount.failCount = (sipAccount.failCount || 0) + 1;
+              
+              // 失敗回数が一定数を超えたらアカウントを一時的に無効化
+              if (sipAccount.failCount >= 3) {
+                logger.warn(`SIPアカウント ${sipAccount.username} を一時的に無効化します（失敗回数: ${sipAccount.failCount}）`);
+                sipAccount.status = 'error';
+                
+                // 30分後に再度有効化
+                setTimeout(() => {
+                  sipAccount.status = 'available';
+                  sipAccount.failCount = 0;
+                  logger.info(`SIPアカウント ${sipAccount.username} を再度有効化しました`);
+                }, 30 * 60 * 1000);
+              }
+            }
+          } else if (callData.status === 'answered') {
+            status = 'ANSWERED';
+            // 成功した場合は失敗カウントをリセット
+            sipAccount.failCount = 0;
+          }
+          
+          this.emit('callEnded', {
+            callId,
+            status,
+            duration: callData.status === 'answered' ? duration : 0
+          });
+          
+          // マップから削除
+          this.activeCallsMap.delete(callId);
+        }
+        
+        // リソース解放
+        this.releaseCallResource(callId);
+      });
       
       // 発信成功イベントをエミット
       this.emit('callStarted', {
@@ -224,7 +283,8 @@ class SipService extends EventEmitter {
         ActionID: callId,
         Response: 'Success',
         Message: 'SIP call successfully initiated',
-        SipAccount: sipAccount.username
+        SipAccount: sipAccount.username,
+        provider: 'sip'
       };
     } catch (error) {
       logger.error('SIP発信エラー:', error);
@@ -257,14 +317,14 @@ class SipService extends EventEmitter {
       this.emit('callStarted', {
         callId,
         number: params.phoneNumber,
-        callerID: params.callerID || sipAccount.callerID || '0312345678',
+        callerID: params.callerID || sipAccount.callerID || '0359468520',
         variables: params.variables || {}
       });
       
       return {
         ActionID: callId,
         Response: 'Success',
-        Message: 'Originate successfully queued (SIP)',
+        Message: 'Originate successfully queued (SIP MOCK)',
         SipAccount: sipAccount.username,
         provider: 'sip'
       };
@@ -281,21 +341,6 @@ class SipService extends EventEmitter {
       return phoneNumber.replace(/^0/, '81');
     }
     return phoneNumber;
-  }
-  
-  // SIPステータスをシステム用ステータスにマッピング
-  mapSipStatus(sipStatus) {
-    const statusMap = {
-      'Rejected': 'REJECTED',
-      'Canceled': 'CANCELED',
-      'Busy': 'BUSY',
-      'No Answer': 'NO ANSWER',
-      'Not Found': 'FAILED',
-      'Connection Error': 'FAILED',
-      'Transport Error': 'FAILED'
-    };
-    
-    return statusMap[sipStatus] || 'FAILED';
   }
   
   async handleCallEnded(eventData) {
@@ -319,30 +364,31 @@ class SipService extends EventEmitter {
     }
     
     try {
+      // アクティブコールを停止
+      const callData = this.activeCallsMap.get(callId);
+      if (callData && callData.process) {
+        try {
+          callData.process.kill();
+          logger.info(`SIP通話プロセスを終了: ${callId}`);
+        } catch (processError) {
+          logger.warn(`SIP通話プロセス終了エラー: ${processError.message}`);
+        }
+        this.activeCallsMap.delete(callId);
+      }
+      
       // 通話IDに関連するSIPアカウントを検索
       if (this.callToAccountMap.has(callId)) {
         const sipAccount = this.callToAccountMap.get(callId);
         
         // SIPアカウントのステータスを利用可能に戻す
-        sipAccount.status = 'available';
-        
-        // セッションの終了処理
-        const sessionData = this.sessions.get(callId);
-        if (sessionData && sessionData.session) {
-          try {
-            if (sessionData.session.isEstablished()) {
-              sessionData.session.terminate();
-            }
-          } catch (e) {
-            logger.warn(`セッション終了処理エラー: ${e.message}`);
-          }
+        if (sipAccount.status !== 'error') { // エラー状態のアカウントはそのまま
+          sipAccount.status = 'available';
         }
         
         // マッピングから削除
         this.callToAccountMap.delete(callId);
-        this.sessions.delete(callId);
         
-        logger.info(`SIPアカウント解放成功: ${callId}`);
+        logger.info(`SIPアカウント解放成功: ${callId}, account=${sipAccount.username}`);
       } else {
         logger.warn(`通話IDに関連するSIPアカウントが見つかりません: ${callId}`);
       }
@@ -351,62 +397,6 @@ class SipService extends EventEmitter {
     } catch (error) {
       logger.error(`SIPアカウント解放エラー: ${callId}`, error);
       return false;
-    }
-  }
-  
-  // SIPアカウントの読み込み
-  loadSipAccounts() {
-    logger.info('SIPアカウントを読み込み中...');
-    
-    try {
-      // 環境変数から読み込む
-      const accountsStr = process.env.SIP_ACCOUNTS || '[]';
-      
-      let accounts = [];
-      
-      try {
-        accounts = JSON.parse(accountsStr);
-      } catch (err) {
-        logger.error('SIPアカウント形式エラー:', err);
-        accounts = [];
-      }
-      
-      if (accounts.length === 0) {
-        logger.warn('SIPアカウントが設定されていません。デフォルトアカウントを使用します。');
-        // デフォルトアカウントを設定
-        accounts = [
-          {
-            username: process.env.SIP_USERNAME || 'sipuser',
-            password: process.env.SIP_PASSWORD || 'sippassword',
-            callerID: process.env.SIP_CALLER_ID || '0312345678'
-          }
-        ];
-      }
-      
-      // アカウントの初期状態を設定
-      const formattedAccounts = accounts.map(account => ({
-        ...account,
-        status: 'offline', // 初期状態はオフライン
-        lastUsed: null,
-        ua: null
-      }));
-      
-      logger.info(`${formattedAccounts.length}個のSIPアカウントを初期化しました`);
-      return formattedAccounts;
-    } catch (error) {
-      logger.error('SIPアカウント読み込みエラー:', error);
-      
-      // エラー時はデフォルトアカウントを返す
-      return [
-        {
-          username: process.env.SIP_USERNAME || 'sipuser',
-          password: process.env.SIP_PASSWORD || 'sippassword',
-          callerID: process.env.SIP_CALLER_ID || '0312345678',
-          status: 'offline', 
-          lastUsed: null,
-          ua: null
-        }
-      ];
     }
   }
   
@@ -436,19 +426,24 @@ class SipService extends EventEmitter {
     return availableAccount;
   }
   
+  // 利用可能なSIPアカウント数を返す
+  getAvailableSipAccountCount() {
+    if (!this.sipAccounts) return 0;
+    return this.sipAccounts.filter(account => account && account.status === 'available').length;
+  }
+  
   // テスト用に通話を終了させるメソッド
   async simulateCallEnd(callId, status = 'ANSWERED', duration = 10) {
     logger.info(`通話終了シミュレーション: callId=${callId}, status=${status}, duration=${duration}秒`);
     
-    if (!this.mockMode && this.sessions.has(callId)) {
-      const sessionData = this.sessions.get(callId);
-      if (sessionData && sessionData.session) {
+    if (!this.mockMode) {
+      // 実際のモードでは、アクティブコールを終了
+      const callData = this.activeCallsMap.get(callId);
+      if (callData && callData.process) {
         try {
-          if (sessionData.session.isEstablished()) {
-            sessionData.session.terminate();
-          }
-        } catch (e) {
-          logger.warn(`セッション終了処理エラー: ${e.message}`);
+          callData.process.kill();
+        } catch (error) {
+          logger.warn(`通話プロセス終了エラー: ${error.message}`);
         }
       }
     }
@@ -463,29 +458,56 @@ class SipService extends EventEmitter {
     return true;
   }
   
-  // SIP接続の切断
-  async disconnect() {
-    if (this.mockMode) {
-      logger.info('モックモードのSIPサービスを切断しました');
-      this.connected = false;
-      return true;
-    }
+  // SIPアカウントの状態をログ出力
+  logAccountStatus() {
+    const statusCounts = {
+      available: 0,
+      busy: 0,
+      error: 0,
+      total: this.sipAccounts.length
+    };
     
-    try {
-      // 各SIPアカウントのUAを停止
-      for (const account of this.sipAccounts) {
-        if (account.ua) {
-          account.ua.stop();
-        }
-      }
+    this.sipAccounts.forEach(acc => {
+      if (acc.status === 'available') statusCounts.available++;
+      else if (acc.status === 'busy') statusCounts.busy++;
+      else statusCounts.error++;
+    });
+    
+    logger.info(`SIPアカウント状態: 全体=${statusCounts.total}, 利用可能=${statusCounts.available}, 使用中=${statusCounts.busy}, エラー=${statusCounts.error}`);
+    
+    return statusCounts;
+  }
+  
+  // 定期的な状態レポート
+  startStatusMonitoring() {
+    setInterval(() => {
+      this.logAccountStatus();
       
-      this.connected = false;
-      logger.info('SIPサービスから切断しました');
-      return true;
-    } catch (error) {
-      logger.error('SIP切断エラー:', error);
-      return false;
-    }
+      // 長時間使用中のアカウントをリセット（15分以上使用中の場合）
+      const now = Date.now();
+      this.sipAccounts.forEach(account => {
+        if (account.status === 'busy' && account.lastUsed) {
+          const usedForMs = now - account.lastUsed.getTime();
+          if (usedForMs > 15 * 60 * 1000) { // 15分
+            logger.warn(`長時間使用中のSIPアカウントをリセット: ${account.username}, 使用時間: ${Math.round(usedForMs/1000/60)}分`);
+            account.status = 'available';
+          }
+        }
+      });
+      
+      // 通話IDのクリーンアップ（古い通話ID）
+      const activeCalls = [...this.callToAccountMap.keys()];
+      activeCalls.forEach(callId => {
+        const account = this.callToAccountMap.get(callId);
+        if (account && account.lastUsed) {
+          const usedForMs = now - account.lastUsed.getTime();
+          if (usedForMs > 60 * 60 * 1000) { // 1時間
+            logger.warn(`古い通話IDをクリーンアップ: ${callId}`);
+            this.callToAccountMap.delete(callId);
+          }
+        }
+      });
+    }, 60000); // 1分ごと
   }
   
   setMockMode(mode) {
@@ -496,11 +518,11 @@ class SipService extends EventEmitter {
   
   async hasCall(callId) {
     if (!callId) return false;
-    return this.callToAccountMap.has(callId) || this.sessions.has(callId);
+    return this.callToAccountMap.has(callId) || this.activeCallsMap.has(callId);
   }
   
   getActiveCallCount() {
-    return this.callToAccountMap.size;
+    return this.activeCallsMap.size;
   }
   
   getAccountStatus() {
@@ -508,7 +530,8 @@ class SipService extends EventEmitter {
       username: account.username,
       status: account.status,
       callerID: account.callerID,
-      lastUsed: account.lastUsed
+      lastUsed: account.lastUsed,
+      failCount: account.failCount || 0
     }));
   }
   
@@ -529,5 +552,4 @@ class SipService extends EventEmitter {
 
 // シングルトンインスタンスを作成
 const sipService = new SipService();
-
 module.exports = sipService;

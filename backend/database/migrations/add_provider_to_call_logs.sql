@@ -1,4 +1,3 @@
--- マイグレーションファイル: add_provider_to_call_logs.sql
 ALTER TABLE call_logs
 ADD COLUMN call_provider VARCHAR(20) DEFAULT 'asterisk' AFTER test_call;
 

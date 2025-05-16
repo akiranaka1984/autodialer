@@ -1,6 +1,6 @@
 // src/controllers/callController.js
 const logger = require('../services/logger');
-const callService = require('../services/callService');  // 統合コールサービスを使用
+const callService = require('../services/callService');
 const db = require('../services/database');
 
 // テスト発信
@@ -15,7 +15,8 @@ exports.testCall = async (req, res) => {
       mockMode,
       provider,
       環境変数_MOCK_ASTERISK: process.env.MOCK_ASTERISK,
-      環境変数_USE_TWILIO: process.env.USE_TWILIO
+      環境変数_MOCK_SIP: process.env.MOCK_SIP,
+      環境変数_DEFAULT_CALL_PROVIDER: process.env.DEFAULT_CALL_PROVIDER
     });
     
     if (!phoneNumber) {
@@ -69,7 +70,6 @@ exports.testCall = async (req, res) => {
       
       // 通話ログに記録
       try {
-        // db.queryの結果を[logResult, fields]として受け取る
         const [logResult] = await db.query(`
           INSERT INTO call_logs 
           (call_id, caller_id_id, phone_number, start_time, status, test_call, call_provider)
@@ -97,7 +97,9 @@ exports.testCall = async (req, res) => {
       
       // 通話終了のシミュレーション（モックモードの場合）
       if (mockMode) {
-        this.simulateCallEnd(result.ActionID, 'ANSWERED', 10);
+        setTimeout(() => {
+          callService.simulateCallEnd(result.ActionID, 'ANSWERED', 10);
+        }, 10000);
       }
     } catch (originateError) {
       logger.error('発信処理エラー:', originateError);
@@ -113,7 +115,7 @@ exports.testCall = async (req, res) => {
     res.status(500).json({ 
       message: 'テスト発信に失敗しました', 
       error: error.message,
-      isSipError: error.message.includes('SIP') || error.message.includes('利用可能なSIPアカウント')
+      isSipError: error.message.includes('SIP') || originateError.message.includes('利用可能なSIPアカウント')
     });
   }
 };
@@ -234,224 +236,7 @@ exports.getAllCalls = async (req, res) => {
   }
 };
 
-// 通話履歴のエクスポート
-exports.exportCalls = async (req, res) => {
-  try {
-    const { campaign, status, dateFrom, dateTo, search, provider } = req.query;
-    
-    let query = `
-      SELECT cl.start_time as '発信日時',
-             c.phone as '電話番号',
-             c.name as '名前',
-             c.company as '会社名',
-             ca.name as 'キャンペーン名',
-             cl.status as 'ステータス',
-             cl.duration as '通話時間（秒）',
-             cl.keypress as 'キー入力',
-             ci.number as '発信者番号',
-             cl.call_provider as 'プロバイダ'
-      FROM call_logs cl
-      LEFT JOIN contacts c ON cl.contact_id = c.id
-      LEFT JOIN campaigns ca ON cl.campaign_id = ca.id
-      LEFT JOIN caller_ids ci ON cl.caller_id_id = ci.id
-      WHERE 1=1
-    `;
-    
-    const params = [];
-    
-    if (campaign) {
-      query += ' AND cl.campaign_id = ?';
-      params.push(campaign);
-    }
-    
-    if (status) {
-      query += ' AND cl.status = ?';
-      params.push(status);
-    }
-    
-    if (dateFrom) {
-      query += ' AND cl.start_time >= ?';
-      params.push(dateFrom);
-    }
-    
-    if (dateTo) {
-      query += ' AND cl.start_time <= ?';
-      params.push(dateTo + ' 23:59:59');
-    }
-    
-    if (search) {
-      query += ' AND (c.phone LIKE ? OR c.name LIKE ?)';
-      params.push(`%${search}%`, `%${search}%`);
-    }
-    
-    // プロバイダフィルター追加
-    if (provider) {
-      query += ' AND cl.call_provider = ?';
-      params.push(provider);
-    }
-    
-    query += ' ORDER BY cl.start_time DESC';
-    
-    // db.queryの結果を[rows, fields]として受け取る
-    const [calls] = await db.query(query, params);
-    
-    // CSVヘッダーを作成
-    const headers = [
-      '発信日時',
-      '電話番号',
-      '名前',
-      '会社名',
-      'キャンペーン名',
-      'ステータス',
-      '通話時間（秒）',
-      'キー入力',
-      '発信者番号',
-      'プロバイダ' // 新しいカラムを追加
-    ];
-    
-    // CSVデータを作成
-    let csv = headers.join(',') + '\n';
-    
-    calls.forEach(call => {
-      const row = [
-        call['発信日時'] ? `"${call['発信日時']}"` : '',
-        call['電話番号'] ? `"${call['電話番号']}"` : '',
-        call['名前'] ? `"${call['名前']}"` : '',
-        call['会社名'] ? `"${call['会社名']}"` : '',
-        call['キャンペーン名'] ? `"${call['キャンペーン名']}"` : '',
-        call['ステータス'] ? `"${call['ステータス']}"` : '',
-        call['通話時間（秒）'] || '0',
-        call['キー入力'] ? `"${call['キー入力']}"` : '',
-        call['発信者番号'] ? `"${call['発信者番号']}"` : '',
-        call['プロバイダ'] ? `"${call['プロバイダ']}"` : 'asterisk' // デフォルト値を設定
-      ];
-      csv += row.join(',') + '\n';
-    });
-    
-    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
-    res.setHeader('Content-Disposition', `attachment; filename=call_history_${new Date().toISOString().split('T')[0]}.csv`);
-    res.send('\uFEFF' + csv); // BOM付きUTF-8
-  } catch (error) {
-    logger.error('通話履歴エクスポートエラー:', error);
-    res.status(500).json({ message: 'エクスポートに失敗しました' });
-  }
-};
-
-// 特定の通話の詳細を取得
-exports.getCallById = async (req, res) => {
-  try {
-    // db.queryの結果を[rows, fields]として受け取る
-    const [calls] = await db.query(`
-      SELECT cl.*, 
-             c.phone as contact_phone, c.name as contact_name, c.company as contact_company,
-             ca.name as campaign_name, ca.script as campaign_script,
-             ci.number as caller_id_number, ci.description as caller_id_description
-      FROM call_logs cl
-      LEFT JOIN contacts c ON cl.contact_id = c.id
-      LEFT JOIN campaigns ca ON cl.campaign_id = ca.id
-      LEFT JOIN caller_ids ci ON cl.caller_id_id = ci.id
-      WHERE cl.id = ?
-    `, [req.params.id]);
-    
-    if (calls.length === 0) {
-      return res.status(404).json({ message: '通話が見つかりません' });
-    }
-    
-    res.json(calls[0]);
-  } catch (error) {
-    logger.error('通話詳細取得エラー:', error);
-    res.status(500).json({ message: '通話詳細の取得に失敗しました' });
-  }
-};
-
-// 通話ステータスの統計を取得
-exports.getCallStats = async (req, res) => {
-  try {
-    const { startDate, endDate, campaignId, provider } = req.query;
-    
-    let query = `
-      SELECT 
-        COUNT(*) as totalCalls,
-        SUM(CASE WHEN status = 'ANSWERED' THEN 1 ELSE 0 END) as answered,
-        SUM(CASE WHEN status = 'NO ANSWER' THEN 1 ELSE 0 END) as noAnswer,
-        SUM(CASE WHEN status = 'BUSY' THEN 1 ELSE 0 END) as busy,
-        SUM(CASE WHEN status = 'FAILED' THEN 1 ELSE 0 END) as failed,
-        AVG(CASE WHEN status = 'ANSWERED' THEN duration ELSE NULL END) as avgDuration
-      FROM call_logs
-      WHERE 1=1
-    `;
-    
-    const params = [];
-    
-    if (startDate) {
-      query += ' AND start_time >= ?';
-      params.push(startDate);
-    }
-    
-    if (endDate) {
-      query += ' AND start_time <= ?';
-      params.push(endDate + ' 23:59:59');
-    }
-    
-    if (campaignId) {
-      query += ' AND campaign_id = ?';
-      params.push(campaignId);
-    }
-    
-    // プロバイダフィルターを追加
-    if (provider) {
-      query += ' AND call_provider = ?';
-      params.push(provider);
-    }
-    
-    // db.queryの結果を[rows, fields]として受け取る
-    const [stats] = await db.query(query, params);
-    
-    // プロバイダごとの統計も取得
-    let providerStats = [];
-    
-    if (!provider) {
-      const providerQuery = `
-        SELECT 
-          call_provider as provider,
-          COUNT(*) as calls,
-          SUM(CASE WHEN status = 'ANSWERED' THEN 1 ELSE 0 END) as answered,
-          ROUND(100.0 * SUM(CASE WHEN status = 'ANSWERED' THEN 1 ELSE 0 END) / COUNT(*), 1) as answerRate,
-          AVG(CASE WHEN status = 'ANSWERED' THEN duration ELSE NULL END) as avgDuration
-        FROM call_logs
-        WHERE 1=1
-      `;
-      
-      let providerParams = [...params];
-      
-      if (startDate) {
-        providerQuery += ' AND start_time >= ?';
-      }
-      
-      if (endDate) {
-        providerQuery += ' AND start_time <= ?';
-      }
-      
-      if (campaignId) {
-        providerQuery += ' AND campaign_id = ?';
-      }
-      
-      providerQuery += ' GROUP BY call_provider';
-      
-      [providerStats] = await db.query(providerQuery, providerParams);
-    }
-    
-    res.json({
-      overall: stats[0],
-      providers: providerStats
-    });
-  } catch (error) {
-    logger.error('通話統計取得エラー:', error);
-    res.status(500).json({ message: '統計の取得に失敗しました' });
-  }
-};
-
-// 通話終了の処理
+// 通話終了処理
 exports.handleCallEnd = async (req, res) => {
   try {
     const { callId, duration, status, keypress } = req.body;
@@ -527,49 +312,5 @@ exports.getProvidersStatus = async (req, res) => {
   } catch (error) {
     logger.error('プロバイダステータス取得エラー:', error);
     res.status(500).json({ message: 'プロバイダステータスの取得に失敗しました' });
-  }
-};
-
-// 電話番号テスト用のシンプル発信
-exports.simpleCall = async (req, res) => {
-  try {
-    const { phoneNumber, provider } = req.body;
-    
-    if (!phoneNumber) {
-      return res.status(400).json({ message: '発信先電話番号は必須です' });
-    }
-    
-    // シンプルな発信パラメータ
-    const params = {
-      phoneNumber,
-      callerID: process.env.DEFAULT_CALLER_ID || '"Auto Dialer" <03-5946-8520>',
-      context: 'autodialer',
-      exten: 's',
-      priority: 1,
-      variables: {
-        TEST_CALL: 'true'
-      },
-      provider
-    };
-    
-    // 発信実行
-    const result = await callService.originate(params);
-    
-    // 簡易ログ記録
-    await db.query(`
-      INSERT INTO call_logs 
-      (call_id, phone_number, start_time, status, test_call, call_provider)
-      VALUES (?, ?, NOW(), 'ORIGINATING', 1, ?)
-    `, [result.ActionID, phoneNumber, result.provider]);
-    
-    res.json({
-      success: true,
-      callId: result.ActionID,
-      message: `シンプル発信が開始されました（${result.provider}）`,
-      provider: result.provider
-    });
-  } catch (error) {
-    logger.error('シンプル発信エラー:', error);
-    res.status(500).json({ message: 'シンプル発信に失敗しました', error: error.message });
   }
 };

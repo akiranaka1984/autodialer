@@ -527,8 +527,7 @@ const TestCall = () => {
               {providers.map(p => (
                 <option key={p.name} value={p.name}>
                   {p.name === 'asterisk' ? 'Asterisk' : 
-                   p.name === 'sip' ? 'SIP直接' : 
-                   p.name === 'twilio' ? 'Twilio' : p.name}
+                  p.name === 'sip' ? 'SIP直接' : p.name}
                   {p.activeCallCount !== null ? ` (アクティブ: ${p.activeCallCount})` : ''}
                 </option>
               ))}
