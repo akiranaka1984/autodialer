@@ -85,16 +85,16 @@ exports.handleCallStart = async (req, res) => {
 // キーパッド入力時のコールバック
 exports.handleKeypress = async (req, res) => {
   try {
-    const { callId, keypress } = req.body;
+    const { callId, keypress, campaignId } = req.body;
     
-    logger.info(`キーパッド入力コールバック: callId=${callId}, keypress=${keypress}`);
+    logger.info(`キーパッド入力コールバック: callId=${callId}, keypress=${keypress}, campaignId=${campaignId}`);
     
     if (!callId) {
       return res.status(400).json({ message: '通話IDが必要です' });
     }
     
     // 通話ログの更新
-    const result = await db.query(
+    const [result] = await db.query(
       'UPDATE call_logs SET keypress = ? WHERE call_id = ?',
       [keypress, callId]
     );
@@ -103,14 +103,31 @@ exports.handleKeypress = async (req, res) => {
       return res.status(404).json({ message: '指定された通話IDが見つかりません' });
     }
     
-    // 発信サービスに通知
-    if (dialerService.handleKeypress) {
-      dialerService.handleKeypress(callId, keypress);
+    // キーパッド入力に基づく処理
+    switch (keypress) {
+      case '1':
+        // オペレーターへの転送処理
+        await operatorService.assignCallToOperator(callId, campaignId);
+        break;
+      
+      case '9':
+        // DNCリストに追加
+        await handleDncRequest(callId);
+        break;
+      
+      default:
+        // その他のキー入力処理
+        break;
     }
+    
+    // WebSocketを通じてリアルタイム通知
+    websocketService.notifyKeypress(callId, keypress);
     
     res.json({
       success: true,
-      message: 'キーパッド入力が記録されました'
+      message: 'キーパッド入力が記録されました',
+      action: keypress === '1' ? 'operator-transfer' : 
+              keypress === '9' ? 'add-to-dnc' : 'none'
     });
   } catch (error) {
     logger.error('キーパッド入力コールバックエラー:', error);
@@ -308,5 +325,43 @@ exports.getCallStats = async (req, res) => {
   } catch (error) {
     logger.error('通話統計取得エラー:', error);
     res.status(500).json({ message: `エラー: ${error.message}` });
+  }
+};
+
+// DNCリスト追加処理
+async function handleDncRequest(callId) {
+  try {
+    // 通話ログから連絡先情報を取得
+    const [callLogs] = await db.query(
+      'SELECT cl.contact_id, c.phone FROM call_logs cl LEFT JOIN contacts c ON cl.contact_id = c.id WHERE cl.call_id = ?',
+      [callId]
+    );
+    
+    if (callLogs.length === 0 || !callLogs[0].phone) {
+      logger.warn(`DNC追加エラー: 通話ID ${callId} に対応する連絡先が見つかりません`);
+      return false;
+    }
+    
+    const contactPhone = callLogs[0].phone;
+    
+    // DNCリストに追加
+    await db.query(
+      'INSERT IGNORE INTO dnc_list (phone, reason, created_at) VALUES (?, ?, NOW())',
+      [contactPhone, 'ユーザーリクエスト（キーパッド入力9）']
+    );
+    
+    // 連絡先のステータスを更新
+    if (callLogs[0].contact_id) {
+      await db.query(
+        'UPDATE contacts SET status = ? WHERE id = ?',
+        ['dnc', callLogs[0].contact_id]
+      );
+    }
+    
+    logger.info(`DNCリストに追加されました: ${contactPhone}`);
+    return true;
+  } catch (error) {
+    logger.error('DNC追加処理エラー:', error);
+    return false;
   }
 };
