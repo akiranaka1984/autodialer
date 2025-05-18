@@ -1,6 +1,7 @@
 // backend/src/routes/contacts.js
 const express = require('express');
 const router = express.Router();
+// 相対パスを明示的に
 const contactsController = require('../controllers/contactsController');
 const auth = require('../middleware/auth');
 

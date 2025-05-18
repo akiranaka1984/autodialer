@@ -90,7 +90,23 @@ try {
   app.use('/api/contacts', contactRoutes);
   logger.info('連絡先APIを有効化しました');
 } catch (error) {
-  logger.warn('連絡先APIの読み込みに失敗しました:', error.message);
+  // より詳細なエラー情報をログに出力
+  logger.warn('連絡先APIの読み込みに失敗しました:', {
+    name: error.name,
+    message: error.message,
+    stack: error.stack,
+    code: error.code
+  });
+  
+  // 依存関係のパスが正しく解決されているか確認
+  try {
+    logger.info('パス解決テスト:',  {
+      contactsController: require.resolve('./controllers/contactsController'),
+      databaseService: require.resolve('./services/database')
+    });
+  } catch (resolveError) {
+    logger.error('パス解決エラー:', resolveError.message);
+  }
 }
 
 try {
@@ -135,7 +151,47 @@ try {
   app.use('/api/reports', reportRoutes);
   logger.info('レポートAPIを有効化しました');
 } catch (error) {
-  logger.warn('レポートAPIの読み込みに失敗しました:', error.message);
+  // より詳細なエラー情報をログに出力
+  logger.warn('レポートAPIの読み込みに失敗しました:', {
+    name: error.name,
+    message: error.message,
+    stack: error.stack,
+    code: error.code
+  });
+  
+  // 依存関係のパスが正しく解決されているか確認
+  try {
+    const fs = require('fs');
+    const reportsRoutePath = './routes/reports.js';
+    const reportsControllerPath = './controllers/reportsController.js';
+    
+    if (fs.existsSync(reportsRoutePath)) {
+      logger.info('reports.js ファイルは存在します');
+      
+      // ファイルの内容を確認
+      const routeContent = fs.readFileSync(reportsRoutePath, 'utf8');
+      logger.info(`reports.js の最初の100文字: ${routeContent.substring(0, 100)}...`);
+      
+      // コントローラーの存在確認
+      if (fs.existsSync(reportsControllerPath)) {
+        logger.info('reportsController.js ファイルは存在します');
+      } else {
+        logger.warn('reportsController.js ファイルが見つかりません');
+      }
+      
+      // モジュール解決を試みる
+      try {
+        require.resolve('./controllers/reportsController');
+        logger.info('reportsController モジュールは解決可能です');
+      } catch (resolveError) {
+        logger.error('reportsController モジュール解決エラー:', resolveError.message);
+      }
+    } else {
+      logger.warn('reports.js ファイルが見つかりません');
+    }
+  } catch (fsError) {
+    logger.error('ファイル存在確認エラー:', fsError.message);
+  }
 }
 
 // 設定ルート

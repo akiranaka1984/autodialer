@@ -23,12 +23,22 @@ services:
       TWILIO_AUTH_TOKEN: ${TWILIO_AUTH_TOKEN}
       TWILIO_PHONE_NUMBER: ${TWILIO_PHONE_NUMBER}
       PUBLIC_URL: ${PUBLIC_URL}
+      # 追加: ログレベルの設定
+      LOG_LEVEL: "debug"
     depends_on:
-      - mysql
+      mysql:
+        condition: service_healthy  # MySQLが完全に起動するまで待機
+    restart: unless-stopped  # 不意の終了時に自動再起動
     networks:
       - autodialer-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
 
-  # フロントエンドサーバー（変更なし）
+  # フロントエンドサーバー
   frontend:
     build:
       context: ./frontend
@@ -40,19 +50,20 @@ services:
       - /app/node_modules
     environment:
       NODE_ENV: development
-      REACT_APP_API_URL: http://backend:5000/api
+      # 修正: バックエンドURLをホスト側の5001ポートに変更
+      REACT_APP_API_URL: http://localhost:5001/api
       CHOKIDAR_USEPOLLING: "true"
       WDS_SOCKET_HOST: localhost
       WDS_SOCKET_PORT: 3003
       DANGEROUSLY_DISABLE_HOST_CHECK: true  # 開発環境のみ
-      PORT : 3000
+      PORT: 3000
       HOST: "0.0.0.0"
     depends_on:
       - backend
     networks:
       - autodialer-network
 
-  # データベース（変更なし）
+  # データベース
   mysql:
     image: mysql:8.0
     platform: linux/arm64
@@ -68,11 +79,18 @@ services:
       - --character-set-server=utf8mb4
       - --collation-server=utf8mb4_unicode_ci
       - --init-connect='SET NAMES utf8mb4'
+      - --skip-name-resolve  # 名前解決をスキップしてパフォーマンス向上
     volumes:
       - mysql_data:/var/lib/mysql
       - ./backend/database/init-only:/docker-entrypoint-initdb.d
     networks:
       - autodialer-network
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-ppassword"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 15s
 
 networks:
   autodialer-network:
