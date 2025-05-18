@@ -1,10 +1,10 @@
-// backend/src/index.js
+// backend/src/index.js の修正版
 const express = require('express');
 const cors = require('cors');
 const http = require('http');
 const logger = require('./services/logger');
 const db = require('./services/database');
-const callService = require('./services/callService');
+const callService = require('./services/callService');  // ここで一度だけ宣言
 const websocketService = require('./services/websocketService');
 
 // 環境変数の読み込み
@@ -165,6 +165,23 @@ try {
   logger.warn('DNCリストAPIの読み込みに失敗しました:', error.message);
 }
 
+// IVRおよび音声ファイル管理ルート
+try {
+  const audioRoutes = require('./routes/audio');
+  app.use('/api/audio', audioRoutes);
+  logger.info('音声ファイル管理APIを有効化しました');
+} catch (error) {
+  logger.warn('音声ファイル管理APIの読み込みに失敗しました:', error.message);
+}
+
+try {
+  const ivrRoutes = require('./routes/ivr');
+  app.use('/api/ivr', ivrRoutes);
+  logger.info('IVR設定APIを有効化しました');
+} catch (error) {
+  logger.warn('IVR設定APIの読み込みに失敗しました:', error.message);
+}
+
 // 404エラーハンドリング - すべてのルートに一致しなかった場合
 app.use((req, res, next) => {
   res.status(404).json({ message: '要求されたリソースが見つかりません' });
@@ -175,9 +192,6 @@ app.use((err, req, res, next) => {
   logger.error('アプリケーションエラー:', err);
   res.status(500).json({ message: '内部サーバーエラー', error: err.message });
 });
-
-// src/index.js (一部抜粋 - 起動処理部分)
-const callService = require('./services/callService');
 
 // サーバー起動
 const startServer = async () => {
@@ -202,6 +216,16 @@ const startServer = async () => {
     process.exit(1);
   }
 };
+
+// 未処理のエラーハンドリング
+process.on('unhandledRejection', (reason, promise) => {
+  logger.error('Unhandled Rejection:', reason);
+});
+
+process.on('uncaughtException', (error) => {
+  logger.error('Uncaught Exception:', error);
+  process.exit(1);
+});
 
 // アプリケーションの終了処理
 process.on('SIGINT', async () => {
