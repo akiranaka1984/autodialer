@@ -416,3 +416,236 @@ exports.importCallerChannels = async (req, res) => {
     res.status(500).json({ message: `エラー: ${error.message}` });
   }
 };
+
+// 特定の発信者番号のチャンネル一覧を取得
+exports.getCallerChannels = async (req, res) => {
+  try {
+    const [channels] = await db.query(
+      'SELECT * FROM caller_channels WHERE caller_id_id = ?',
+      [req.params.id]
+    );
+    res.json(channels);
+  } catch (error) {
+    logger.error('チャンネル取得エラー:', error);
+    res.status(500).json({ message: 'サーバーエラーが発生しました: ' + error.message });
+  }
+};
+
+// チャンネル情報を更新
+exports.updateCallerChannel = async (req, res) => {
+  try {
+    const { username, password } = req.body;
+    let updateQuery = 'UPDATE caller_channels SET ';
+    const queryParams = [];
+
+    // パスワードが提供されている場合のみ更新
+    if (username) {
+      updateQuery += 'username = ?';
+      queryParams.push(username);
+    }
+
+    if (password) {
+      if (username) updateQuery += ', ';
+      updateQuery += 'password = ?';
+      queryParams.push(password);
+    }
+
+    updateQuery += ' WHERE id = ?';
+    queryParams.push(req.params.id);
+
+    const [result] = await db.query(updateQuery, queryParams);
+
+    if (result.affectedRows === 0) {
+      return res.status(404).json({ message: 'チャンネルが見つかりません' });
+    }
+
+    res.json({ message: 'チャンネルが更新されました' });
+  } catch (error) {
+    logger.error('チャンネル更新エラー:', error);
+    res.status(500).json({ message: 'サーバーエラーが発生しました: ' + error.message });
+  }
+};
+
+// チャンネルを削除
+exports.deleteCallerChannel = async (req, res) => {
+  try {
+    const [result] = await db.query(
+      'DELETE FROM caller_channels WHERE id = ?',
+      [req.params.id]
+    );
+
+    if (result.affectedRows === 0) {
+      return res.status(404).json({ message: 'チャンネルが見つかりません' });
+    }
+
+    res.json({ message: 'チャンネルが削除されました' });
+  } catch (error) {
+    logger.error('チャンネル削除エラー:', error);
+    res.status(500).json({ message: 'サーバーエラーが発生しました: ' + error.message });
+  }
+};
+
+// 特定の発信者番号のチャンネル状態サマリーを取得
+exports.getCallerChannelsStatus = async (req, res) => {
+  try {
+    const [channels] = await db.query(
+      `SELECT 
+        status, 
+        COUNT(*) as count
+       FROM caller_channels 
+       WHERE caller_id_id = ?
+       GROUP BY status`,
+      [req.params.id]
+    );
+
+    // 総チャンネル数を取得
+    const [totalResult] = await db.query(
+      'SELECT COUNT(*) as total FROM caller_channels WHERE caller_id_id = ?',
+      [req.params.id]
+    );
+
+    const total = totalResult[0]?.total || 0;
+
+    // ステータスごとの数を整理
+    const statusCounts = {
+      total,
+      available: 0,
+      busy: 0,
+      error: 0
+    };
+
+    channels.forEach(item => {
+      if (item.status in statusCounts) {
+        statusCounts[item.status] = item.count;
+      }
+    });
+
+    res.json(statusCounts);
+  } catch (error) {
+    logger.error('チャンネル状態取得エラー:', error);
+    res.status(500).json({ message: 'サーバーエラーが発生しました: ' + error.message });
+  }
+};
+
+// 特定のチャンネルを取得
+exports.getCallerChannelById = async (req, res) => {
+  try {
+    const [channels] = await db.query(
+      'SELECT * FROM caller_channels WHERE id = ?',
+      [req.params.id]
+    );
+
+    if (channels.length === 0) {
+      return res.status(404).json({ message: 'チャンネルが見つかりません' });
+    }
+
+    res.json(channels[0]);
+  } catch (error) {
+    logger.error('チャンネル取得エラー:', error);
+    res.status(500).json({ message: 'サーバーエラーが発生しました: ' + error.message });
+  }
+};
+
+// 発信者番号の状態を監視（アクティブコール数など）
+exports.monitorCallerId = async (req, res) => {
+  try {
+    // 発信者番号の基本情報を取得
+    const [callerIds] = await db.query(
+      'SELECT * FROM caller_ids WHERE id = ?',
+      [req.params.id]
+    );
+
+    if (callerIds.length === 0) {
+      return res.status(404).json({ message: '発信者番号が見つかりません' });
+    }
+
+    // チャンネル状態を取得
+    const [channels] = await db.query(
+      `SELECT 
+        status, 
+        COUNT(*) as count
+       FROM caller_channels 
+       WHERE caller_id_id = ?
+       GROUP BY status`,
+      [req.params.id]
+    );
+
+    // アクティブコール数を取得（仮実装 - 実際にはsipServiceと連携する必要あり）
+    const sipService = require('../services/sipService');
+    let activeCallCount = 0;
+    
+    if (sipService && typeof sipService.getActiveCallCountForCallerId === 'function') {
+      try {
+        activeCallCount = sipService.getActiveCallCountForCallerId(req.params.id);
+      } catch (err) {
+        logger.warn(`アクティブコール数取得エラー: ${err.message}`);
+      }
+    }
+
+    // レスポンスを構築
+    const monitorData = {
+      callerId: callerIds[0],
+      channels: channels.reduce((acc, curr) => {
+        acc[curr.status] = curr.count;
+        return acc;
+      }, {}),
+      activeCallCount,
+      timestamp: new Date()
+    };
+
+    res.json(monitorData);
+  } catch (error) {
+    logger.error('発信者番号モニターエラー:', error);
+    res.status(500).json({ message: 'サーバーエラーが発生しました: ' + error.message });
+  }
+};
+
+// 特定の発信者番号のチャンネルをリセット（すべてavailable状態に）
+exports.resetCallerChannels = async (req, res) => {
+  try {
+    const [result] = await db.query(
+      'UPDATE caller_channels SET status = "available", last_used = NULL WHERE caller_id_id = ?',
+      [req.params.id]
+    );
+
+    // SIPサービスの状態も更新
+    const sipService = require('../services/sipService');
+    if (sipService && typeof sipService.syncChannelStatusWithDatabase === 'function') {
+      try {
+        await sipService.syncChannelStatusWithDatabase();
+      } catch (err) {
+        logger.warn(`SIPサービス同期エラー: ${err.message}`);
+      }
+    }
+
+    res.json({ 
+      message: 'チャンネル状態をリセットしました', 
+      updatedCount: result.affectedRows 
+    });
+  } catch (error) {
+    logger.error('チャンネルリセットエラー:', error);
+    res.status(500).json({ message: 'サーバーエラーが発生しました: ' + error.message });
+  }
+};
+
+// データベースとSIPサービスのチャンネル状態を同期
+exports.syncCallerChannels = async (req, res) => {
+  try {
+    const sipService = require('../services/sipService');
+    
+    if (!sipService || typeof sipService.syncChannelStatusWithDatabase !== 'function') {
+      return res.status(500).json({ message: 'SIPサービスが利用できないか、同期機能が実装されていません' });
+    }
+    
+    const result = await sipService.syncChannelStatusWithDatabase();
+    
+    if (result) {
+      res.json({ message: 'チャンネル状態の同期が完了しました' });
+    } else {
+      res.status(500).json({ message: 'チャンネル状態の同期に失敗しました' });
+    }
+  } catch (error) {
+    logger.error('チャンネル同期エラー:', error);
+    res.status(500).json({ message: 'サーバーエラーが発生しました: ' + error.message });
+  }
+};
