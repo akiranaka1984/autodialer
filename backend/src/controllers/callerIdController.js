@@ -16,18 +16,60 @@ exports.getAllCallerIds = async (req, res) => {
   }
 };
 
-// 特定の発信者番号を取得
+// 発信者番号の詳細を取得（チャンネルも含む）
 exports.getCallerIdById = async (req, res) => {
   try {
-    const callerIds = await db.query('SELECT * FROM caller_ids WHERE id = ?', [req.params.id]);
+    // 発信者番号の基本情報取得
+    const [callerIds] = await db.query(
+      'SELECT * FROM caller_ids WHERE id = ?', 
+      [req.params.id]
+    );
     
     if (callerIds.length === 0) {
       return res.status(404).json({ message: '発信者番号が見つかりません' });
     }
     
-    res.json(callerIds[0]);
+    // チャンネル情報の取得
+    const [channels] = await db.query(
+      'SELECT * FROM caller_channels WHERE caller_id_id = ?',
+      [req.params.id]
+    );
+    
+    // 発信者番号とチャンネル情報を組み合わせて返す
+    const callerId = callerIds[0];
+    callerId.channels = channels;
+    
+    res.json(callerId);
   } catch (error) {
     logger.error('発信者番号詳細取得エラー:', error);
+    res.status(500).json({ message: 'サーバーエラーが発生しました: ' + error.message });
+  }
+};
+
+// 新しいチャンネルを追加
+exports.addCallerChannel = async (req, res) => {
+  try {
+    const { caller_id_id, username, password } = req.body;
+    
+    if (!caller_id_id || !username || !password) {
+      return res.status(400).json({ message: '必須フィールドが不足しています' });
+    }
+    
+    // チャンネルを追加
+    const [result] = await db.query(
+      'INSERT INTO caller_channels (caller_id_id, username, password) VALUES (?, ?, ?)',
+      [caller_id_id, username, password]
+    );
+    
+    res.status(201).json({ 
+      id: result.insertId,
+      caller_id_id,
+      username,
+      password,
+      status: 'available'
+    });
+  } catch (error) {
+    logger.error('チャンネル追加エラー:', error);
     res.status(500).json({ message: 'サーバーエラーが発生しました: ' + error.message });
   }
 };
@@ -271,6 +313,106 @@ exports.importCallerIds = async (req, res) => {
       fs.unlink(req.file.path, () => {});
     }
     
+    res.status(500).json({ message: `エラー: ${error.message}` });
+  }
+};
+// backend/src/controllers/callerIdController.js 内のインポート関数の修正
+
+// CSVからのチャンネルインポート
+exports.importCallerChannels = async (req, res) => {
+  try {
+    const callerId = req.params.id;
+    
+    // Multerミドルウェアを設定
+    const upload = multer({ dest: 'uploads/' });
+    const uploadMiddleware = promisify(upload.single('file'));
+    await uploadMiddleware(req, res);
+    
+    if (!req.file) {
+      return res.status(400).json({ message: 'ファイルが見つかりません' });
+    }
+    
+    // マッピング情報の取得
+    let mappings;
+    try {
+      mappings = JSON.parse(req.body.mappings);
+    } catch (error) {
+      return res.status(400).json({ message: 'マッピング情報が不正です' });
+    }
+    
+    if (!mappings.username || !mappings.password) {
+      return res.status(400).json({ message: 'ユーザー名とパスワードのマッピングが必要です' });
+    }
+    
+    // CSVファイル処理
+    const filePath = req.file.path;
+    const channels = [];
+    const errors = [];
+    let totalCount = 0;
+    let importedCount = 0;
+    let duplicateCount = 0;
+    
+    await new Promise((resolve, reject) => {
+      fs.createReadStream(filePath)
+        .pipe(csv())
+        .on('data', (row) => {
+          totalCount++;
+          
+          try {
+            // マッピングに従ってデータを抽出
+            const username = row[mappings.username].trim();
+            const password = row[mappings.password].trim();
+            
+            if (!username || !password) {
+              errors.push(`行 ${totalCount + 1}: ユーザー名またはパスワードが空です`);
+              return;
+            }
+            
+            // チャンネルを追加
+            channels.push({
+              caller_id_id: callerId,
+              username,
+              password,
+              status: 'available'
+            });
+            
+            importedCount++;
+          } catch (error) {
+            errors.push(`行 ${totalCount + 1}: データ処理エラー - ${error.message}`);
+          }
+        })
+        .on('end', resolve)
+        .on('error', reject);
+    });
+    
+    // 一括挿入処理
+    const connection = await db.beginTransaction();
+    try {
+      for (const channel of channels) {
+        await connection.query(
+          'INSERT INTO caller_channels (caller_id_id, username, password, status) VALUES (?, ?, ?, ?)',
+          [channel.caller_id_id, channel.username, channel.password, channel.status]
+        );
+      }
+      
+      await db.commit(connection);
+    } catch (error) {
+      await db.rollback(connection);
+      throw error;
+    }
+    
+    // 一時ファイルを削除
+    fs.unlink(filePath, () => {});
+    
+    res.json({
+      message: `${importedCount}件のチャンネルをインポートしました`,
+      total_count: totalCount,
+      imported_count: importedCount,
+      errors: errors.slice(0, 10)
+    });
+  } catch (error) {
+    logger.error('チャンネルインポートエラー:', error);
+    if (req.file) fs.unlink(req.file.path, () => {});
     res.status(500).json({ message: `エラー: ${error.message}` });
   }
 };

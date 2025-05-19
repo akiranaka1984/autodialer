@@ -1,12 +1,24 @@
--- 発信者番号（Caller ID）テーブル
-CREATE TABLE IF NOT EXISTS caller_ids (
+-- メイン発信者番号テーブル
+CREATE TABLE caller_ids (
   id INT AUTO_INCREMENT PRIMARY KEY,
   number VARCHAR(20) NOT NULL,
-  description VARCHAR(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci,
-  provider VARCHAR(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci,
+  description VARCHAR(255),
+  provider VARCHAR(100),
+  domain VARCHAR(100),
   active BOOLEAN DEFAULT true,
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-) DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+);
+
+-- チャンネルテーブル
+CREATE TABLE caller_channels (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  caller_id_id INT NOT NULL,
+  username VARCHAR(50) NOT NULL,
+  password VARCHAR(50) NOT NULL,
+  status ENUM('available', 'busy', 'error') DEFAULT 'available',
+  last_used DATETIME NULL,
+  FOREIGN KEY (caller_id_id) REFERENCES caller_ids(id) ON DELETE CASCADE
+);
 
 -- キャンペーンテーブル
 CREATE TABLE IF NOT EXISTS campaigns (

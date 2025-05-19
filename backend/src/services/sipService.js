@@ -4,6 +4,7 @@ const logger = require('./logger');
 const { EventEmitter } = require('events');
 const path = require('path');
 const fs = require('fs');
+const db = require('./database');  // データベース接続を追加
 
 class SipService extends EventEmitter {
   constructor() {
@@ -13,6 +14,9 @@ class SipService extends EventEmitter {
     this.sipAccounts = [];
     this.callToAccountMap = new Map();
     this.activeCallsMap = new Map();
+    
+    // メイン発信者番号とチャンネルのマッピング
+    this.callerIdToChannelsMap = new Map();
     
     // SIPコマンドのパス
     this.sipcmdPath = process.env.SIPCMD_PATH || '/usr/local/bin/sipcmd';
@@ -28,11 +32,16 @@ class SipService extends EventEmitter {
       logger.info('SIPサービスにモックモードで接続しました');
       this.connected = true;
       
-      // モックアカウントの設定
-      this.sipAccounts = [
-        { username: '03080001', password: '56110478', status: 'available', callerID: '0359468520' },
-        { username: '03080002', password: '51448459', status: 'available', callerID: '0335289538' }
-      ];
+      // モックモードでもデータベースからチャンネル情報を読み込む
+      this.sipAccounts = await this.loadSipAccountsFromDatabase();
+      
+      // モックデータが読み込めなかった場合はデフォルト値を設定
+      if (this.sipAccounts.length === 0) {
+        this.sipAccounts = [
+          { username: '03080001', password: '56110478', status: 'available', callerID: '0359468520', mainCallerId: 1 },
+          { username: '03080002', password: '51448459', status: 'available', callerID: '0335289538', mainCallerId: 2 }
+        ];
+      }
       
       return true;
     }
@@ -49,14 +58,22 @@ class SipService extends EventEmitter {
         throw new Error(`SIP発信コマンドが使用できません: ${error.message}`);
       }
       
-      // SIPアカウント情報をロード
-      this.sipAccounts = this.loadSipAccounts();
+      // データベースからSIPアカウント情報をロード
+      this.sipAccounts = await this.loadSipAccountsFromDatabase();
+      
+      // データベースから読み込めなかった場合はファイルから読み込む
+      if (this.sipAccounts.length === 0) {
+        this.sipAccounts = this.loadSipAccountsFromFile();
+      }
       
       if (this.sipAccounts.length === 0) {
         throw new Error('SIPアカウントが設定されていません');
       }
       
       logger.info(`${this.sipAccounts.length}個のSIPアカウントを読み込みました`);
+      
+      // 発信者番号ごとのチャンネルグループを作成
+      this.organizeChannelsByCallerId();
       
       // 定期的なステータスモニタリングを開始
       this.startStatusMonitoring();
@@ -72,9 +89,71 @@ class SipService extends EventEmitter {
     }
   }
   
-  // SIPアカウント情報の取得
-  loadSipAccounts() {
-    logger.info('SIPアカウントを読み込み中...');
+  // データベースからSIPアカウント情報を読み込む（新機能）
+  async loadSipAccountsFromDatabase() {
+    try {
+      logger.info('データベースからSIPチャンネル情報を読み込み中...');
+      
+      // caller_idsとcaller_channelsテーブルからデータを取得
+      const [channels] = await db.query(`
+        SELECT cc.*, ci.number as caller_number, ci.description as description, 
+               ci.provider, ci.domain, ci.id as main_caller_id
+        FROM caller_channels cc
+        JOIN caller_ids ci ON cc.caller_id_id = ci.id
+        WHERE ci.active = true
+      `);
+      
+      if (channels.length === 0) {
+        logger.warn('データベースに有効なSIPチャンネルが見つかりません');
+        return [];
+      }
+      
+      // チャンネル情報の初期状態を設定
+      const formattedAccounts = channels.map(channel => ({
+        username: channel.username,
+        password: channel.password,
+        callerID: channel.caller_number,
+        description: channel.description,
+        domain: channel.domain,
+        provider: channel.provider,
+        mainCallerId: channel.main_caller_id, // メイン発信者番号IDを保持
+        status: channel.status || 'available', // DBにステータスが保存されていればそれを使用
+        lastUsed: channel.last_used || null,
+        failCount: 0
+      }));
+      
+      logger.info(`データベースから${formattedAccounts.length}個のSIPチャンネルを読み込みました`);
+      return formattedAccounts;
+    } catch (error) {
+      logger.error('データベースからのSIPチャンネル読み込みエラー:', error);
+      return [];
+    }
+  }
+  
+  // 発信者番号ごとにチャンネルをグループ化
+  organizeChannelsByCallerId() {
+    this.callerIdToChannelsMap.clear();
+    
+    // 各チャンネルをメイン発信者番号IDごとにグループ化
+    this.sipAccounts.forEach(account => {
+      if (!account.mainCallerId) return;
+      
+      if (!this.callerIdToChannelsMap.has(account.mainCallerId)) {
+        this.callerIdToChannelsMap.set(account.mainCallerId, []);
+      }
+      
+      this.callerIdToChannelsMap.get(account.mainCallerId).push(account);
+    });
+    
+    // 発信者番号ごとのチャンネル数をログ出力
+    this.callerIdToChannelsMap.forEach((channels, callerId) => {
+      logger.info(`発信者番号ID ${callerId} のチャンネル数: ${channels.length}`);
+    });
+  }
+  
+  // ファイルからSIPアカウント情報を読み込む（従来機能）
+  loadSipAccountsFromFile() {
+    logger.info('ファイルからSIPアカウントを読み込み中...');
     
     try {
       // 環境変数から読み込む
@@ -110,8 +189,8 @@ class SipService extends EventEmitter {
       if (accounts.length === 0) {
         logger.warn('SIPアカウントが設定されていません。デフォルトアカウントを使用します。');
         accounts = [
-          { username: '03080001', password: '56110478', callerID: '0359468520' },
-          { username: '03080002', password: '51448459', callerID: '0335289538' }
+          { username: '03080001', password: '56110478', callerID: '0359468520', mainCallerId: 1 },
+          { username: '03080002', password: '51448459', callerID: '0335289538', mainCallerId: 2 }
         ];
       }
       
@@ -130,8 +209,8 @@ class SipService extends EventEmitter {
       
       // エラー時はデフォルトアカウントを返す
       return [
-        { username: '03080001', password: '56110478', callerID: '0359468520', status: 'available', lastUsed: null, failCount: 0 },
-        { username: '03080002', password: '51448459', callerID: '0335289538', status: 'available', lastUsed: null, failCount: 0 }
+        { username: '03080001', password: '56110478', callerID: '0359468520', mainCallerId: 1, status: 'available', lastUsed: null, failCount: 0 },
+        { username: '03080002', password: '51448459', callerID: '0335289538', mainCallerId: 2, status: 'available', lastUsed: null, failCount: 0 }
       ];
     }
   }
@@ -144,8 +223,22 @@ class SipService extends EventEmitter {
     logger.info(`SIP発信を開始: 発信先=${params.phoneNumber}`);
     
     try {
-      // 利用可能なSIPアカウントを取得
-      const sipAccount = await this.getAvailableSipAccount();
+      // 特定の発信者番号のチャンネルを使用する場合
+      let sipAccount = null;
+      
+      if (params.callerIdData && params.callerIdData.id) {
+        // 特定の発信者番号ID向けの利用可能なチャンネルを探す
+        sipAccount = await this.getAvailableSipAccountForCallerId(params.callerIdData.id);
+        
+        if (!sipAccount) {
+          logger.warn(`発信者番号ID ${params.callerIdData.id} に利用可能なチャンネルがありません`);
+          // バックアップとして任意の利用可能なチャンネルを使用
+          sipAccount = await this.getAvailableSipAccount();
+        }
+      } else {
+        // 任意の利用可能なチャンネルを使用
+        sipAccount = await this.getAvailableSipAccount();
+      }
       
       if (!sipAccount) {
         throw new Error('利用可能なSIPアカウントが見つかりません');
@@ -160,7 +253,6 @@ class SipService extends EventEmitter {
       const callId = 'sip-' + Date.now() + '-' + Math.floor(Math.random() * 10000);
       
       // sipcmdコマンドの引数を生成
-      // 具体的な引数はsipcmdツールのバージョンによって異なる場合があります
       const args = [
         '-u', sipAccount.username,          // ユーザー名
         '-p', sipAccount.password,          // パスワード
@@ -179,6 +271,18 @@ class SipService extends EventEmitter {
       sipAccount.status = 'busy';
       sipAccount.lastUsed = new Date();
       
+      // データベースのチャンネル状態を更新
+      if (sipAccount.channelId) {
+        try {
+          await db.query(
+            'UPDATE caller_channels SET status = ?, last_used = NOW() WHERE id = ?',
+            ['busy', sipAccount.channelId]
+          );
+        } catch (dbError) {
+          logger.warn(`チャンネル状態更新エラー: ${dbError.message}`);
+        }
+      }
+      
       // 通話IDとSIPアカウントを関連付け
       this.callToAccountMap.set(callId, sipAccount);
       
@@ -190,7 +294,9 @@ class SipService extends EventEmitter {
         process: sipcmdProcess,
         startTime: Date.now(),
         status: 'calling',
-        phoneNumber: formattedNumber
+        phoneNumber: formattedNumber,
+        callerID: sipAccount.callerID,
+        mainCallerId: sipAccount.mainCallerId
       });
       
       // プロセス出力の処理
@@ -243,11 +349,35 @@ class SipService extends EventEmitter {
                 logger.warn(`SIPアカウント ${sipAccount.username} を一時的に無効化します（失敗回数: ${sipAccount.failCount}）`);
                 sipAccount.status = 'error';
                 
+                // データベースのチャンネル状態を更新
+                if (sipAccount.channelId) {
+                  try {
+                    db.query(
+                      'UPDATE caller_channels SET status = ? WHERE id = ?',
+                      ['error', sipAccount.channelId]
+                    );
+                  } catch (dbError) {
+                    logger.warn(`チャンネル状態更新エラー: ${dbError.message}`);
+                  }
+                }
+                
                 // 30分後に再度有効化
                 setTimeout(() => {
                   sipAccount.status = 'available';
                   sipAccount.failCount = 0;
                   logger.info(`SIPアカウント ${sipAccount.username} を再度有効化しました`);
+                  
+                  // データベースのチャンネル状態を更新
+                  if (sipAccount.channelId) {
+                    try {
+                      db.query(
+                        'UPDATE caller_channels SET status = ? WHERE id = ?',
+                        ['available', sipAccount.channelId]
+                      );
+                    } catch (dbError) {
+                      logger.warn(`チャンネル状態更新エラー: ${dbError.message}`);
+                    }
+                  }
                 }, 30 * 60 * 1000);
               }
             }
@@ -260,7 +390,8 @@ class SipService extends EventEmitter {
           this.emit('callEnded', {
             callId,
             status,
-            duration: callData.status === 'answered' ? duration : 0
+            duration: callData.status === 'answered' ? duration : 0,
+            mainCallerId: callData.mainCallerId // メイン発信者番号IDを追加
           });
           
           // マップから削除
@@ -276,7 +407,8 @@ class SipService extends EventEmitter {
         callId,
         number: params.phoneNumber,
         callerID: params.callerID || sipAccount.callerID,
-        variables: params.variables || {}
+        variables: params.variables || {},
+        mainCallerId: sipAccount.mainCallerId // メイン発信者番号IDを追加
       });
       
       return {
@@ -284,6 +416,7 @@ class SipService extends EventEmitter {
         Response: 'Success',
         Message: 'SIP call successfully initiated',
         SipAccount: sipAccount.username,
+        mainCallerId: sipAccount.mainCallerId, // メイン発信者番号IDを追加
         provider: 'sip'
       };
     } catch (error) {
@@ -297,8 +430,22 @@ class SipService extends EventEmitter {
     logger.info(`モックモードでSIP発信シミュレーション: 発信先=${params.phoneNumber}`);
     
     try {
-      // 利用可能なSIPアカウントを取得
-      const sipAccount = await this.getAvailableSipAccount();
+      // 特定の発信者番号のチャンネルを使用する場合
+      let sipAccount = null;
+      
+      if (params.callerIdData && params.callerIdData.id) {
+        // 特定の発信者番号ID向けの利用可能なチャンネルを探す
+        sipAccount = await this.getAvailableSipAccountForCallerId(params.callerIdData.id);
+        
+        if (!sipAccount) {
+          logger.warn(`発信者番号ID ${params.callerIdData.id} に利用可能なチャンネルがありません`);
+          // バックアップとして任意の利用可能なチャンネルを使用
+          sipAccount = await this.getAvailableSipAccount();
+        }
+      } else {
+        // 任意の利用可能なチャンネルを使用
+        sipAccount = await this.getAvailableSipAccount();
+      }
       
       if (!sipAccount) {
         throw new Error('利用可能なSIPアカウントがありません（モックモード）');
@@ -310,6 +457,18 @@ class SipService extends EventEmitter {
       sipAccount.status = 'busy';
       sipAccount.lastUsed = new Date();
       
+      // データベースのチャンネル状態を更新
+      if (sipAccount.channelId) {
+        try {
+          await db.query(
+            'UPDATE caller_channels SET status = ?, last_used = NOW() WHERE id = ?',
+            ['busy', sipAccount.channelId]
+          );
+        } catch (dbError) {
+          logger.warn(`チャンネル状態更新エラー: ${dbError.message}`);
+        }
+      }
+      
       // 通話IDとSIPアカウントを関連付け
       this.callToAccountMap.set(callId, sipAccount);
       
@@ -318,7 +477,8 @@ class SipService extends EventEmitter {
         callId,
         number: params.phoneNumber,
         callerID: params.callerID || sipAccount.callerID || '0359468520',
-        variables: params.variables || {}
+        variables: params.variables || {},
+        mainCallerId: sipAccount.mainCallerId // メイン発信者番号IDを追加
       });
       
       return {
@@ -326,6 +486,7 @@ class SipService extends EventEmitter {
         Response: 'Success',
         Message: 'Originate successfully queued (SIP MOCK)',
         SipAccount: sipAccount.username,
+        mainCallerId: sipAccount.mainCallerId, // メイン発信者番号IDを追加
         provider: 'sip'
       };
     } catch (error) {
@@ -383,6 +544,18 @@ class SipService extends EventEmitter {
         // SIPアカウントのステータスを利用可能に戻す
         if (sipAccount.status !== 'error') { // エラー状態のアカウントはそのまま
           sipAccount.status = 'available';
+          
+          // データベースのチャンネル状態を更新
+          if (sipAccount.channelId) {
+            try {
+              await db.query(
+                'UPDATE caller_channels SET status = ? WHERE id = ?',
+                ['available', sipAccount.channelId]
+              );
+            } catch (dbError) {
+              logger.warn(`チャンネル状態更新エラー: ${dbError.message}`);
+            }
+          }
         }
         
         // マッピングから削除
@@ -400,13 +573,44 @@ class SipService extends EventEmitter {
     }
   }
   
-  // 利用可能なSIPアカウントを取得
+  // 特定の発信者番号IDに関連付けられた利用可能なSIPアカウントを取得（新機能）
+  async getAvailableSipAccountForCallerId(callerId) {
+    logger.info(`発信者番号ID ${callerId} の利用可能なSIPアカウントを検索中`);
+    
+    // 発信者番号IDに関連付けられたチャンネルを取得
+    const channels = this.callerIdToChannelsMap.get(parseInt(callerId));
+    
+    if (!channels || channels.length === 0) {
+      logger.warn(`発信者番号ID ${callerId} に関連付けられたチャンネルが見つかりません`);
+      return null;
+    }
+    
+    // 利用可能なチャンネルを検索
+    const availableAccount = channels.find(account => account && account.status === 'available');
+    
+    if (!availableAccount) {
+      logger.warn(`発信者番号ID ${callerId} に利用可能なチャンネルがありません`);
+      return null;
+    }
+    
+    logger.info(`発信者番号ID ${callerId} の利用可能なSIPアカウントを見つけました: ${availableAccount.username}`);
+    return availableAccount;
+  }
+  
+  // 任意の利用可能なSIPアカウントを取得
   async getAvailableSipAccount() {
     logger.info('利用可能なSIPアカウントを検索中');
     
     if (!this.sipAccounts || this.sipAccounts.length === 0) {
       logger.info('SIPアカウントがないため、再読み込みを試みます');
-      this.sipAccounts = this.loadSipAccounts();
+      this.sipAccounts = await this.loadSipAccountsFromDatabase();
+      
+      if (this.sipAccounts.length === 0) {
+        this.sipAccounts = this.loadSipAccountsFromFile();
+      }
+      
+      // 発信者番号ごとのチャンネルグループを更新
+      this.organizeChannelsByCallerId();
     }
     
     if (!this.sipAccounts || this.sipAccounts.length === 0) {
@@ -424,6 +628,15 @@ class SipService extends EventEmitter {
     
     logger.info(`利用可能なSIPアカウントを見つけました: ${availableAccount.username}`);
     return availableAccount;
+  }
+  
+  // 特定の発信者番号の利用可能なSIPアカウント数を返す（新機能）
+  getAvailableSipAccountCountForCallerId(callerId) {
+    const channels = this.callerIdToChannelsMap.get(parseInt(callerId));
+    
+    if (!channels) return 0;
+    
+    return channels.filter(account => account && account.status === 'available').length;
   }
   
   // 利用可能なSIPアカウント数を返す
@@ -475,6 +688,15 @@ class SipService extends EventEmitter {
     
     logger.info(`SIPアカウント状態: 全体=${statusCounts.total}, 利用可能=${statusCounts.available}, 使用中=${statusCounts.busy}, エラー=${statusCounts.error}`);
     
+    // 発信者番号ごとのチャンネル状態もログ出力
+    this.callerIdToChannelsMap.forEach((channels, callerId) => {
+      const availableCount = channels.filter(ch => ch.status === 'available').length;
+      const busyCount = channels.filter(ch => ch.status === 'busy').length;
+      const errorCount = channels.filter(ch => ch.status === 'error').length;
+      
+      logger.info(`発信者番号ID ${callerId} のチャンネル状態: 全体=${channels.length}, 利用可能=${availableCount}, 使用中=${busyCount}, エラー=${errorCount}`);
+    });
+    
     return statusCounts;
   }
   
@@ -491,6 +713,18 @@ class SipService extends EventEmitter {
           if (usedForMs > 15 * 60 * 1000) { // 15分
             logger.warn(`長時間使用中のSIPアカウントをリセット: ${account.username}, 使用時間: ${Math.round(usedForMs/1000/60)}分`);
             account.status = 'available';
+            
+            // データベースのチャンネル状態を更新
+            if (account.channelId) {
+              try {
+                db.query(
+                  'UPDATE caller_channels SET status = ? WHERE id = ?',
+                  ['available', account.channelId]
+                );
+              } catch (dbError) {
+                logger.warn(`チャンネル状態更新エラー: ${dbError.message}`);
+              }
+            }
           }
         }
       });
@@ -525,14 +759,46 @@ class SipService extends EventEmitter {
     return this.activeCallsMap.size;
   }
   
+  // 特定の発信者番号IDのアクティブコール数を取得（新機能）
+  getActiveCallCountForCallerId(callerId) {
+    let count = 0;
+    this.activeCallsMap.forEach((callData) => {
+      if (callData.mainCallerId === parseInt(callerId)) {
+        count++;
+      }
+    });
+    return count;
+  }
+  
+  // アカウントステータス情報を取得（発信者番号IDによるグループ化を追加）
   getAccountStatus() {
-    return this.sipAccounts.map(account => ({
+    // 全チャンネルのステータス
+    const allStatus = this.sipAccounts.map(account => ({
       username: account.username,
       status: account.status,
       callerID: account.callerID,
       lastUsed: account.lastUsed,
-      failCount: account.failCount || 0
+      failCount: account.failCount || 0,
+      mainCallerId: account.mainCallerId
     }));
+    
+    // 発信者番号IDごとのステータスサマリー
+    const callerIdSummary = [];
+    
+    this.callerIdToChannelsMap.forEach((channels, callerId) => {
+      callerIdSummary.push({
+        callerId,
+        totalChannels: channels.length,
+        availableChannels: channels.filter(ch => ch.status === 'available').length,
+        busyChannels: channels.filter(ch => ch.status === 'busy').length,
+        errorChannels: channels.filter(ch => ch.status === 'error').length
+      });
+    });
+    
+    return {
+      channels: allStatus,
+      callerIdSummary
+    };
   }
   
   async handleCallEnd(callId, duration, status, keypress) {
@@ -547,6 +813,61 @@ class SipService extends EventEmitter {
     
     // リソースの解放
     return await this.releaseCallResource(callId);
+  }
+  
+  // データベースのチャンネル状態を同期（新機能）
+  async syncChannelStatusWithDatabase() {
+    try {
+      logger.info('データベースとチャンネル状態を同期中...');
+      
+      // アクティブアカウントの状態をデータベースに反映
+      for (const account of this.sipAccounts) {
+        if (account.channelId) {
+          await db.query(
+            'UPDATE caller_channels SET status = ?, last_used = ? WHERE id = ?',
+            [account.status, account.lastUsed || null, account.channelId]
+          );
+        }
+      }
+      
+      // データベースから最新のチャンネル情報を読み込み
+      const freshAccounts = await this.loadSipAccountsFromDatabase();
+      
+      if (freshAccounts.length > 0) {
+        // 既存のチャンネルをメモリから除去せずに状態を更新
+        for (const freshAccount of freshAccounts) {
+          const existingAccount = this.sipAccounts.find(acc => 
+            acc.username === freshAccount.username && acc.mainCallerId === freshAccount.mainCallerId
+          );
+          
+          if (existingAccount) {
+            // 使用中のアカウントはそのままに、他の状態だけ更新
+            if (existingAccount.status !== 'busy') {
+              existingAccount.status = freshAccount.status;
+              existingAccount.lastUsed = freshAccount.lastUsed;
+            }
+            // 他のメタデータも更新
+            existingAccount.callerID = freshAccount.callerID;
+            existingAccount.description = freshAccount.description;
+            existingAccount.domain = freshAccount.domain;
+            existingAccount.provider = freshAccount.provider;
+            existingAccount.channelId = freshAccount.channelId;
+          } else {
+            // 新しいアカウントを追加
+            this.sipAccounts.push(freshAccount);
+          }
+        }
+        
+        // チャンネルをグループ化
+        this.organizeChannelsByCallerId();
+      }
+      
+      logger.info('データベースとチャンネル状態の同期が完了しました');
+      return true;
+    } catch (error) {
+      logger.error('チャンネル状態同期エラー:', error);
+      return false;
+    }
   }
 }
 
