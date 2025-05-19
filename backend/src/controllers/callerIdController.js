@@ -8,11 +8,29 @@ const { promisify } = require('util');
 // 全ての発信者番号を取得
 exports.getAllCallerIds = async (req, res) => {
   try {
-    const callerIds = await db.query('SELECT * FROM caller_ids ORDER BY created_at DESC');
-    res.json(callerIds);
+    console.log('発信者番号一覧取得API開始');
+    
+    // db.queryの結果構造を確認するログを追加
+    const result = await db.query('SELECT * FROM caller_ids ORDER BY created_at DESC');
+    console.log('db.query結果の型:', typeof result);
+    console.log('db.query結果の構造:', Object.prototype.toString.call(result));
+    
+    // 結果が配列かどうかを確認
+    if (Array.isArray(result)) {
+      console.log('結果は配列です。長さ:', result.length);
+      res.json(result);
+    } else if (result && Array.isArray(result[0])) {
+      // MySQL2の場合、結果は[rows, fields]の形式で返される
+      console.log('結果は[rows, fields]形式です。行数:', result[0].length);
+      res.json(result[0]);
+    } else {
+      console.log('不明な結果形式:', result);
+      // 空の配列を返して安全に処理
+      res.json([]);
+    }
   } catch (error) {
-    logger.error('発信者番号取得エラー:', error);
-    res.status(500).json({ message: 'サーバーエラーが発生しました: ' + error.message });
+    console.error('発信者番号取得エラー:', error);
+    res.status(500).json({ message: '発信者番号の取得に失敗しました: ' + error.message });
   }
 };
 

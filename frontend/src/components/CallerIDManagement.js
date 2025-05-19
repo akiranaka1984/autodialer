@@ -232,16 +232,20 @@ const CallerIDManagement = () => {
 
   // 新規作成フォームのリセット
   const resetForm = () => {
-    setFormData({
-      id: null,
-      number: '',
-      description: '',
-      provider: '',
-      domain: '',
-      active: true
-    });
-    setIsEditing(false);
-    setSubmitError(null);
+    console.log('フォームをリセットします');
+    setTimeout(() => {
+      setFormData({
+        id: null,
+        number: '',
+        description: '',
+        provider: '',
+        domain: '',
+        active: true
+      });
+      setIsEditing(false);
+      setSubmitError(null);
+      console.log('フォームリセット完了');
+    }, 10); // 短い遅延を入れて状態更新の競合を避ける
   };
 
   // チャンネルフォームのリセット
@@ -272,12 +276,37 @@ const CallerIDManagement = () => {
 
   // 編集モードの開始
   const handleEdit = (callerId) => {
+    console.log('編集ボタンクリック - ID:', callerId, '- タイプ:', typeof callerId);
+    
+    // 該当の発信者番号データを検索
     const callerIdToEdit = callerIds.find(c => c.id === callerId);
+    console.log('編集対象データ:', callerIdToEdit);
+    
+    // データが見つからない場合の処理
+    if (!callerIdToEdit) {
+      console.error('指定されたIDの発信者番号が見つかりません:', callerId);
+      setSubmitError('発信者番号データの取得に失敗しました');
+      return;
+    }
+    
+    // フォームデータを設定
     setFormData({
-      ...callerIdToEdit
+      id: callerIdToEdit.id,
+      number: callerIdToEdit.number || '',
+      description: callerIdToEdit.description || '',
+      provider: callerIdToEdit.provider || '',
+      domain: callerIdToEdit.domain || '',
+      active: callerIdToEdit.active !== false // falseの場合のみfalse、それ以外はtrue
     });
+    
+    // 編集モードに切り替え
     setIsEditing(true);
     setSubmitError(null);
+    
+    // フォームにスクロール
+    document.querySelector('.bg-white.rounded-lg.shadow.p-6')?.scrollIntoView({ behavior: 'smooth' });
+    
+    console.log('編集モード開始 - フォームデータ:', formData);
   };
 
   // チャンネル編集モードの開始
@@ -318,14 +347,23 @@ const CallerIDManagement = () => {
     setSubmitError(null);
     setSuccessMessage(null);
     
+    console.log('送信開始 - フォームデータ:', formData);
+    console.log('更新モード:', formData.id !== null);
+    
     try {
       const token = localStorage.getItem('token');
+      if (!token) {
+        console.error('認証トークンが見つかりません');
+        setSubmitError('認証エラー: ログインが必要です');
+        return;
+      }
+      
       const isUpdate = formData.id !== null;
       
       // 開発環境でモックデータを使用するオプション
       if (process.env.NODE_ENV === 'development' && window.location.hostname === 'localhost') {
         console.log('開発環境でモックデータを使用 - 保存処理');
-        // モックデータのセット
+        // 以下は既存のコード
         setTimeout(() => {
           if (isUpdate) {
             // 更新処理のシミュレーション
@@ -354,7 +392,12 @@ const CallerIDManagement = () => {
       
       const method = isUpdate ? 'PUT' : 'POST';
       
-      console.log('API呼び出し:', url, method);
+      console.log('API呼び出しの詳細:', {
+        url,
+        method,
+        token: token ? '取得済み' : '未取得',
+        body: formData
+      });
       
       const response = await fetch(url, {
         method,
@@ -365,12 +408,25 @@ const CallerIDManagement = () => {
         body: JSON.stringify(formData)
       });
       
+      console.log('API応答ステータス:', response.status);
+      
       if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.message || '保存に失敗しました');
+        const errorText = await response.text();
+        let errorMessage;
+        
+        try {
+          const errorData = JSON.parse(errorText);
+          errorMessage = errorData.message || '保存に失敗しました';
+        } catch (parseError) {
+          errorMessage = `APIエラー: ${response.status} ${response.statusText}`;
+          console.error('応答の解析に失敗:', errorText);
+        }
+        
+        throw new Error(errorMessage);
       }
       
       const savedCallerId = await response.json();
+      console.log('保存成功 - 応答データ:', savedCallerId);
       
       if (isUpdate) {
         setCallerIds(callerIds.map(c => c.id === savedCallerId.id ? savedCallerId : c));
@@ -1074,11 +1130,11 @@ const CallerIDManagement = () => {
       )}
       
       {/* 発信者番号フォーム */}
-      <div className="bg-white rounded-lg shadow p-6">
+      <div id="edit-form" className="bg-white rounded-lg shadow p-6">
         <h2 className="text-xl font-semibold mb-4">
           {isEditing ? '発信者番号を編集' : '新しい発信者番号を追加'}
         </h2>
-        <form onSubmit={handleSubmit}>
+        <form onSubmit={handleSubmit} id="caller-id-form">
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div className="mb-4">
               <label className="block text-gray-700 text-sm font-bold mb-2" htmlFor="number">

@@ -103,7 +103,7 @@ class SipService extends EventEmitter {
         WHERE ci.active = true
       `);
       
-      if (channels.length === 0) {
+      if (!channels || channels.length === 0) {
         logger.warn('データベースに有効なSIPチャンネルが見つかりません');
         return [];
       }

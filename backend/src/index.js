@@ -20,19 +20,24 @@ const server = http.createServer(app);
 // WebSocketサービスの初期化
 websocketService.initialize(server);
 
-// CORS設定のカスタマイズ
+// CORS設定の強化
 app.use(cors({
-  // すべてのオリジンを許可（本番環境では制限することをお勧めします）
-  origin: ['http://localhost:3003', 'http://frontend:3000'],
-  // 許可するHTTPメソッド
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
-  // リクエストヘッダーに認証情報を含める許可
-  credentials: true,
-  // 許可するヘッダー
-  allowedHeaders: ['Content-Type', 'Authorization']
+  origin: ['http://localhost:3003', 'http://localhost:3000'],
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'Cache-Control']
 }));
 
+// リクエストログ
+app.use((req, res, next) => {
+  console.log(`${req.method} ${req.url} - Origin: ${req.headers.origin || 'none'}`);
+  next();
+});
+
 app.use(express.json());
+
+app.get('/health', (req, res) => {
+  res.json({ status: 'ok', timestamp: new Date().toISOString() });
+});
 
 // リクエストロギングミドルウェア - デバッグ用に詳細なログを追加
 app.use((req, res, next) => {

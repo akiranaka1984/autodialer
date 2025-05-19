@@ -31,12 +31,12 @@ services:
     restart: unless-stopped  # 不意の終了時に自動再起動
     networks:
       - autodialer-network
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:5000/health"]
-      interval: 10s
-      timeout: 5s
-      retries: 3
-      start_period: 15s
+    #healthcheck:
+      #test: ["CMD", "curl", "-f", "http://localhost:5000/health"]
+      #interval: 10s
+      #timeout: 5s
+      #retries: 3
+      #start_period: 15s
 
   # フロントエンドサーバー
   frontend:
@@ -48,10 +48,11 @@ services:
     volumes:
       - ./frontend:/app
       - /app/node_modules
+      - ./frontend/.env.development:/app/.env.development
     environment:
       NODE_ENV: development
       # 修正: バックエンドURLをホスト側の5001ポートに変更
-      REACT_APP_API_URL: http://localhost:5001/api
+      #REACT_APP_API_URL: http://localhost:5001/api
       CHOKIDAR_USEPOLLING: "true"
       WDS_SOCKET_HOST: localhost
       WDS_SOCKET_PORT: 3003

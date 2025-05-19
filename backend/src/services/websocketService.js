@@ -9,7 +9,19 @@ class WebSocketService {
   }
 
   initialize(server) {
-    this.wss = new WebSocket.Server({ server });
+    this.wss = new WebSocket.Server({ 
+      server,
+      // CORS設定を追加
+      verifyClient: (info) => {
+        const origin = info.origin || info.req.headers.origin;
+        const allowedOrigins = ['http://localhost:3003', 'http://localhost:3000'];
+        if (allowedOrigins.includes(origin)) {
+          return true;
+        }
+        console.warn(`WebSocket接続が拒否されました: ${origin}`);
+        return false;
+      }
+    });
     
     this.wss.on('connection', (ws, req) => {
       const clientId = Math.random().toString(36).substring(7);

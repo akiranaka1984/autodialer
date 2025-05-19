@@ -1,7 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const auth = require('../middleware/auth');
-const reportsController = require('../controllers/reportsController');
+const reportsController = require('../controllers/reportController');
 const reportController = require('../controllers/reportController');
 
 // レポート関連のルート
