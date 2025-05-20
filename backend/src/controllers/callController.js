@@ -213,8 +213,7 @@ exports.getAllCalls = async (req, res) => {
     }
     
     const offset = (parseInt(page) - 1) * parseInt(limit);
-    query += ' ORDER BY cl.start_time DESC LIMIT ? OFFSET ?';
-    params.push(parseInt(limit), offset);
+    query += ` ORDER BY cl.start_time DESC LIMIT ${parseInt(limit)} OFFSET ${offset}`;
     
     // db.queryの結果を[rows, fields]として受け取る
     const [calls] = await db.query(query, params);

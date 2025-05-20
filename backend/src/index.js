@@ -80,6 +80,24 @@ app.use(express.urlencoded({ extended: true, charset: 'utf-8' }));
 const callerIdsRouter = require('./routes/callerIds');
 app.use('/api/caller-ids', callerIdsRouter);
 
+// ★★★ 追加: テスト用ルートの追加 ★★★
+app.get('/api/test-caller-ids', (req, res) => {
+  // 既存の発信者番号APIの結果と同じ形式で返す
+  db.query('SELECT * FROM caller_ids ORDER BY created_at DESC')
+    .then(result => {
+      const callerIds = Array.isArray(result) && result.length === 2 ? result[0] : result;
+      res.json(callerIds);
+    })
+    .catch(err => {
+      console.error('発信者番号取得エラー:', err);
+      res.status(500).json({ message: '発信者番号の取得に失敗しました' });
+    });
+});
+
+// ★★★ 追加: callsルーターを登録 ★★★
+const callsRouter = require('./routes/calls');
+app.use('/api/calls', callsRouter);
+
 // ヘルスチェックエンドポイント - 最優先で定義
 app.get('/health', (req, res) => {
   res.json({ 
