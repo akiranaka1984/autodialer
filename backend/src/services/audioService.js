@@ -107,9 +107,11 @@ class AudioService {
     }
   }
 
-  // キャンペーンに音声ファイルを割り当て
+  // backend/src/services/audioService.js の音声割り当て機能
   async assignAudioToCampaign(campaignId, audioId, audioType) {
     try {
+      logger.info(`キャンペーン音声を割り当て: Campaign=${campaignId}, Audio=${audioId}, Type=${audioType}`);
+      
       // 既存の割り当てを確認
       const [existing] = await db.query(
         'SELECT * FROM campaign_audio WHERE campaign_id = ? AND audio_type = ?',
@@ -130,7 +132,6 @@ class AudioService {
         );
       }
       
-      logger.info(`キャンペーン音声を割り当てました: Campaign=${campaignId}, Audio=${audioId}, Type=${audioType}`);
       return true;
     } catch (error) {
       logger.error('キャンペーン音声割り当てエラー:', error);
@@ -139,21 +140,26 @@ class AudioService {
   }
 
   // キャンペーンの音声ファイル割り当てを取得
-  async getCampaignAudio(campaignId) {
-    try {
-      const audioFiles = await db.query(`
-        SELECT ca.audio_type, af.id, af.name, af.filename, af.mimetype, af.description
-        FROM campaign_audio ca
-        JOIN audio_files af ON ca.audio_file_id = af.id
-        WHERE ca.campaign_id = ?
-      `, [campaignId]);
-      
-      return audioFiles;
-    } catch (error) {
-      logger.error(`キャンペーン音声取得エラー: Campaign=${campaignId}`, error);
-      throw error;
+async getCampaignAudio(campaignId) {
+  try {
+    const audioFiles = await db.query(`
+      SELECT ca.audio_type, af.id, af.name, af.filename, af.mimetype, af.description
+      FROM campaign_audio ca
+      JOIN audio_files af ON ca.audio_file_id = af.id
+      WHERE ca.campaign_id = ?
+    `, [campaignId]);
+    
+    // 戻り値の形式を確認（MySQL2の場合は[rows, fields]形式）
+    if (Array.isArray(audioFiles) && audioFiles.length === 2 && Array.isArray(audioFiles[0])) {
+      return audioFiles[0]; // MySQL2の場合は最初の要素を返す
     }
+    
+    return audioFiles || []; // 互換性のために空配列をデフォルトで返す
+  } catch (error) {
+    logger.error(`キャンペーン音声取得エラー: Campaign=${campaignId}`, error);
+    return []; // エラー時は空配列を返す
   }
+}
 }
 
 module.exports = new AudioService();

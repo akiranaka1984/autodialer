@@ -9,6 +9,7 @@ import {
   XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer 
 } from 'recharts';
 import IVRSettings from './IvrSettings';
+import AudioFileUploader from './AudioFileUploader';
 
 // APIベースURLの取得 - 環境変数がない場合は相対パスを使用
 const getApiBaseUrl = () => {

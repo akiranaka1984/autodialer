@@ -30,7 +30,7 @@ const SystemSettings = () => {
   // 設定タブの定義
   const tabs = [
     { id: 'general', label: '一般設定', icon: <Settings className="h-5 w-5" /> },
-    { id: 'audio', label: '音声ファイル管理', icon: <Music className="h-5 w-5" /> },
+    //{ id: 'audio', label: '音声ファイル管理', icon: <Music className="h-5 w-5" /> },
     { id: 'server', label: 'サーバー設定', icon: <Server className="h-5 w-5" /> },
     { id: 'notification', label: '通知設定', icon: <Bell className="h-5 w-5" /> },
     { id: 'user', label: 'ユーザー設定', icon: <User className="h-5 w-5" /> },

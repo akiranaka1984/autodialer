@@ -40,10 +40,12 @@ class IvrService {
       const audioFiles = await audioService.getCampaignAudio(campaignId);
       
       // 音声ファイルをタイプごとにマッピング
-      const audioMap = audioFiles.reduce((map, audio) => {
-        map[audio.audio_type] = audio;
+      const audioMap = Array.isArray(audioFiles) ? audioFiles.reduce((map, audio) => {
+        if (audio && audio.audio_type) {
+          map[audio.audio_type] = audio;
+        }
         return map;
-      }, {});
+      }, {}) : {};
       
       // IVRスクリプトの内容を生成
       let scriptContent = `; IVR Script for Campaign: ${campaign.name} (ID: ${campaignId})\n\n`;
@@ -177,6 +179,29 @@ class IvrService {
       };
     } catch (error) {
       logger.error('デフォルトIVRスクリプト生成エラー:', error);
+      throw error;
+    }
+  }
+
+  // IVRスクリプトをファイルに保存
+  async saveIvrScript(campaignId, script) {
+    try {
+      if (!script) {
+        logger.warn(`空のスクリプト内容です: キャンペーンID ${campaignId}`);
+        return false;
+      }
+      
+      const scriptPath = path.join(this.ivrDir, `campaign-${campaignId}.conf`);
+      await fs.writeFile(scriptPath, script);
+      
+      logger.info(`IVRスクリプトを保存しました: ${scriptPath}`);
+      
+      return {
+        path: scriptPath,
+        success: true
+      };
+    } catch (error) {
+      logger.error(`IVRスクリプト保存エラー: ${error.message}`);
       throw error;
     }
   }

@@ -7,6 +7,7 @@ const auth = require('../middleware/auth');
 const fs = require('fs').promises;
 const path = require('path');
 const logger = require('../services/logger');
+const db = require('../services/database'); // dbを正しくインポート
 
 // 認証を必須とする
 router.use(auth);
@@ -27,11 +28,18 @@ const upload = multer({
   }
 });
 
-// 音声ファイル一覧の取得
+// 音声ファイル一覧取得
 router.get('/', async (req, res) => {
   try {
     const audioFiles = await audioService.getAllAudioFiles();
-    res.json(audioFiles);
+    
+    // データベースからの返り値を確認し、統一した形式で返す
+    if (Array.isArray(audioFiles) && audioFiles.length === 2 && Array.isArray(audioFiles[0])) {
+      // MySQL2の場合は第一要素が結果の行
+      res.json(audioFiles[0]);
+    } else {
+      res.json(audioFiles);
+    }
   } catch (error) {
     logger.error('音声ファイル一覧取得エラー:', error);
     res.status(500).json({ message: `エラー: ${error.message}` });
@@ -103,6 +111,63 @@ router.delete('/:id', async (req, res) => {
     res.json({ message: '音声ファイルを削除しました' });
   } catch (error) {
     logger.error('音声ファイル削除エラー:', error);
+    res.status(500).json({ message: `エラー: ${error.message}` });
+  }
+});
+
+// キャンペーンに音声ファイルを割り当て
+router.post('/assign', async (req, res) => {
+  try {
+    const { campaignId, audioId, audioType } = req.body;
+    
+    if (!campaignId || !audioId || !audioType) {
+      return res.status(400).json({ message: 'キャンペーンID、音声ファイルID、音声タイプは必須です' });
+    }
+    
+    // キャンペーンの存在確認
+    const [campaigns] = await db.query('SELECT id FROM campaigns WHERE id = ?', [campaignId]);
+    if (campaigns.length === 0) {
+      return res.status(404).json({ message: 'キャンペーンが見つかりません' });
+    }
+    
+    // 音声ファイルの存在確認
+    const [audioFiles] = await db.query('SELECT id FROM audio_files WHERE id = ?', [audioId]);
+    if (audioFiles.length === 0) {
+      return res.status(404).json({ message: '音声ファイルが見つかりません' });
+    }
+    
+    // 既存の割り当てを確認
+    const [existing] = await db.query(
+      'SELECT id FROM campaign_audio WHERE campaign_id = ? AND audio_type = ?',
+      [campaignId, audioType]
+    );
+    
+    let result;
+    if (existing.length > 0) {
+      // 既存の割り当てを更新
+      result = await db.query(
+        'UPDATE campaign_audio SET audio_file_id = ? WHERE campaign_id = ? AND audio_type = ?',
+        [audioId, campaignId, audioType]
+      );
+    } else {
+      // 新規割り当て
+      result = await db.query(
+        'INSERT INTO campaign_audio (campaign_id, audio_file_id, audio_type, created_at) VALUES (?, ?, ?, NOW())',
+        [campaignId, audioId, audioType]
+      );
+    }
+    
+    res.json({ 
+      success: true, 
+      message: '音声ファイルを割り当てました',
+      data: {
+        campaignId,
+        audioId,
+        audioType
+      }
+    });
+  } catch (error) {
+    logger.error('音声ファイル割り当てエラー:', error);
     res.status(500).json({ message: `エラー: ${error.message}` });
   }
 });

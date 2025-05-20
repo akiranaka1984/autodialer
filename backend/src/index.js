@@ -20,11 +20,12 @@ const server = http.createServer(app);
 // WebSocketサービスの初期化
 websocketService.initialize(server);
 
-// CORS設定の強化
+// CORS設定を見直し
 app.use(cors({
-  origin: ['http://localhost:3003', 'http://localhost:3000'],
+  origin: ['http://localhost:3003', 'http://localhost:3000', 'http://localhost:3001'], // フロントエンドのすべてのポートを許可
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'Cache-Control']
+  allowedHeaders: ['Content-Type', 'Authorization', 'Cache-Control'],
+  credentials: true // credentialsを有効に
 }));
 
 // リクエストログ
@@ -226,13 +227,13 @@ try {
   logger.warn('DNCリストAPIの読み込みに失敗しました:', error.message);
 }
 
-// IVRおよび音声ファイル管理ルート
+// IVRおよび音声ファイルルートを正しく設定
 try {
   const audioRoutes = require('./routes/audio');
   app.use('/api/audio', audioRoutes);
   logger.info('音声ファイル管理APIを有効化しました');
 } catch (error) {
-  logger.warn('音声ファイル管理APIの読み込みに失敗しました:', error.message);
+  logger.error('音声ファイル管理APIの読み込みに失敗しました:', error);
 }
 
 try {
@@ -240,7 +241,7 @@ try {
   app.use('/api/ivr', ivrRoutes);
   logger.info('IVR設定APIを有効化しました');
 } catch (error) {
-  logger.warn('IVR設定APIの読み込みに失敗しました:', error.message);
+  logger.error('IVR設定APIの読み込みに失敗しました:', error);
 }
 
 // 404エラーハンドリング - すべてのルートに一致しなかった場合

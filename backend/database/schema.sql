@@ -27,7 +27,15 @@ CREATE TABLE IF NOT EXISTS campaigns (
   description TEXT,
   status ENUM('draft', 'active', 'paused', 'completed') DEFAULT 'draft',
   caller_id_id INT,
+  script TEXT,
+  retry_attempts INT DEFAULT 0,
+  max_concurrent_calls INT DEFAULT 5,
+  schedule_start DATETIME,
+  schedule_end DATETIME,
+  working_hours_start TIME DEFAULT '09:00:00',
+  working_hours_end TIME DEFAULT '18:00:00',
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   FOREIGN KEY (caller_id_id) REFERENCES caller_ids(id)
 );
 
@@ -38,7 +46,12 @@ CREATE TABLE IF NOT EXISTS contacts (
   phone VARCHAR(20) NOT NULL,
   name VARCHAR(100),
   company VARCHAR(100),
+  status ENUM('pending', 'called', 'completed', 'failed', 'dnc') DEFAULT 'pending',
+  last_attempt DATETIME,
+  attempt_count INT DEFAULT 0,
+  notes TEXT,
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   FOREIGN KEY (campaign_id) REFERENCES campaigns(id)
 );
 
@@ -84,52 +97,47 @@ CREATE TABLE IF NOT EXISTS users (
   password VARCHAR(255) NOT NULL,
   name VARCHAR(100),
   email VARCHAR(100),
-  role ENUM('admin', 'user') DEFAULT 'user',
+  role ENUM('admin', 'user', 'operator') DEFAULT 'user',
   status ENUM('active', 'inactive') DEFAULT 'active',
   last_login DATETIME,
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
 );
 
--- キャンペーンテーブルの拡張
-ALTER TABLE campaigns
-ADD COLUMN script TEXT,
-ADD COLUMN retry_attempts INT DEFAULT 0,
-ADD COLUMN max_concurrent_calls INT DEFAULT 5,
-ADD COLUMN schedule_start DATETIME,
-ADD COLUMN schedule_end DATETIME,
-ADD COLUMN working_hours_start TIME DEFAULT '09:00:00',
-ADD COLUMN working_hours_end TIME DEFAULT '18:00:00',
-ADD COLUMN updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP;
-
--- 連絡先テーブルの拡張
-ALTER TABLE contacts
-ADD COLUMN status ENUM('pending', 'called', 'completed', 'failed', 'dnc') DEFAULT 'pending',
-ADD COLUMN last_attempt DATETIME,
-ADD COLUMN attempt_count INT DEFAULT 0,
-ADD COLUMN notes TEXT,
-ADD COLUMN updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP;
-
+-- 音声ファイルテーブル
 CREATE TABLE IF NOT EXISTS audio_files (
   id VARCHAR(36) PRIMARY KEY,
   name VARCHAR(255) NOT NULL,
   filename VARCHAR(255) NOT NULL,
   path VARCHAR(500) NOT NULL,
-  mimetype VARCHAR(50),
-  size INT,
+  mimetype VARCHAR(100) NOT NULL,
+  size INT NOT NULL,
   duration INT,
-  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+  description TEXT NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
 -- キャンペーンと音声ファイルの関連テーブル
 CREATE TABLE IF NOT EXISTS campaign_audio (
-  campaign_id INT,
-  audio_file_id VARCHAR(36),
-  audio_type ENUM('welcome', 'menu', 'goodbye', 'error') NOT NULL,
-  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-  PRIMARY KEY (campaign_id, audio_type),
-  FOREIGN KEY (campaign_id) REFERENCES campaigns(id),
-  FOREIGN KEY (audio_file_id) REFERENCES audio_files(id)
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  campaign_id INT NOT NULL,
+  audio_file_id VARCHAR(36) NOT NULL,
+  audio_type VARCHAR(50) NOT NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (campaign_id) REFERENCES campaigns(id) ON DELETE CASCADE,
+  FOREIGN KEY (audio_file_id) REFERENCES audio_files(id) ON DELETE CASCADE,
+  UNIQUE KEY unique_campaign_audio_type (campaign_id, audio_type)
+);
+
+-- キャンペーンのIVR設定テーブル
+CREATE TABLE IF NOT EXISTS campaign_ivr_config (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  campaign_id INT NOT NULL,
+  config TEXT NOT NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP NULL,
+  FOREIGN KEY (campaign_id) REFERENCES campaigns(id) ON DELETE CASCADE,
+  UNIQUE KEY unique_campaign_ivr_config (campaign_id)
 );
 
 -- オペレーター管理テーブル
@@ -188,55 +196,3 @@ CREATE TABLE IF NOT EXISTS operator_status_logs (
   changed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   FOREIGN KEY (operator_id) REFERENCES operators(id)
 );
-
--- usersテーブルにoperatorロールを追加
-ALTER TABLE users MODIFY role ENUM('admin', 'user', 'operator') DEFAULT 'user';
-
--- オペレーター管理テーブル
-CREATE TABLE IF NOT EXISTS operators (
-  id INT AUTO_INCREMENT PRIMARY KEY,
-  user_id INT NOT NULL,
-  operator_id VARCHAR(20) UNIQUE NOT NULL,
-  status ENUM('available', 'busy', 'offline', 'break') DEFAULT 'offline',
-  current_call_id VARCHAR(100) NULL,
-  skills JSON,
-  max_concurrent_calls INT DEFAULT 1,
-  priority INT DEFAULT 1,
-  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-  FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
-);
-
--- オペレーターのシフト管理
-CREATE TABLE IF NOT EXISTS operator_shifts (
-  id INT AUTO_INCREMENT PRIMARY KEY,
-  operator_id INT NOT NULL,
-  shift_date DATE NOT NULL,
-  start_time TIME NOT NULL,
-  end_time TIME NOT NULL,
-  break_start TIME,
-  break_end TIME,
-  status ENUM('scheduled', 'active', 'completed', 'cancelled') DEFAULT 'scheduled',
-  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-  FOREIGN KEY (operator_id) REFERENCES operators(id) ON DELETE CASCADE,
-  UNIQUE KEY unique_shift (operator_id, shift_date, start_time)
-);
-
--- オペレーター対応履歴
-CREATE TABLE IF NOT EXISTS operator_call_logs (
-  id INT AUTO_INCREMENT PRIMARY KEY,
-  operator_id INT NOT NULL,
-  call_log_id INT NOT NULL,
-  start_time DATETIME NOT NULL,
-  end_time DATETIME,
-  duration INT,
-  disposition ENUM('completed', 'transferred', 'dropped', 'voicemail') DEFAULT 'completed',
-  notes TEXT,
-  customer_satisfaction INT,
-  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-  FOREIGN KEY (operator_id) REFERENCES operators(id),
-  FOREIGN KEY (call_log_id) REFERENCES call_logs(id)
-);
-
--- usersテーブルにoperatorロールを追加
-ALTER TABLE users MODIFY role ENUM('admin', 'user', 'operator') DEFAULT 'user';

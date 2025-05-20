@@ -6,11 +6,26 @@ const ivrService = require('../services/ivrService');
 const audioService = require('../services/audioService');
 const db = require('../services/database');
 const logger = require('../services/logger');
+const multer = require('multer');
+const storage = multer.memoryStorage();
+const upload = multer({ 
+  storage,
+  limits: { fileSize: 25 * 1024 * 1024 }, // 25MB制限
+  fileFilter: (req, file, cb) => {
+    // 許可する音声ファイル形式
+    const allowedMimes = ['audio/wav', 'audio/mpeg', 'audio/mp3', 'audio/ogg'];
+    if (allowedMimes.includes(file.mimetype)) {
+      cb(null, true);
+    } else {
+      cb(new Error('サポートされていないファイル形式です。WAV, MP3, OGGのみ許可されています。'), false);
+    }
+  }
+});
 
 // 認証を必須とする
 router.use(auth);
 
-// IVR設定の取得
+// キャンペーンの音声設定を取得
 router.get('/campaigns/:id', async (req, res) => {
   try {
     const campaignId = req.params.id;
@@ -28,7 +43,7 @@ router.get('/campaigns/:id', async (req, res) => {
     // キャンペーンの音声設定を取得
     const audioFiles = await audioService.getCampaignAudio(campaignId);
     
-    // キャンペーンのIVR設定を取得（DB定義など必要に応じて作成）
+    // キャンペーンのIVR設定を取得
     let ivrConfig = null;
     try {
       const [configs] = await db.query(
@@ -57,7 +72,7 @@ router.get('/campaigns/:id', async (req, res) => {
     }
     
     // IVRスクリプトの取得または生成
-    let ivrScript;
+    let ivrScript = '';
     try {
       const scriptResult = await ivrService.generateIvrScript(campaignId);
       ivrScript = scriptResult.content;
@@ -68,9 +83,11 @@ router.get('/campaigns/:id', async (req, res) => {
     
     // 音声ファイルをタイプごとにマッピング
     const audioMap = {};
-    audioFiles.forEach(audio => {
-      audioMap[audio.audio_type] = audio.id;
-    });
+    if (Array.isArray(audioFiles)) {
+      audioFiles.forEach(audio => {
+        audioMap[audio.audio_type] = audio.id;
+      });
+    }
     
     res.json({
       config: ivrConfig,
@@ -276,6 +293,54 @@ router.post('/test-call/:id', async (req, res) => {
     });
   } catch (error) {
     logger.error('IVRテスト発信エラー:', error);
+    res.status(500).json({ message: `エラー: ${error.message}` });
+  }
+});
+
+// IVR設定画面から直接音声ファイルをアップロードするAPI
+router.post('/upload-audio', upload.single('file'), async (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ message: 'ファイルが見つかりません' });
+    }
+    
+    const { name, description, audioType, campaignId } = req.body;
+    
+    if (!name || !audioType || !campaignId) {
+      return res.status(400).json({ message: 'ファイル名、音声タイプ、キャンペーンIDは必須です' });
+    }
+    
+    // 音声ファイルのアップロード
+    const audioFile = await audioService.uploadAudio(req.file, name, description);
+    
+    // キャンペーンに音声ファイルを割り当て
+    await audioService.assignAudioToCampaign(campaignId, audioFile.id, audioType);
+    
+    res.status(201).json({
+      success: true,
+      audioFile,
+      message: '音声ファイルをアップロードし、キャンペーンに割り当てました'
+    });
+  } catch (error) {
+    logger.error('IVR音声ファイルアップロードエラー:', error);
+    res.status(500).json({ message: `エラー: ${error.message}` });
+  }
+});
+
+// 音声ファイル一覧を取得 (ivrコントローラーは使用せず)
+router.get('/audio-files', async (req, res) => {
+  try {
+    const audioFiles = await audioService.getAllAudioFiles();
+    
+    // 結果形式を統一
+    if (Array.isArray(audioFiles) && audioFiles.length === 2 && Array.isArray(audioFiles[0])) {
+      // MySQL2の場合は第一要素が結果の行
+      res.json(audioFiles[0]);
+    } else {
+      res.json(audioFiles);
+    }
+  } catch (error) {
+    logger.error('音声ファイル一覧取得エラー:', error);
     res.status(500).json({ message: `エラー: ${error.message}` });
   }
 });

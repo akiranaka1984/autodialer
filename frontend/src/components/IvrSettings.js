@@ -1,5 +1,7 @@
+// src/components/IVRSettings.js
 import React, { useState, useEffect } from 'react';
-import { Mic, Save, PlayCircle, Download, Upload, AlertCircle, FileText, Music } from 'lucide-react';
+import { Mic, Save, PlayCircle, Download, Upload, AlertCircle, FileText, Music, X } from 'lucide-react';
+import AudioFileUploader from './AudioFileUploader'; // 別ファイルからインポート
 
 // APIベースURLの取得 - 環境変数がない場合は相対パスを使用
 const getApiBaseUrl = () => {
@@ -24,6 +26,8 @@ const IVRSettings = ({ campaignId }) => {
   const [success, setSuccess] = useState(null);
   const [audioFiles, setAudioFiles] = useState([]);
   const [selectedAudioType, setSelectedAudioType] = useState('welcome');
+  const [showUploader, setShowUploader] = useState(false);
+  const [selectedUploaderType, setSelectedUploaderType] = useState(null);
 
   // 利用可能な音声タイプ
   const audioTypes = [
@@ -34,57 +38,61 @@ const IVRSettings = ({ campaignId }) => {
   ];
 
   useEffect(() => {
-    fetchIVRSettings();
+    fetchIvrSettings();
     fetchAudioFiles();
   }, [campaignId]);
 
-  const fetchIVRSettings = async () => {
+  const fetchIvrSettings = async () => {
     try {
       setLoading(true);
-      setError(null);
-      const token = localStorage.getItem('token');
+      const token = localStorage.getItem('token'); // token変数を定義
+      const apiBaseUrl = getApiBaseUrl(); // apiBaseUrlを取得
       
-      const apiUrl = `${getApiBaseUrl()}/ivr/campaigns/${campaignId}`;
-      console.log('IVR設定取得APIリクエスト:', apiUrl);
+      // 開発環境でモックデータを使用するオプション
+      if (process.env.NODE_ENV === 'development' && window.location.hostname === 'localhost') {
+        console.log('開発環境でモックデータを使用 - IVR設定');
+        
+        // モックデータのセット
+        setTimeout(() => {
+          setConfig({
+            welcomeMessage: '電話に出ていただきありがとうございます。',
+            menuOptions: '詳しい情報をお聞きになりたい場合は1を、電話帳から削除をご希望の場合は9を押してください。',
+            goodbyeMessage: 'お電話ありがとうございました。',
+            transferExtension: '1',
+            dncOption: '9',
+            maxRetries: 3,
+            timeoutSeconds: 10
+          });
+          setLoading(false);
+        }, 500);
+        return;
+      }
       
-      const response = await fetch(apiUrl, {
-        headers: { 
+      const response = await fetch(`${apiBaseUrl}/ivr/campaigns/${campaignId}`, {
+        headers: {
           'Authorization': `Bearer ${token}`,
           'Cache-Control': 'no-cache'
         }
       });
       
       if (!response.ok) {
-        // エラーレスポンスをログに記録
-        const errorText = await response.text();
-        console.error('IVR設定取得エラー:', response.status, errorText);
-        
-        if (response.status === 404) {
-          throw new Error('IVR設定が見つかりません。新規作成してください。');
-        } else {
-          throw new Error(`IVR設定の取得に失敗しました (${response.status})`);
-        }
+        throw new Error(`APIエラー: ${response.status}`);
       }
       
       const data = await response.json();
-      console.log('取得したIVR設定データ:', data);
-      
-      if (data.config) {
-        setConfig(data.config);
-      }
-      
-      if (data.script) {
-        setScript(data.script);
-      }
-      
-      if (data.audio) {
-        setAudio(data.audio);
-      }
-      
-    } catch (err) {
-      console.error('IVR設定取得エラー:', err);
-      setError(err.message || 'IVR設定の取得中にエラーが発生しました');
-      // デフォルト設定はそのまま使用
+      setConfig(data); // setIvrSettings ではなく setConfig を使用
+    } catch (error) {
+      console.error('IVR設定取得エラー:', error);
+      // エラー時はデフォルト設定を使用
+      setConfig({
+        welcomeMessage: '電話に出ていただきありがとうございます。',
+        menuOptions: '詳しい情報をお聞きになりたい場合は1を、電話帳から削除をご希望の場合は9を押してください。',
+        goodbyeMessage: 'お電話ありがとうございました。',
+        transferExtension: '1',
+        dncOption: '9',
+        maxRetries: 3,
+        timeoutSeconds: 10
+      });
     } finally {
       setLoading(false);
     }
@@ -174,7 +182,7 @@ const IVRSettings = ({ campaignId }) => {
       setSuccess('IVR設定を保存しました');
       
       // 最新の設定を取得
-      await fetchIVRSettings();
+      await fetchIvrSettings();
       
     } catch (err) {
       console.error('IVR設定保存エラー:', err);
@@ -360,7 +368,7 @@ const IVRSettings = ({ campaignId }) => {
       setSuccess(`${audioTypes.find(t => t.id === selectedAudioType)?.name || selectedAudioType}に音声ファイルを割り当てました`);
       
       // 最新の設定を取得
-      await fetchIVRSettings();
+      await fetchIvrSettings();
       
     } catch (err) {
       console.error('音声ファイル割り当てエラー:', err);
@@ -368,6 +376,39 @@ const IVRSettings = ({ campaignId }) => {
     } finally {
       setIsSaving(false);
     }
+  };
+
+  // アップローダーを開く
+  const openUploader = (audioType) => {
+    setSelectedUploaderType(audioType);
+    setShowUploader(true);
+  };
+
+  // アップロード成功時のハンドラ
+  const handleAudioUploadSuccess = async (audioFile) => {
+    console.log('音声ファイルアップロード成功:', audioFile);
+    
+    // 音声ファイル一覧を更新
+    setAudioFiles(prev => [...prev, audioFile]);
+    
+    // 音声割り当てを更新
+    if (selectedUploaderType) {
+      setAudio(prev => ({
+        ...prev,
+        [selectedUploaderType]: audioFile.id
+      }));
+    }
+    
+    // アップローダーを閉じる
+    setTimeout(() => {
+      setShowUploader(false);
+      setSelectedUploaderType(null);
+      // 成功メッセージ
+      setSuccess(`${audioTypes.find(t => t.id === selectedUploaderType)?.name || selectedUploaderType}に音声ファイルを割り当てました`);
+    }, 2000);
+    
+    // 最新の設定を取得
+    await fetchIvrSettings();
   };
 
   if (loading) {
@@ -527,72 +568,104 @@ const IVRSettings = ({ campaignId }) => {
         <div className="bg-white rounded-lg shadow p-6">
           <h2 className="text-lg font-semibold mb-4">音声ファイル割り当て</h2>
           
-          <div className="mb-4">
-            <label className="block text-sm font-medium text-gray-700 mb-1">
-              音声タイプ
-            </label>
-            <select
-              value={selectedAudioType}
-              onChange={(e) => setSelectedAudioType(e.target.value)}
-              className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500"
-            >
-              {audioTypes.map(type => (
-                <option key={type.id} value={type.id}>{type.name}</option>
-              ))}
-            </select>
-          </div>
-          
-          <div className="mb-4">
-            <label className="block text-sm font-medium text-gray-700 mb-1">
-              現在の割り当て
-            </label>
-            <div className="p-3 bg-gray-50 rounded border border-gray-200">
-              {audio[selectedAudioType] ? (
-                <div className="flex items-center">
-                  <Music className="h-5 w-5 text-blue-500 mr-2" />
-                  <span>
-                    {audioFiles.find(f => f.id === audio[selectedAudioType])?.name || '不明なファイル'}
-                  </span>
-                </div>
-              ) : (
-                <span className="text-gray-500">割り当てなし</span>
-              )}
+          {showUploader ? (
+            // 音声ファイルアップローダーを表示
+            <div className="mb-4">
+              <AudioFileUploader 
+                campaignId={campaignId}
+                audioType={selectedUploaderType}
+                onUploadSuccess={handleAudioUploadSuccess}
+              />
+              <div className="mt-3">
+                <button
+                  onClick={() => setShowUploader(false)}
+                  className="inline-flex items-center px-3 py-1.5 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
+                >
+                  <X className="h-4 w-4 mr-1" />
+                  キャンセル
+                </button>
+              </div>
             </div>
-          </div>
-          
-          <div className="mb-4">
-            <label className="block text-sm font-medium text-gray-700 mb-2">
-              音声ファイル一覧
-            </label>
-            
-            {audioFiles.length === 0 ? (
-              <div className="p-4 bg-gray-50 border border-gray-200 rounded text-center">
-                <p className="text-gray-500">音声ファイルがありません</p>
-                <p className="text-sm text-gray-400 mt-1">音声ファイル管理から追加してください</p>
-              </div>
-            ) : (
-              <div className="max-h-52 overflow-y-auto border border-gray-200 rounded">
-                <ul className="divide-y divide-gray-200">
-                  {audioFiles.map(file => (
-                    <li key={file.id} className="p-3 hover:bg-gray-50">
-                      <div className="flex justify-between items-center">
-                        <div className="flex items-center">
-                          <Music className="h-5 w-5 text-blue-500 mr-2" />
-                          <span>{file.name}</span>
+          ) : (
+            <>
+              <div className="grid grid-cols-1 gap-4 mb-6">
+                {audioTypes.map(type => (
+                  <div key={type.id} className="bg-gray-50 rounded-lg p-3 border border-gray-200">
+                    <div className="flex justify-between items-center">
+                      <div>
+                        <h3 className="text-sm font-medium text-gray-700">{type.name}</h3>
+                        <div className="mt-1">
+                          {audio[type.id] ? (
+                            <div className="flex items-center">
+                              <Music className="h-4 w-4 text-blue-500 mr-1" />
+                              <span className="text-sm text-gray-600">
+                                {audioFiles.find(f => f.id === audio[type.id])?.name || '不明なファイル'}
+                              </span>
+                            </div>
+                          ) : (
+                            <span className="text-sm text-gray-500">割り当てなし</span>
+                          )}
                         </div>
-                        <button
-                          onClick={() => handleAssignAudio(file.id)}
-                          className="px-3 py-1 bg-blue-100 text-blue-700 rounded hover:bg-blue-200"
-                        >
-                          割り当て
-                        </button>
                       </div>
-                    </li>
-                  ))}
-                </ul>
+                      <button
+                        onClick={() => openUploader(type.id)}
+                        className="px-3 py-1 bg-blue-100 text-blue-700 rounded hover:bg-blue-200 text-sm"
+                      >
+                        アップロード
+                      </button>
+                    </div>
+                  </div>
+                ))}
               </div>
-            )}
-          </div>
+              
+              <div>
+                <h3 className="text-sm font-medium text-gray-700 mb-2">既存の音声ファイル</h3>
+                {audioFiles.length === 0 ? (
+                  <div className="p-4 bg-gray-50 border border-gray-200 rounded text-center">
+                    <p className="text-gray-500">音声ファイルがありません</p>
+                    <p className="text-sm text-gray-400 mt-1">上の「アップロード」ボタンから追加してください</p>
+                  </div>
+                ) : (
+                  <div className="mb-4">
+                    <div className="mb-2">
+                      <label className="block text-xs font-medium text-gray-700 mb-1">
+                        音声タイプを選択
+                      </label>
+                      <select
+                        value={selectedAudioType}
+                        onChange={(e) => setSelectedAudioType(e.target.value)}
+                        className="w-full px-3 py-2 text-sm border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500"
+                      >
+                        {audioTypes.map(type => (
+                          <option key={type.id} value={type.id}>{type.name}</option>
+                        ))}
+                      </select>
+                    </div>
+                    <div className="max-h-32 overflow-y-auto border border-gray-200 rounded">
+                      <ul className="divide-y divide-gray-200">
+                        {audioFiles.map(file => (
+                          <li key={file.id} className="p-2 hover:bg-gray-50 text-sm">
+                            <div className="flex justify-between items-center">
+                              <div className="flex items-center">
+                                <Music className="h-4 w-4 text-blue-500 mr-2" />
+                                <span className="truncate max-w-xs">{file.name}</span>
+                              </div>
+                              <button
+                                onClick={() => handleAssignAudio(file.id)}
+                                className="px-2 py-1 bg-blue-100 text-blue-700 rounded hover:bg-blue-200 text-xs"
+                              >
+                                割り当て
+                              </button>
+                            </div>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </>
+          )}
           
           <div className="mt-6 flex space-x-3">
             <button
