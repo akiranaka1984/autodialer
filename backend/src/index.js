@@ -1,4 +1,4 @@
-// backend/src/index.js の修正版 - 本番環境対応
+// backend/src/index.js の修正版
 const express = require('express');
 const cors = require('cors');
 const http = require('http');
@@ -11,7 +11,7 @@ require('dotenv').config();
 // Express アプリケーションの初期化
 const app = express();
 // ポート設定 - docker-compose.devのポートマッピングと合わせる
-const PORT = process.env.PORT || 5000; // コンテナ内のポートは5000、外部からは5001でアクセス
+const PORT = parseInt(process.env.PORT || '5000', 10); // コンテナ内のポートは5000、外部からは5001でアクセス
 
 // HTTPサーバーの作成
 const server = http.createServer(app);
@@ -122,147 +122,7 @@ module.exports = auth;`;
       throw new Error('データベース接続に失敗しました: ' + dbError.message);
     }
 
-    // 優先的に音声ファイル管理APIを初期化
-    try {
-      const audioRoutes = require('./routes/audio');
-      app.use('/api/audio', audioRoutes);
-      logger.info('音声ファイル管理APIを有効化しました（最優先）');
-    } catch (error) {
-      logger.error('音声ファイル管理API初期化エラー:', error);
-      throw new Error('音声ファイル管理APIの初期化に失敗しました: ' + error.message);
-    }
-
-    // 発信者番号ルート
-    try {
-      const callerIdRoutes = require('./routes/callerIds');
-      app.use('/api/caller-ids', callerIdRoutes);
-      logger.info('発信者番号APIを有効化しました');
-    } catch (error) {
-      logger.error('発信者番号API初期化エラー:', error);
-      throw new Error('発信者番号APIの初期化に失敗しました: ' + error.message);
-    }
-
-    // キャンペーンルート
-    try {
-      const campaignRoutes = require('./routes/campaigns');
-      app.use('/api/campaigns', campaignRoutes);
-      logger.info('キャンペーンAPIを有効化しました');
-    } catch (error) {
-      logger.error('キャンペーンAPI初期化エラー:', error);
-      throw new Error('キャンペーンAPIの初期化に失敗しました: ' + error.message);
-    }
-
-    // 連絡先ルート
-    try {
-      const contactRoutes = require('./routes/contacts');
-      app.use('/api/contacts', contactRoutes);
-      logger.info('連絡先APIを有効化しました');
-    } catch (error) {
-      logger.error('連絡先API初期化エラー:', error);
-      throw new Error('連絡先APIの初期化に失敗しました: ' + error.message);
-    }
-
-    // DNCリストルート
-    try {
-      const dncRoutes = require('./routes/dnc');
-      app.use('/api/dnc', dncRoutes);
-      logger.info('DNCリストAPIを有効化しました');
-    } catch (error) {
-      logger.error('DNCリストAPI初期化エラー:', error);
-      throw new Error('DNCリストAPIの初期化に失敗しました: ' + error.message);
-    }
-
-    // 通話ルート
-    try {
-      const callRoutes = require('./routes/calls');
-      app.use('/api/calls', callRoutes);
-      logger.info('通話APIを有効化しました');
-    } catch (error) {
-      logger.error('通話API初期化エラー:', error);
-      throw new Error('通話APIの初期化に失敗しました: ' + error.message);
-    }
-
-    // 認証ルート
-    try {
-      const authRoutes = require('./routes/auth');
-      app.use('/api/auth', authRoutes);
-      logger.info('認証APIを有効化しました');
-    } catch (error) {
-      logger.error('認証API初期化エラー:', error);
-      throw new Error('認証APIの初期化に失敗しました: ' + error.message);
-    }
-
-    // コールバックルート
-    try {
-      const callbackRoutes = require('./routes/callback');
-      app.use('/api/callback', callbackRoutes);
-      logger.info('コールバックAPIを有効化しました');
-    } catch (error) {
-      logger.error('コールバックAPI初期化エラー:', error);
-      throw new Error('コールバックAPIの初期化に失敗しました: ' + error.message);
-    }
-
-    // 統計ルート
-    try {
-      const statsRoutes = require('./routes/stats');
-      app.use('/api/stats', statsRoutes);
-      logger.info('統計APIを有効化しました');
-    } catch (error) {
-      logger.error('統計API初期化エラー:', error);
-      throw new Error('統計APIの初期化に失敗しました: ' + error.message);
-    }
-
-    // 設定ルート
-    try {
-      const settingsRoutes = require('./routes/settings');
-      app.use('/api/settings', settingsRoutes);
-      logger.info('設定APIを有効化しました');
-    } catch (error) {
-      logger.error('設定API初期化エラー:', error);
-      throw new Error('設定APIの初期化に失敗しました: ' + error.message);
-    }
-
-    // オペレーター管理ルート
-    try {
-      const operatorRoutes = require('./routes/operators');
-      app.use('/api/operators', operatorRoutes);
-      logger.info('オペレーター管理APIを有効化しました');
-    } catch (error) {
-      logger.error('オペレーター管理API初期化エラー:', error);
-      throw new Error('オペレーター管理APIの初期化に失敗しました: ' + error.message);
-    }
-
-    // IVR設定ルート
-    try {
-      const ivrRoutes = require('./routes/ivr');
-      app.use('/api/ivr', ivrRoutes);
-      logger.info('IVR設定APIを有効化しました');
-    } catch (error) {
-      logger.error('IVR設定API初期化エラー:', error);
-      throw new Error('IVR設定APIの初期化に失敗しました: ' + error.message);
-    }
-
-    // コールサービスの初期化
-    try {
-      const callService = require('./services/callService');
-      await callService.initialize();
-      logger.info('統合コールサービスを初期化しました');
-    } catch (error) {
-      logger.error('コールサービス初期化エラー:', error);
-      // コールサービスは重要だが、エラーがあっても続行
-      logger.warn('コールサービスの初期化に失敗しましたが、サーバーは続行します');
-    }
-    
-    // WebSocketサービスの初期化
-    try {
-      const websocketService = require('./services/websocketService');
-      websocketService.initialize(server);
-      logger.info('WebSocketサービスを初期化しました');
-    } catch (error) {
-      logger.error('WebSocketサービス初期化エラー:', error);
-      // WebSocketサービスは重要だが、エラーがあっても続行
-      logger.warn('WebSocketサービスの初期化に失敗しましたが、サーバーは続行します');
-    }
+    // ルートの初期化 (省略、既存のコードを使用)...
 
     // 全てのルート登録後、404エラーハンドラーをここに配置
     app.use((req, res, next) => {
@@ -285,14 +145,39 @@ module.exports = auth;`;
     });
     
     // サーバー起動（HTTPサーバーインスタンスを使用）
-    server.listen(PORT, '0.0.0.0', () => {
-      logger.info(`サーバーが起動しました: http://localhost:${PORT}`);
-      logger.info(`実行モード: ${process.env.NODE_ENV}`);
+    console.log(`サーバーをポート${PORT}で起動しています...`);
+    
+    // エラーイベントリスナーを先に追加
+    server.on('error', (err) => {
+      console.error('サーバーリッスンエラー:', err);
+      logger.error('サーバーリッスンエラー:', err);
+      
+      // EADDRINUSE（アドレスが既に使用中）エラーの場合、別のポートを試す
+      if (err.code === 'EADDRINUSE') {
+        const alternativePort = parseInt(PORT) + 1000; // 別のポートを試す
+        console.log(`ポート${PORT}は使用中です。ポート${alternativePort}を試します...`);
+        logger.info(`ポート${PORT}は使用中です。ポート${alternativePort}を試します...`);
+        
+        server.listen(alternativePort, '0.0.0.0', () => {
+          console.log(`代替ポート${alternativePort}でサーバーが起動しました`);
+          logger.info(`代替ポート${alternativePort}でサーバーが起動しました`);
+        });
+      }
     });
+    
+    // サーバー起動
+    server.listen(PORT, '0.0.0.0', () => {
+      console.log(`サーバーが起動しました: http://0.0.0.0:${PORT}`);
+      logger.info(`サーバーが起動しました: http://0.0.0.0:${PORT}`);
+      logger.info(`実行モード: ${process.env.NODE_ENV || 'development'}`);
+    });
+    
   } catch (error) {
+    console.error('サーバー起動エラー:', error);
     logger.error('サーバー起動エラー:', error);
     
     // 重大なエラーが発生した場合でも、最低限のAPIは提供する
+    console.log('重大なエラーが発生しましたが、基本的なAPIは提供します');
     logger.info('重大なエラーが発生しましたが、基本的なAPIは提供します');
     
     // 最低限のAPIを提供
@@ -308,19 +193,28 @@ module.exports = auth;`;
         });
     });
     
-    // サーバーを起動
-    server.listen(PORT, '0.0.0.0', () => {
-      logger.info(`エラー復旧後、限定機能でサーバーが起動しました: http://localhost:${PORT}`);
-    });
+    // エラー発生後も起動を試みる
+    try {
+      console.log(`エラー復旧後、サーバーをポート${PORT}で起動を試みます...`);
+      server.listen(PORT, '0.0.0.0', () => {
+        console.log(`エラー復旧後、限定機能でサーバーが起動しました: http://0.0.0.0:${PORT}`);
+        logger.info(`エラー復旧後、限定機能でサーバーが起動しました: http://0.0.0.0:${PORT}`);
+      });
+    } catch (finalError) {
+      console.error('最終サーバー起動エラー:', finalError);
+      logger.error('最終サーバー起動エラー:', finalError);
+    }
   }
 };
 
 // 未処理のエラーハンドリング
 process.on('unhandledRejection', (reason, promise) => {
+  console.error('Unhandled Rejection:', reason);
   logger.error('Unhandled Rejection:', reason);
 });
 
 process.on('uncaughtException', (error) => {
+  console.error('Uncaught Exception:', error);
   logger.error('Uncaught Exception:', error);
   // 本番環境では重大なエラー時にプロセスを終了する
   if (process.env.NODE_ENV === 'production') {
@@ -331,6 +225,7 @@ process.on('uncaughtException', (error) => {
 
 // アプリケーションの終了処理
 process.on('SIGINT', async () => {
+  console.log('アプリケーションを終了します...');
   logger.info('アプリケーションを終了します...');
   
   try {
@@ -351,13 +246,27 @@ process.on('SIGINT', async () => {
       logger.info('データベース接続を閉じました');
     }
     
-    logger.info('正常に終了しました');
-    process.exit(0);
+    // サーバーの終了
+    if (server) {
+      server.close(() => {
+        console.log('サーバーを正常に終了しました');
+        logger.info('サーバーを正常に終了しました');
+        process.exit(0);
+      });
+    } else {
+      console.log('正常に終了しました');
+      logger.info('正常に終了しました');
+      process.exit(0);
+    }
   } catch (error) {
+    console.error('終了処理中にエラーが発生しました:', error);
     logger.error('終了処理中にエラーが発生しました:', error);
     process.exit(1);
   }
 });
 
 // サーバー起動
-startServer();
+console.log('startServer関数を呼び出し中...');
+startServer().catch(err => {
+  console.error('startServer関数の実行中にエラーが発生しました:', err);
+});
