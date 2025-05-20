@@ -8,6 +8,12 @@ import {
   BarChart, Bar, PieChart, Pie, Cell,
   XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer 
 } from 'recharts';
+import IVRSettings from './IvrSettings';
+
+// APIベースURLの取得 - 環境変数がない場合は相対パスを使用
+const getApiBaseUrl = () => {
+  return process.env.REACT_APP_API_URL || '/api';
+};
 
 const CampaignDetail = () => {
   const { id } = useParams();
@@ -25,60 +31,61 @@ const CampaignDetail = () => {
   const fetchCampaignDetails = async () => {
     try {
       setLoading(true);
+      setError(null);
       const token = localStorage.getItem('token');
       
-      // 開発環境用モックデータ
-      if (process.env.NODE_ENV === 'development') {
-        setTimeout(() => {
-          setCampaign({
-            id: parseInt(id),
-            name: 'サンプルキャンペーン',
-            description: 'テスト用のキャンペーン',
-            status: 'active',
-            caller_id_number: '0312345678',
-            caller_id_description: '東京オフィス',
-            created_at: '2025-05-01T09:00:00Z',
-            stats: {
-              totalContacts: 150,
-              completedContacts: 87,
-              totalCalls: 95,
-              answeredCalls: 72,
-              answerRate: 76
-            },
-            progress: 58,
-            callStats: {
-              byStatus: [
-                { name: '応答', value: 72 },
-                { name: '不応答', value: 15 },
-                { name: '話中', value: 5 },
-                { name: '失敗', value: 3 }
-              ],
-              byHour: [
-                { hour: '9:00', calls: 10, answered: 8 },
-                { hour: '10:00', calls: 15, answered: 12 },
-                { hour: '11:00', calls: 18, answered: 15 },
-                { hour: '12:00', calls: 8, answered: 5 },
-                { hour: '13:00', calls: 12, answered: 9 },
-                { hour: '14:00', calls: 16, answered: 13 },
-                { hour: '15:00', calls: 16, answered: 10 }
-              ]
-            }
-          });
-          setLoading(false);
-        }, 500);
-        return;
-      }
+      // デバッグ用にAPIリクエスト情報をログ出力
+      const apiUrl = `${getApiBaseUrl()}/campaigns/${id}/details`;
+      console.log('APIリクエスト:', apiUrl);
       
-      const response = await fetch(`/api/campaigns/${id}/details`, {
-        headers: { 'Authorization': `Bearer ${token}` }
+      const response = await fetch(apiUrl, {
+        headers: { 
+          'Authorization': `Bearer ${token}`,
+          'Cache-Control': 'no-cache'
+        }
       });
       
-      if (!response.ok) throw new Error('キャンペーン詳細の取得に失敗しました');
+      if (response.status === 404) {
+        throw new Error('キャンペーンが見つかりません');
+      } else if (response.status === 500) {
+        throw new Error('サーバー内部エラーが発生しました。管理者に連絡してください。');
+      } else if (!response.ok) {
+        const errorData = await response.text();
+        console.error('API応答エラー:', errorData);
+        throw new Error(`キャンペーン詳細の取得に失敗しました (${response.status})`);
+      }
       
       const data = await response.json();
+      console.log('取得したキャンペーンデータ:', data);
       setCampaign(data);
     } catch (err) {
-      setError(err.message);
+      console.error('キャンペーン詳細取得エラー:', err);
+      setError(err.message || 'データ取得中にエラーが発生しました');
+      
+      // フォールバックとしてモックデータを設定
+      setCampaign({
+        id: parseInt(id),
+        name: 'キャンペーン情報取得エラー',
+        description: '接続エラーのため、データを表示できません',
+        status: 'draft',
+        caller_id_number: 'エラー',
+        caller_id_description: 'データなし',
+        created_at: new Date().toISOString(),
+        stats: {
+          totalContacts: 0,
+          completedContacts: 0,
+          totalCalls: 0,
+          answeredCalls: 0,
+          answerRate: 0
+        },
+        progress: 0,
+        callStats: {
+          byStatus: [
+            { name: 'データなし', value: 1 }
+          ],
+          byHour: []
+        }
+      });
     } finally {
       setLoading(false);
     }
@@ -87,27 +94,33 @@ const CampaignDetail = () => {
   const handleStatusChange = async (action) => {
     try {
       setActionInProgress(true);
+      setError(null);
       const token = localStorage.getItem('token');
       
-      if (process.env.NODE_ENV === 'development') {
-        await new Promise(resolve => setTimeout(resolve, 1000));
-        setCampaign(prev => ({
-          ...prev,
-          status: action === 'pause' ? 'paused' : 'active'
-        }));
-        return;
-      }
+      const apiUrl = `${getApiBaseUrl()}/campaigns/${id}/${action}`;
+      console.log('APIリクエスト:', apiUrl, 'メソッド:', 'POST');
       
-      const response = await fetch(`/api/campaigns/${id}/${action}`, {
+      const response = await fetch(apiUrl, {
         method: 'POST',
-        headers: { 'Authorization': `Bearer ${token}` }
+        headers: { 
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json',
+          'Cache-Control': 'no-cache'
+        },
+        body: JSON.stringify({}) // 空のオブジェクトを送信
       });
       
-      if (!response.ok) throw new Error(`キャンペーンの${action}に失敗しました`);
+      if (!response.ok) {
+        const errorData = await response.text();
+        console.error('API応答エラー:', errorData);
+        throw new Error(`キャンペーンの${action}に失敗しました (${response.status})`);
+      }
       
+      // 成功したら更新
       await fetchCampaignDetails();
     } catch (err) {
-      setError(err.message);
+      console.error(`キャンペーン${action}エラー:`, err);
+      setError(err.message || 'ステータス変更中にエラーが発生しました');
     } finally {
       setActionInProgress(false);
     }
@@ -115,31 +128,24 @@ const CampaignDetail = () => {
 
   const handleExport = async () => {
     try {
+      setError(null);
       const token = localStorage.getItem('token');
       
-      if (process.env.NODE_ENV === 'development') {
-        // モックCSVデータ
-        const csvContent = `発信日時,電話番号,名前,会社名,ステータス,通話時間（秒）,キー入力
-2025-05-05 10:30:15,09012345678,山田太郎,株式会社A,ANSWERED,45,1
-2025-05-05 10:32:10,09023456789,佐藤花子,有限会社B,NO ANSWER,0,
-2025-05-05 10:35:00,09034567890,鈴木一郎,株式会社C,ANSWERED,68,`;
-        
-        const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-        const url = window.URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = `campaign_${id}_report.csv`;
-        document.body.appendChild(a);
-        a.click();
-        a.remove();
-        return;
-      }
+      const apiUrl = `${getApiBaseUrl()}/reports/campaigns/${id}/export`;
+      console.log('APIリクエスト:', apiUrl);
       
-      const response = await fetch(`/api/reports/campaigns/${id}/export`, {
-        headers: { 'Authorization': `Bearer ${token}` }
+      const response = await fetch(apiUrl, {
+        headers: { 
+          'Authorization': `Bearer ${token}`,
+          'Cache-Control': 'no-cache'
+        }
       });
       
-      if (!response.ok) throw new Error('データのエクスポートに失敗しました');
+      if (!response.ok) {
+        const errorData = await response.text();
+        console.error('エクスポートエラー:', errorData);
+        throw new Error(`データのエクスポートに失敗しました (${response.status})`);
+      }
       
       const blob = await response.blob();
       const url = window.URL.createObjectURL(blob);
@@ -150,7 +156,8 @@ const CampaignDetail = () => {
       a.click();
       a.remove();
     } catch (err) {
-      setError(err.message);
+      console.error('エクスポートエラー:', err);
+      setError(err.message || 'エクスポート中にエラーが発生しました');
     }
   };
 
@@ -167,7 +174,7 @@ const CampaignDetail = () => {
     );
   }
 
-  if (error) {
+  if (error && !campaign) {
     return (
       <div className="p-4">
         <div className="bg-red-100 border-l-4 border-red-500 text-red-700 p-4">
@@ -175,6 +182,15 @@ const CampaignDetail = () => {
             <AlertCircle className="h-5 w-5 mr-2" />
             <p>{error}</p>
           </div>
+        </div>
+        <div className="mt-4">
+          <button 
+            onClick={fetchCampaignDetails}
+            className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700"
+          >
+            <RefreshCw className="h-5 w-5 mr-1 inline" />
+            再読み込み
+          </button>
         </div>
       </div>
     );
@@ -184,6 +200,15 @@ const CampaignDetail = () => {
 
   return (
     <div className="p-4">
+      {error && (
+        <div className="bg-red-100 border-l-4 border-red-500 text-red-700 p-4 mb-4">
+          <div className="flex">
+            <AlertCircle className="h-5 w-5 mr-2" />
+            <p>{error}</p>
+          </div>
+        </div>
+      )}
+      
       <div className="flex items-center justify-between mb-6">
         <div className="flex items-center">
           <Link to="/campaigns" className="mr-4">
@@ -273,6 +298,17 @@ const CampaignDetail = () => {
           >
             レポート
           </button>
+          {/* IVR設定タブ */}
+          <button
+            onClick={() => setActiveTab('ivr')}
+            className={`py-4 px-1 border-b-2 font-medium text-sm ${
+              activeTab === 'ivr'
+                ? 'border-blue-500 text-blue-600'
+                : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+            }`}
+          >
+            IVR設定
+          </button>
         </nav>
       </div>
 
@@ -286,7 +322,9 @@ const CampaignDetail = () => {
                 <Users className="h-8 w-8 text-blue-500 mr-3" />
                 <div>
                   <p className="text-sm text-gray-500">連絡先数</p>
-                  <p className="text-xl font-semibold">{campaign.stats.totalContacts}</p>
+                  <p className="text-xl font-semibold">
+                    {campaign.stats?.totalContacts || 0}
+                  </p>
                 </div>
               </div>
             </div>
@@ -296,7 +334,9 @@ const CampaignDetail = () => {
                 <Phone className="h-8 w-8 text-green-500 mr-3" />
                 <div>
                   <p className="text-sm text-gray-500">発信数</p>
-                  <p className="text-xl font-semibold">{campaign.stats.totalCalls}</p>
+                  <p className="text-xl font-semibold">
+                    {campaign.stats?.totalCalls || 0}
+                  </p>
                 </div>
               </div>
             </div>
@@ -306,7 +346,9 @@ const CampaignDetail = () => {
                 <BarChart2 className="h-8 w-8 text-purple-500 mr-3" />
                 <div>
                   <p className="text-sm text-gray-500">応答率</p>
-                  <p className="text-xl font-semibold">{campaign.stats.answerRate}%</p>
+                  <p className="text-xl font-semibold">
+                    {campaign.stats?.answerRate || 0}%
+                  </p>
                 </div>
               </div>
             </div>
@@ -314,12 +356,12 @@ const CampaignDetail = () => {
             <div className="bg-white rounded-lg shadow p-4">
               <div className="flex items-center">
                 <div className="h-8 w-8 rounded-full bg-orange-100 flex items-center justify-center mr-3">
-                  <span className="text-orange-600 font-bold">{campaign.progress}%</span>
+                  <span className="text-orange-600 font-bold">{campaign.progress || 0}%</span>
                 </div>
                 <div>
                   <p className="text-sm text-gray-500">進捗</p>
                   <p className="text-xl font-semibold">
-                    {campaign.stats.completedContacts}/{campaign.stats.totalContacts}
+                    {campaign.stats?.completedContacts || 0}/{campaign.stats?.totalContacts || 0}
                   </p>
                 </div>
               </div>
@@ -337,7 +379,8 @@ const CampaignDetail = () => {
               <div>
                 <dt className="text-sm font-medium text-gray-500">発信者番号</dt>
                 <dd className="mt-1 text-sm text-gray-900">
-                  {campaign.caller_id_number} ({campaign.caller_id_description})
+                  {campaign.caller_id_number || '-'} 
+                  {campaign.caller_id_description ? `(${campaign.caller_id_description})` : ''}
                 </dd>
               </div>
               <div>
@@ -357,7 +400,7 @@ const CampaignDetail = () => {
               <div>
                 <dt className="text-sm font-medium text-gray-500">作成日時</dt>
                 <dd className="mt-1 text-sm text-gray-900">
-                  {new Date(campaign.created_at).toLocaleString('ja-JP')}
+                  {campaign.created_at ? new Date(campaign.created_at).toLocaleString('ja-JP') : '-'}
                 </dd>
               </div>
             </dl>
@@ -376,43 +419,62 @@ const CampaignDetail = () => {
           {/* 通話ステータス分布 */}
           <div className="bg-white rounded-lg shadow p-4">
             <h2 className="text-lg font-semibold mb-4">通話ステータス</h2>
-            <ResponsiveContainer width="100%" height={300}>
-              <PieChart>
-                <Pie
-                  data={campaign.callStats.byStatus}
-                  cx="50%"
-                  cy="50%"
-                  labelLine={false}
-                  label={({ name, percent }) => `${name} ${(percent * 100).toFixed(0)}%`}
-                  outerRadius={80}
-                  fill="#8884d8"
-                  dataKey="value"
-                >
-                  {campaign.callStats.byStatus.map((entry, index) => (
-                    <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
-                  ))}
-                </Pie>
-                <Tooltip />
-                <Legend />
-              </PieChart>
-            </ResponsiveContainer>
+            {campaign.callStats && campaign.callStats.byStatus && campaign.callStats.byStatus.length > 0 ? (
+              <ResponsiveContainer width="100%" height={300}>
+                <PieChart>
+                  <Pie
+                    data={campaign.callStats.byStatus}
+                    cx="50%"
+                    cy="50%"
+                    labelLine={false}
+                    label={({ name, percent }) => `${name} ${(percent * 100).toFixed(0)}%`}
+                    outerRadius={80}
+                    fill="#8884d8"
+                    dataKey="value"
+                  >
+                    {campaign.callStats.byStatus.map((entry, index) => (
+                      <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
+                    ))}
+                  </Pie>
+                  <Tooltip />
+                  <Legend />
+                </PieChart>
+              </ResponsiveContainer>
+            ) : (
+              <div className="flex items-center justify-center h-64 text-gray-500">
+                表示するデータがありません
+              </div>
+            )}
           </div>
 
           {/* 時間帯別通話数 */}
           <div className="bg-white rounded-lg shadow p-4">
             <h2 className="text-lg font-semibold mb-4">時間帯別通話数</h2>
-            <ResponsiveContainer width="100%" height={300}>
-              <BarChart data={campaign.callStats.byHour}>
-                <CartesianGrid strokeDasharray="3 3" />
-                <XAxis dataKey="hour" />
-                <YAxis />
-                <Tooltip />
-                <Legend />
-                <Bar dataKey="calls" name="総通話数" fill="#8884d8" />
-                <Bar dataKey="answered" name="応答数" fill="#82ca9d" />
-              </BarChart>
-            </ResponsiveContainer>
+            {campaign.callStats && campaign.callStats.byHour && campaign.callStats.byHour.length > 0 ? (
+              <ResponsiveContainer width="100%" height={300}>
+                <BarChart data={campaign.callStats.byHour}>
+                  <CartesianGrid strokeDasharray="3 3" />
+                  <XAxis dataKey="hour" />
+                  <YAxis />
+                  <Tooltip />
+                  <Legend />
+                  <Bar dataKey="calls" name="総通話数" fill="#8884d8" />
+                  <Bar dataKey="answered" name="応答数" fill="#82ca9d" />
+                </BarChart>
+              </ResponsiveContainer>
+            ) : (
+              <div className="flex items-center justify-center h-64 text-gray-500">
+                表示するデータがありません
+              </div>
+            )}
           </div>
+        </div>
+      )}
+
+      {/* IVR設定タブ */}
+      {activeTab === 'ivr' && (
+        <div>
+          <IVRSettings campaignId={id} />
         </div>
       )}
     </div>
@@ -423,6 +485,7 @@ const CampaignDetail = () => {
 const ContactsList = ({ campaignId }) => {
   const [contacts, setContacts] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
   const [pagination, setPagination] = useState({
     page: 1,
     limit: 20,
@@ -436,34 +499,49 @@ const ContactsList = ({ campaignId }) => {
   const fetchContacts = async () => {
     try {
       setLoading(true);
+      setError(null);
       const token = localStorage.getItem('token');
       
-      if (process.env.NODE_ENV === 'development') {
-        setTimeout(() => {
-          setContacts([
-            { id: 1, phone: '09012345678', name: '山田太郎', company: '株式会社A', status: 'completed', last_attempt: '2025-05-05T10:30:15Z' },
-            { id: 2, phone: '09023456789', name: '佐藤花子', company: '有限会社B', status: 'pending', last_attempt: null },
-            { id: 3, phone: '09034567890', name: '鈴木一郎', company: '株式会社C', status: 'failed', last_attempt: '2025-05-05T10:35:00Z' },
-          ]);
-          setPagination(prev => ({ ...prev, total: 150 }));
-          setLoading(false);
-        }, 500);
-        return;
+      const offset = (pagination.page - 1) * pagination.limit;
+      const apiUrl = `${getApiBaseUrl()}/contacts/campaign/${campaignId}?limit=${pagination.limit}&offset=${offset}`;
+      console.log('連絡先取得APIリクエスト:', apiUrl);
+      
+      const response = await fetch(apiUrl, {
+        headers: { 
+          'Authorization': `Bearer ${token}`,
+          'Cache-Control': 'no-cache'
+        }
+      });
+      
+      if (!response.ok) {
+        const errorData = await response.text();
+        console.error('連絡先取得API応答エラー:', errorData);
+        throw new Error(`連絡先の取得に失敗しました (${response.status})`);
       }
       
-      const offset = (pagination.page - 1) * pagination.limit;
-      const response = await fetch(
-        `/api/contacts/campaign/${campaignId}?limit=${pagination.limit}&offset=${offset}`,
-        { headers: { 'Authorization': `Bearer ${token}` } }
-      );
-      
-      if (!response.ok) throw new Error('連絡先の取得に失敗しました');
-      
       const data = await response.json();
-      setContacts(data.contacts);
-      setPagination(prev => ({ ...prev, total: data.pagination.total }));
-    } catch (error) {
-      console.error('連絡先取得エラー:', error);
+      console.log('取得した連絡先データ:', data);
+      
+      // APIレスポンスの構造をチェック
+      if (data && Array.isArray(data.contacts)) {
+        setContacts(data.contacts);
+        setPagination(prev => ({ 
+          ...prev, 
+          total: data.pagination?.total || data.contacts.length 
+        }));
+      } else if (Array.isArray(data)) {
+        // APIが配列を直接返す場合の対応
+        setContacts(data);
+        setPagination(prev => ({ ...prev, total: data.length }));
+      } else {
+        console.warn('予期しないAPIレスポンス形式:', data);
+        setContacts([]);
+        setPagination(prev => ({ ...prev, total: 0 }));
+      }
+    } catch (err) {
+      console.error('連絡先取得エラー:', err);
+      setError(err.message || '連絡先データの取得中にエラーが発生しました');
+      setContacts([]);
     } finally {
       setLoading(false);
     }
@@ -474,14 +552,16 @@ const ContactsList = ({ campaignId }) => {
       pending: 'bg-gray-100 text-gray-800',
       completed: 'bg-green-100 text-green-800',
       failed: 'bg-red-100 text-red-800',
-      dnc: 'bg-purple-100 text-purple-800'
+      dnc: 'bg-purple-100 text-purple-800',
+      called: 'bg-blue-100 text-blue-800'
     };
     
     const labels = {
       pending: '未処理',
       completed: '完了',
       failed: '失敗',
-      dnc: '着信拒否'
+      dnc: '着信拒否',
+      called: '発信中'
     };
     
     return (
@@ -493,6 +573,40 @@ const ContactsList = ({ campaignId }) => {
 
   if (loading) {
     return <div className="text-center py-8">読み込み中...</div>;
+  }
+
+  if (error) {
+    return (
+      <div className="bg-red-100 border-l-4 border-red-500 text-red-700 p-4 mb-4">
+        <div className="flex items-start">
+          <AlertCircle className="h-5 w-5 mr-2 mt-0.5" />
+          <div>
+            <p>{error}</p>
+            <button 
+              onClick={fetchContacts}
+              className="mt-2 px-3 py-1 bg-red-700 text-white rounded hover:bg-red-800 text-sm"
+            >
+              再読み込み
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (contacts.length === 0) {
+    return (
+      <div className="bg-white rounded-lg shadow p-8 text-center">
+        <p className="text-gray-500 mb-4">このキャンペーンには連絡先がありません</p>
+        <Link
+          to={`/campaigns/${campaignId}/contacts/upload`}
+          className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 inline-flex items-center"
+        >
+          <Upload className="h-5 w-5 mr-1" />
+          連絡先を追加
+        </Link>
+      </div>
+    );
   }
 
   return (
@@ -532,14 +646,14 @@ const ContactsList = ({ campaignId }) => {
           <button
             onClick={() => setPagination(prev => ({ ...prev, page: prev.page - 1 }))}
             disabled={pagination.page === 1}
-            className="relative inline-flex items-center px-4 py-2 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50"
+            className="relative inline-flex items-center px-4 py-2 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 disabled:opacity-50"
           >
             前へ
           </button>
           <button
             onClick={() => setPagination(prev => ({ ...prev, page: prev.page + 1 }))}
             disabled={pagination.page * pagination.limit >= pagination.total}
-            className="ml-3 relative inline-flex items-center px-4 py-2 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50"
+            className="ml-3 relative inline-flex items-center px-4 py-2 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 disabled:opacity-50"
           >
             次へ
           </button>
@@ -551,7 +665,7 @@ const ContactsList = ({ campaignId }) => {
               <span className="font-medium">{pagination.total}</span>
               {' '}件中{' '}
               <span className="font-medium">
-                {(pagination.page - 1) * pagination.limit + 1}
+                {pagination.total > 0 ? (pagination.page - 1) * pagination.limit + 1 : 0}
               </span>
               {' '}-{' '}
               <span className="font-medium">
@@ -565,14 +679,14 @@ const ContactsList = ({ campaignId }) => {
               <button
                 onClick={() => setPagination(prev => ({ ...prev, page: prev.page - 1 }))}
                 disabled={pagination.page === 1}
-                className="relative inline-flex items-center px-2 py-2 rounded-l-md border border-gray-300 bg-white text-sm font-medium text-gray-500 hover:bg-gray-50"
+                className="relative inline-flex items-center px-2 py-2 rounded-l-md border border-gray-300 bg-white text-sm font-medium text-gray-500 hover:bg-gray-50 disabled:opacity-50"
               >
                 前へ
               </button>
               <button
                 onClick={() => setPagination(prev => ({ ...prev, page: prev.page + 1 }))}
                 disabled={pagination.page * pagination.limit >= pagination.total}
-                className="relative inline-flex items-center px-2 py-2 rounded-r-md border border-gray-300 bg-white text-sm font-medium text-gray-500 hover:bg-gray-50"
+                className="relative inline-flex items-center px-2 py-2 rounded-r-md border border-gray-300 bg-white text-sm font-medium text-gray-500 hover:bg-gray-50 disabled:opacity-50"
               >
                 次へ
               </button>
