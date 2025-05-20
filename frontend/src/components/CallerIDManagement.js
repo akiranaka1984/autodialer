@@ -2,6 +2,7 @@
 import React, { useState, useEffect } from 'react';
 import { Phone, Edit, Trash2, Check, X, Upload, ChevronDown, ChevronRight, Plus, RefreshCw, AlertCircle, Server } from 'lucide-react';
 import CallerIDImport from './CallerIDImport';
+import SimpleChannelUpload from './SimpleChannelUpload'; 
 
 const CallerIDManagement = () => {
   const [callerIds, setCallerIds] = useState([]);
