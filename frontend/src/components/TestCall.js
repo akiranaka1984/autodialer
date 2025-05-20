@@ -101,12 +101,19 @@ const TestCall = () => {
       } catch (fetchError) {
         console.error('テスト用エンドポイント呼び出しエラー:', fetchError);
         
-        // フォールバックとしてモックデータを使用
-        setCallerIds([
-          { id: 1, number: '0312345678', description: '東京オフィス', provider: 'SIP Provider A', active: true },
-          { id: 2, number: '0312345679', description: '大阪オフィス', provider: 'SIP Provider A', active: true },
-          { id: 3, number: '0501234567', description: 'マーケティング部', provider: 'Twilio', active: true }
-        ]);
+        // 環境変数に基づいてモックデータの使用を決定
+        if (process.env.REACT_APP_USE_MOCK_DATA === 'true') {
+          console.log('モックデータを使用します');
+          setCallerIds([
+            { id: 1, number: '0312345678', description: '東京オフィス', provider: 'SIP Provider A', active: true },
+            { id: 2, number: '0312345679', description: '大阪オフィス', provider: 'SIP Provider A', active: true },
+            { id: 3, number: '0501234567', description: 'マーケティング部', provider: 'Twilio', active: true }
+          ]);
+        } else {
+          console.log('モックデータは無効化されています');
+          setCallerIds([]); // 空の配列を設定
+          setError('発信者番号の取得に失敗しました。管理画面から登録してください。');
+        }
         setLoading(false);
         return;
       }
@@ -138,12 +145,18 @@ const TestCall = () => {
       console.error('発信者番号取得エラー:', err);
       setError(err.message);
       
-      // エラー時はモックデータを使用
-      setCallerIds([
-        { id: 1, number: '0312345678', description: '東京オフィス', provider: 'SIP Provider A', active: true },
-        { id: 2, number: '0312345679', description: '大阪オフィス', provider: 'SIP Provider A', active: true },
-        { id: 3, number: '0501234567', description: 'マーケティング部', provider: 'Twilio', active: true }
-      ]);
+      // 環境変数に基づいてモックデータの使用を決定
+      if (process.env.REACT_APP_USE_MOCK_DATA === 'true') {
+        console.log('エラー時にモックデータを使用します');
+        setCallerIds([
+          { id: 1, number: '0312345678', description: '東京オフィス', provider: 'SIP Provider A', active: true },
+          { id: 2, number: '0312345679', description: '大阪オフィス', provider: 'SIP Provider A', active: true },
+          { id: 3, number: '0501234567', description: 'マーケティング部', provider: 'Twilio', active: true }
+        ]);
+      } else {
+        console.log('モックデータは無効化されています - APIエラー時も実データのみ使用');
+        setCallerIds([]); // 空の配列を設定
+      }
     } finally {
       setLoading(false);
     }
@@ -244,19 +257,19 @@ const TestCall = () => {
       }, 1000);
       
       // 発信成功後、10秒後に通話結果を表示（モックモードのシミュレーション）
-      if (mode === 'mock') {
-        setTimeout(() => {
-          // 発信状態を更新
-          setCallDetails(prev => ({
-            ...prev,
-            status: 'ANSWERED',
-            duration: '10秒'
-          }));
-          
-          // 履歴を再取得
-          fetchCallHistory();
-        }, 10000);
-      }
+    if (mode === 'mock' && process.env.REACT_APP_USE_MOCK_DATA === 'true') {
+      setTimeout(() => {
+        // 発信状態を更新
+        setCallDetails(prev => ({
+          ...prev,
+          status: 'ANSWERED',
+          duration: '10秒'
+        }));
+        
+        // 履歴を再取得
+        fetchCallHistory();
+      }, 10000);
+    }
       
     } catch (error) {
       console.error('テスト発信エラー:', error);

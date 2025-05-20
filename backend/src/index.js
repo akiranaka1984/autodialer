@@ -103,14 +103,14 @@ app.get('/api/test-cors', (req, res) => {
 });
 
 // ★★★ 追加: チャンネル用のテストエンドポイント ★★★
-app.get('/api/test-channels/:id', (req, res) => {
+/*app.get('/api/test-channels/:id', (req, res) => {
   res.json([
     { id: 1, username: '03080001', channel_type: 'outbound', status: 'available', last_used: null },
     { id: 2, username: '03080002', channel_type: 'transfer', status: 'available', last_used: null },
     { id: 3, username: '03080003', channel_type: 'both', status: 'available', last_used: null }
   ]);
 });
-
+*/
 // ルートエンドポイント
 app.get('/', (req, res) => {
   res.json({ 
@@ -135,7 +135,7 @@ app.get('/', (req, res) => {
 const startServer = async () => {
   try {
     // 開発環境のみ認証を簡略化する
-    if (process.env.NODE_ENV === 'development') {
+    if (process.env.NODE_ENV === 'development' && process.env.USE_SIMPLE_AUTH === 'true') {
       try {
         const fs = require('fs');
         const path = require('path');

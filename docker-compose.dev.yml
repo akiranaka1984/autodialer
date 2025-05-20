@@ -18,13 +18,11 @@ services:
       # モックモードを無効化してTwilioを使用
       MOCK_ASTERISK: "true"
       USE_TWILIO: "false"
-      # Twilio設定
-      TWILIO_ACCOUNT_SID: ${TWILIO_ACCOUNT_SID}
-      TWILIO_AUTH_TOKEN: ${TWILIO_AUTH_TOKEN}
-      TWILIO_PHONE_NUMBER: ${TWILIO_PHONE_NUMBER}
       PUBLIC_URL: ${PUBLIC_URL}
       LANG: "ja_JP.UTF-8"
       LC_ALL: "ja_JP.UTF-8"
+      USE_SIMPLE_AUTH: "false"
+      USE_MOCK_DATA: "false"
     depends_on:
       - mysql
     networks:
@@ -43,6 +41,7 @@ services:
     environment:
       NODE_ENV: development
       REACT_APP_API_URL: "http://152.42.200.112:5001/api"
+      REACT_APP_USE_MOCK_DATA: "false"
       CHOKIDAR_USEPOLLING: "true"
       WDS_SOCKET_HOST: localhost
       WDS_SOCKET_PORT: 3003

@@ -48,46 +48,10 @@ const CallerIDManagement = () => {
       const token = localStorage.getItem('token');
       
       // 開発環境でモックデータを使用するオプション
-      if (process.env.NODE_ENV === 'development' && window.location.hostname === 'localhost') {
-        console.log('開発環境でモックデータを使用');
-        // モックデータのセット
-        setTimeout(() => {
-          const mockData = [
-            { 
-              id: 1, 
-              number: '03-5946-8520', 
-              description: '東京オフィス', 
-              provider: 'SIP Provider A', 
-              domain: 'ito258258.site',
-              active: true,
-              channelCount: 20,
-              availableChannels: 15
-            },
-            { 
-              id: 2, 
-              number: '03-3528-9538', 
-              description: '大阪オフィス', 
-              provider: 'SIP Provider A', 
-              domain: 'ito258258.site',
-              active: true,
-              channelCount: 20,
-              availableChannels: 18
-            },
-            { 
-              id: 3, 
-              number: '050-1234-5678', 
-              description: 'マーケティング部', 
-              provider: 'Twilio',
-              domain: 'twilio.com',
-              active: false,
-              channelCount: 5,
-              availableChannels: 5
-            }
-          ];
-          setCallerIds(mockData);
-          setLoading(false);
-        }, 500);
-        return;
+      if (false && process.env.NODE_ENV === 'development' && window.location.hostname === 'localhost') {
+        // モックデータ処理を完全に無効化
+        console.log('モックデータは無効化されています');
+        return; // これを削除してフォールスルーさせる
       }
       
       console.log('API呼び出し:', `${apiBaseUrl}/caller-ids`);

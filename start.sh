@@ -8,7 +8,7 @@ docker-compose -f docker/docker-compose.yml exec mysql mysql -uroot -ppassword a
 
 # サンプルデータの挿入（オプション）
 echo "サンプルデータを挿入しています..."
-docker-compose -f docker/docker-compose.yml exec mysql mysql -uroot -ppassword autodialer < backend/database/sample-data.sql
+#docker-compose -f docker/docker-compose.yml exec mysql mysql -uroot -ppassword autodialer < backend/database/sample-data.sql
 
 # Asterisk設定の更新
 echo "Asterisk設定を更新しています..."
@@ -16,4 +16,4 @@ docker-compose -f docker/docker-compose.yml restart asterisk
 
 echo "システムが起動しました！"
 echo "バックエンドAPI: http://localhost:5000"
-echo "フロントエンド: http://localhost:3001"
+echo "フロントエンド: http://localhost:3003"
