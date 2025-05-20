@@ -19,13 +19,38 @@ const server = http.createServer(app);
 // ★★★ 重要: CORSの設定をルーター登録よりも前に移動 ★★★
 // CORSの設定を修正
 app.use(cors({
-  origin: process.env.NODE_ENV === 'production' 
-    ? [process.env.FRONTEND_URL || 'https://your-production-domain.com'] 
-    : '*', // 開発環境では全てのオリジンを許可、本番環境では特定のドメインのみ
+  origin: ['http://152.42.200.112:3003', 'http://localhost:3003'],
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization', 'Cache-Control'],
   credentials: true
 }));
+
+// 以下のミドルウェアを追加して全レスポンスに文字セットを設定
+app.use((req, res, next) => {
+  // すべてのレスポンスに対してUTF-8文字セットを明示
+  res.header('Content-Type', 'application/json; charset=utf-8');
+  
+  // 追加のCORSヘッダー
+  res.header('Access-Control-Allow-Origin', req.headers.origin || '*');
+  res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS, PATCH');
+  res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, Cache-Control');
+  
+  // プリフライトリクエスト対応
+  if (req.method === 'OPTIONS') {
+    return res.sendStatus(200);
+  }
+  
+  next();
+});
+
+// リクエストログにリクエストボディも表示
+app.use((req, res, next) => {
+  logger.debug(`${req.method} ${req.url} - Origin: ${req.headers.origin || 'none'}`);
+  if (['POST', 'PUT', 'PATCH'].includes(req.method)) {
+    logger.debug('Request body:', req.body);
+  }
+  next();
+});
 
 // プリフライトリクエストの処理を追加
 app.options('*', cors());
@@ -48,7 +73,8 @@ app.use((req, res, next) => {
   next();
 });
 
-app.use(express.json());
+app.use(express.json({ charset: 'utf-8' }));
+app.use(express.urlencoded({ extended: true, charset: 'utf-8' }));
 
 // ★★★ ここに移動：ルーターの登録 ★★★
 const callerIdsRouter = require('./routes/callerIds');

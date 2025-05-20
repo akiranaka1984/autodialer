@@ -17,9 +17,17 @@ const initDb = async (retries = 5, delay = 5000) => {
         waitForConnections: true,
         connectionLimit: 10,
         queueLimit: 0,
-        charset: 'utf8mb4'  // 文字セットをUTF-8に設定
+        charset: 'utf8mb4',
+	collation: 'utf8mb4_unicode_ci',
+	supportBigNumbers: true,
+        bigNumberStrings: true,
+        dateStrings: true
       });
-      
+
+	// 接続後に文字セットを設定する追加のクエリ
+      await pool.query("SET NAMES utf8mb4");
+      await pool.query("SET CHARACTER SET utf8mb4");
+      await pool.query("SET character_set_connection=utf8mb4");
       // 接続テスト
       await pool.query('SELECT 1');
       

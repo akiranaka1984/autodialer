@@ -6,9 +6,13 @@ const multer = require('multer');
 const { promisify } = require('util');
 
 // 全ての発信者番号を取得
+// 元の動作していたバージョンに戻す
 exports.getAllCallerIds = async (req, res) => {
   try {
     console.log('発信者番号一覧取得API開始');
+    
+    // 文字セットヘッダーを明示的に設定
+    res.setHeader('Content-Type', 'application/json; charset=utf-8');
     
     // db.queryの結果構造を確認するログを追加
     const result = await db.query('SELECT * FROM caller_ids ORDER BY created_at DESC');
@@ -18,10 +22,22 @@ exports.getAllCallerIds = async (req, res) => {
     // 結果が配列かどうかを確認
     if (Array.isArray(result)) {
       console.log('結果は配列です。長さ:', result.length);
+      
+      // データをログ出力
+      if (result.length > 0) {
+        console.log('最初のレコードの内容:', JSON.stringify(result[0], null, 2));
+      }
+      
       res.json(result);
     } else if (result && Array.isArray(result[0])) {
       // MySQL2の場合、結果は[rows, fields]の形式で返される
       console.log('結果は[rows, fields]形式です。行数:', result[0].length);
+      
+      // データをログ出力
+      if (result[0].length > 0) {
+        console.log('最初のレコードの内容:', JSON.stringify(result[0][0], null, 2));
+      }
+      
       res.json(result[0]);
     } else {
       console.log('不明な結果形式:', result);
@@ -38,6 +54,7 @@ exports.getAllCallerIds = async (req, res) => {
 exports.getCallerIdById = async (req, res) => {
   try {
     // 発信者番号の基本情報取得
+    res.setHeader('Content-Type', 'application/json; charset=utf-8');
     const [callerIds] = await db.query(
       'SELECT * FROM caller_ids WHERE id = ?', 
       [req.params.id]
@@ -67,6 +84,7 @@ exports.getCallerIdById = async (req, res) => {
 // 新しいチャンネルを追加
 exports.addCallerChannel = async (req, res) => {
   try {
+    res.setHeader('Content-Type', 'application/json; charset=utf-8');
     const { caller_id_id, username, password, channel_type } = req.body;
     
     if (!caller_id_id || !username || !password) {
@@ -101,6 +119,7 @@ exports.addCallerChannel = async (req, res) => {
 // 新しい発信者番号を作成
 exports.createCallerId = async (req, res) => {
   try {
+    res.setHeader('Content-Type', 'application/json; charset=utf-8');
     const { number, description, provider, active } = req.body;
     
     if (!number) {
@@ -128,6 +147,7 @@ exports.createCallerId = async (req, res) => {
 // 発信者番号を更新
 exports.updateCallerId = async (req, res) => {
   try {
+    res.setHeader('Content-Type', 'application/json; charset=utf-8');
     const { number, description, provider, active } = req.body;
     
     if (!number) {
@@ -159,6 +179,7 @@ exports.updateCallerId = async (req, res) => {
 // 発信者番号を削除
 exports.deleteCallerId = async (req, res) => {
   try {
+    res.setHeader('Content-Type', 'application/json; charset=utf-8');
     const result = await db.query('DELETE FROM caller_ids WHERE id = ?', [req.params.id]);
     
     if (result.affectedRows === 0) {
@@ -175,6 +196,7 @@ exports.deleteCallerId = async (req, res) => {
 // CSVからの発信者番号インポート
 exports.importCallerIds = async (req, res) => {
   try {
+    res.setHeader('Content-Type', 'application/json; charset=utf-8');
     // Multerミドルウェアを設定
     const upload = multer({ dest: 'uploads/' });
     const uploadMiddleware = promisify(upload.single('file'));
@@ -345,6 +367,7 @@ exports.importCallerIds = async (req, res) => {
 // CSVからのチャンネルインポート
 exports.importCallerChannels = async (req, res) => {
   try {
+    res.setHeader('Content-Type', 'application/json; charset=utf-8');
     const callerId = req.params.id;
     
     // Multerミドルウェアを設定
@@ -444,6 +467,7 @@ exports.importCallerChannels = async (req, res) => {
 // 特定の発信者番号のチャンネル一覧を取得
 exports.getCallerChannels = async (req, res) => {
   try {
+    res.setHeader('Content-Type', 'application/json; charset=utf-8');
     logger.info(`発信者番号ID=${req.params.id}のチャンネル一覧を取得`);
     
     // 明示的にすべてのフィールドを指定（channel_typeも含む）
@@ -464,6 +488,7 @@ exports.getCallerChannels = async (req, res) => {
 
 exports.updateCallerChannel = async (req, res) => {
   try {
+    res.setHeader('Content-Type', 'application/json; charset=utf-8');
     const { username, password, channel_type } = req.body;
     let updateQuery = 'UPDATE caller_channels SET ';
     const queryParams = [];
@@ -523,6 +548,7 @@ exports.updateCallerChannel = async (req, res) => {
 // チャンネルを削除
 exports.deleteCallerChannel = async (req, res) => {
   try {
+    res.setHeader('Content-Type', 'application/json; charset=utf-8');
     const [result] = await db.query(
       'DELETE FROM caller_channels WHERE id = ?',
       [req.params.id]
@@ -542,6 +568,7 @@ exports.deleteCallerChannel = async (req, res) => {
 // 特定の発信者番号のチャンネル状態サマリーを取得
 exports.getCallerChannelsStatus = async (req, res) => {
   try {
+    res.setHeader('Content-Type', 'application/json; charset=utf-8');
     const [channels] = await db.query(
       `SELECT 
         status, 
@@ -584,6 +611,7 @@ exports.getCallerChannelsStatus = async (req, res) => {
 // 特定のチャンネルを取得
 exports.getCallerChannelById = async (req, res) => {
   try {
+    res.setHeader('Content-Type', 'application/json; charset=utf-8');
     const [channels] = await db.query(
       'SELECT * FROM caller_channels WHERE id = ?',
       [req.params.id]
@@ -603,6 +631,7 @@ exports.getCallerChannelById = async (req, res) => {
 // 発信者番号の状態を監視（アクティブコール数など）
 exports.monitorCallerId = async (req, res) => {
   try {
+    res.setHeader('Content-Type', 'application/json; charset=utf-8');
     // 発信者番号の基本情報を取得
     const [callerIds] = await db.query(
       'SELECT * FROM caller_ids WHERE id = ?',
@@ -657,6 +686,7 @@ exports.monitorCallerId = async (req, res) => {
 // 特定の発信者番号のチャンネルをリセット（すべてavailable状態に）
 exports.resetCallerChannels = async (req, res) => {
   try {
+    res.setHeader('Content-Type', 'application/json; charset=utf-8');
     const [result] = await db.query(
       'UPDATE caller_channels SET status = "available", last_used = NULL WHERE caller_id_id = ?',
       [req.params.id]
@@ -685,6 +715,7 @@ exports.resetCallerChannels = async (req, res) => {
 // データベースとSIPサービスのチャンネル状態を同期
 exports.syncCallerChannels = async (req, res) => {
   try {
+    res.setHeader('Content-Type', 'application/json; charset=utf-8');
     const sipService = require('../services/sipService');
     
     if (!sipService || typeof sipService.syncChannelStatusWithDatabase !== 'function') {

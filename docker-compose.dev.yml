@@ -16,29 +16,21 @@ services:
       MYSQL_PASSWORD: password
       MYSQL_DATABASE: autodialer
       # モックモードを無効化してTwilioを使用
-      MOCK_ASTERISK: "false"
+      MOCK_ASTERISK: "true"
       USE_TWILIO: "false"
       # Twilio設定
       TWILIO_ACCOUNT_SID: ${TWILIO_ACCOUNT_SID}
       TWILIO_AUTH_TOKEN: ${TWILIO_AUTH_TOKEN}
       TWILIO_PHONE_NUMBER: ${TWILIO_PHONE_NUMBER}
       PUBLIC_URL: ${PUBLIC_URL}
-      # 追加: ログレベルの設定
-      LOG_LEVEL: "debug"
+      LANG: "ja_JP.UTF-8"
+      LC_ALL: "ja_JP.UTF-8"
     depends_on:
-      mysql:
-        condition: service_healthy  # MySQLが完全に起動するまで待機
-    restart: unless-stopped  # 不意の終了時に自動再起動
+      - mysql
     networks:
       - autodialer-network
-    #healthcheck:
-      #test: ["CMD", "curl", "-f", "http://localhost:5000/health"]
-      #interval: 10s
-      #timeout: 5s
-      #retries: 3
-      #start_period: 15s
 
-  # フロントエンドサーバー
+  # フロントエンドサーバー（変更なし）
   frontend:
     build:
       context: ./frontend
@@ -48,26 +40,24 @@ services:
     volumes:
       - ./frontend:/app
       - /app/node_modules
-      - ./frontend/.env.development:/app/.env.development
     environment:
       NODE_ENV: development
-      # 修正: バックエンドURLをホスト側の5001ポートに変更
-      #REACT_APP_API_URL: http://localhost:5001/api
+      REACT_APP_API_URL: "http://152.42.200.112:5001/api"
       CHOKIDAR_USEPOLLING: "true"
       WDS_SOCKET_HOST: localhost
       WDS_SOCKET_PORT: 3003
       DANGEROUSLY_DISABLE_HOST_CHECK: true  # 開発環境のみ
-      PORT: 3000
+      PORT : 3000
       HOST: "0.0.0.0"
     depends_on:
       - backend
     networks:
       - autodialer-network
 
-  # データベース
+  # データベース（変更なし）
   mysql:
     image: mysql:8.0
-    platform: linux/arm64
+    platform: linux/amd64
     ports:
       - "13306:3306"
     environment:
@@ -75,23 +65,16 @@ services:
       MYSQL_DATABASE: autodialer
       MYSQL_CHARSET: utf8mb4
       MYSQL_COLLATION: utf8mb4_unicode_ci
-    command: 
+    command:
       - --default-authentication-plugin=mysql_native_password
       - --character-set-server=utf8mb4
       - --collation-server=utf8mb4_unicode_ci
       - --init-connect='SET NAMES utf8mb4'
-      - --skip-name-resolve  # 名前解決をスキップしてパフォーマンス向上
     volumes:
       - mysql_data:/var/lib/mysql
-      - ./backend/database/init-only:/docker-entrypoint-initdb.d
+      - ./backend/database/schema.sql:/docker-entrypoint-initdb.d/1-schema.sql
     networks:
       - autodialer-network
-    healthcheck:
-      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-ppassword"]
-      interval: 5s
-      timeout: 5s
-      retries: 10
-      start_period: 15s
 
 networks:
   autodialer-network:

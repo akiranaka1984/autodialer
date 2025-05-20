@@ -31,10 +31,12 @@ CREATE TABLE IF NOT EXISTS contacts (
 );
 
 -- テスト用のデータを挿入
+/*
 INSERT INTO caller_ids (number, description, provider, active)
 VALUES 
 ('0312345678', 'テスト発信者番号1', 'テストプロバイダ', true),
 ('0312345679', 'テスト発信者番号2', 'テストプロバイダ', true);
+*/
 
 -- 通話ログテーブル
 CREATE TABLE IF NOT EXISTS call_logs (

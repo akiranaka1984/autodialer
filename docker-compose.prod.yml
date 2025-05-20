@@ -1,13 +1,11 @@
-version: '3.8'
-
 services:
   # バックエンドサーバー
   backend:
     build:
       context: ./backend
-      dockerfile: Dockerfile.dev  # 本番用のDockerfileがあれば変更
+      dockerfile: Dockerfile.dev
     ports:
-      - "5000:5000"  # 標準ポートに戻す
+      - "5001:5000"  # 外部ポートを5001に変更
     volumes:
       - ./backend:/app
       - /app/node_modules
@@ -15,46 +13,53 @@ services:
       NODE_ENV: production
       MYSQL_HOST: mysql
       MYSQL_USER: root
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD}
       MYSQL_DATABASE: autodialer
-    env_file:
-      - ./backend/.env.production
+      # モックモードを無効化してTwilioを使用
+      MOCK_ASTERISK: "true"
+      USE_TWILIO: "false"
+      # Twilio設定
+      TWILIO_ACCOUNT_SID: ${TWILIO_ACCOUNT_SID}
+      TWILIO_AUTH_TOKEN: ${TWILIO_AUTH_TOKEN}
+      TWILIO_PHONE_NUMBER: ${TWILIO_PHONE_NUMBER}
+      PUBLIC_URL: ${PUBLIC_URL}
     depends_on:
       - mysql
     networks:
       - autodialer-network
-    restart: unless-stopped  # 自動再起動設定
 
-  # フロントエンドサーバー
+  # フロントエンドサーバー（変更なし）
   frontend:
     build:
       context: ./frontend
-      dockerfile: Dockerfile.dev  # 本番用のDockerfileがあれば変更
+      dockerfile: Dockerfile.dev
     ports:
-      - "3000:3000"  # 標準ポートに戻す
+      - "3003:3000"  # 外部ポートを3003に変更
     volumes:
       - ./frontend:/app
       - /app/node_modules
     environment:
       NODE_ENV: production
-      REACT_APP_API_URL: /api  # Nginxプロキシ経由でアクセス
-      PORT: 3000
+      REACT_APP_API_URL: /api
+      CHOKIDAR_USEPOLLING: "true"
+      WDS_SOCKET_HOST: localhost
+      WDS_SOCKET_PORT: 3003
+      DANGEROUSLY_DISABLE_HOST_CHECK: true  # 開発環境のみ
+      PORT : 3000
       HOST: "0.0.0.0"
-    env_file:
-      - ./frontend/.env.production
     depends_on:
       - backend
     networks:
       - autodialer-network
-    restart: unless-stopped
 
-  # データベース
+  # データベース（変更なし）
   mysql:
     image: mysql:8.0
-    platform: linux/amd64  # DigitalOceanはx86_64なのでarm64を削除
+    platform: linux/amd64
     ports:
-      - "127.0.0.1:3306:3306"  # ローカルホストのみにバインド
+      - "13306:3306"
     environment:
-      MYSQL_ROOT_PASSWORD: ${MYSQL_PASSWORD}  # 環境変数から読み込み
+      MYSQL_ROOT_PASSWORD: password
       MYSQL_DATABASE: autodialer
       MYSQL_CHARSET: utf8mb4
       MYSQL_COLLATION: utf8mb4_unicode_ci
@@ -68,25 +73,6 @@ services:
       - ./backend/database/schema.sql:/docker-entrypoint-initdb.d/1-schema.sql
     networks:
       - autodialer-network
-    restart: unless-stopped
-
-  # Nginxリバースプロキシ（新規追加）
-  nginx:
-    image: nginx:alpine
-    ports:
-      - "80:80"
-      - "443:443"
-    volumes:
-      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
-      - ./nginx/conf.d:/etc/nginx/conf.d:ro
-      - nginx_certs:/etc/nginx/certs:ro
-      - nginx_html:/usr/share/nginx/html
-    depends_on:
-      - frontend
-      - backend
-    networks:
-      - autodialer-network
-    restart: unless-stopped
 
 networks:
   autodialer-network:
@@ -94,5 +80,3 @@ networks:
 
 volumes:
   mysql_data:
-  nginx_certs:
-  nginx_html:

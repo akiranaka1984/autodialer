@@ -1,4 +1,36 @@
+# 依存関係ディレクトリ
+node_modules/
+uploads/
+
+# 環境設定ファイル
 .env
-backend/.env
-.env
-backend/.env
+.env.*
+*.env
+config/*
+
+# ログファイル
+logs/
+*.log
+
+# ビルドファイル
+build/
+dist/
+public/
+
+# 一時ファイル
+tmp/
+temp/
+.DS_Store
+Thumbs.db
+
+# 音声ファイルなどメディア
+*.wav
+*.mp3
+*.ogg
+
+# バックアップファイル
+*.bak
+*.backup
+
+# Docker関連
+docker-volumes/

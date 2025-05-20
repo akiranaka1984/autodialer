@@ -1,24 +1,40 @@
 #!/bin/bash
+# Auto Callerシステムデプロイスクリプト
 
-echo "オートコールシステムをデプロイします..."
+set -e
 
-# 本番環境変数ファイルの作成
-cp backend/.env.example backend/.env.production
-cp frontend/.env.example frontend/.env.production
+PROJECT_DIR="/root/autodialer"
+DEPLOY_DATE=$(date +"%Y-%m-%d %H:%M:%S")
 
-# 環境変数の更新（実際のデプロイでは自動化ツールで設定）
-sed -i 's/your_db_password/your_secure_password/g' backend/.env.production
-sed -i 's/your_jwt_secret/your_secure_jwt_secret/g' backend/.env.production
-sed -i 's/http:\/\/localhost:5000\/api/\/api/g' frontend/.env.production
+echo "===== Auto Callerシステムのデプロイ開始: $DEPLOY_DATE ====="
+cd $PROJECT_DIR
 
-# ビルドと起動
-cd docker
-docker-compose -f docker-compose.prod.yml build
-docker-compose -f docker-compose.prod.yml up -d
+# 作業前にDocker Composeのバージョンを確認
+docker-compose --version
 
-echo "データベースを初期化しています..."
-sleep 10  # データベースの起動を待つ
-docker-compose -f docker-compose.prod.yml exec mysql mysql -uroot -pyour_secure_password autodialer < ../backend/database/schema.sql
+# コンテナを一旦停止（データベースは維持）
+echo "フロントエンドとバックエンドのコンテナを停止しています..."
+docker-compose -f docker-compose.dev.yml stop frontend backend
 
-echo "デプロイが完了しました！"
-echo "システムは http://your-server-ip で利用可能です"
+# イメージをリビルド
+echo "Dockerイメージを再構築しています..."
+docker-compose -f docker-compose.dev.yml build frontend backend
+
+# コンテナを再起動
+echo "コンテナを再起動しています..."
+docker-compose -f docker-compose.dev.yml up -d frontend backend
+
+# ステータス確認
+echo "コンテナのステータス:"
+docker-compose -f docker-compose.dev.yml ps
+
+# ログの確認
+echo "バックエンドのログを確認中..."
+docker-compose -f docker-compose.dev.yml logs --tail=20 backend
+
+echo "フロントエンドのログを確認中..."
+docker-compose -f docker-compose.dev.yml logs --tail=20 frontend
+
+echo "===== デプロイ完了: $(date +"%Y-%m-%d %H:%M:%S") ====="
+echo "フロントエンド: http://152.42.200.112:3003"
+echo "バックエンドAPI: http://152.42.200.112:5001"
