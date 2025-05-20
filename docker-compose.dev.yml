@@ -43,13 +43,13 @@ services:
       MYSQL_USER: root
       MYSQL_PASSWORD: password
       MYSQL_DATABASE: autodialer
-      MOCK_ASTERISK: "true"
+      MOCK_ASTERISK: "false"
       USE_TWILIO: "false"
       PUBLIC_URL: ${PUBLIC_URL}
       LANG: "ja_JP.UTF-8"
       LC_ALL: "ja_JP.UTF-8"
       USE_SIMPLE_AUTH: "true"  # 認証を簡略化
-      USE_MOCK_DATA: "true"    # モックデータを使用
+      USE_MOCK_DATA: "false"    # モックデータを使用
       # ヘルスチェックのための待機時間を設定
       WAIT_HOSTS: mysql:3306
       WAIT_TIMEOUT: 60

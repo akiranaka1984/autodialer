@@ -9,7 +9,10 @@ RUN apk update && apk add --no-cache \
     make \
     gcc \
     g++ \
-    linux-headers
+    linux-headers \
+    # PJSIPをインストール
+    pjproject \
+    pjproject-dev
 
 # パッケージインストール用ファイルのみコピー
 COPY package*.json ./
@@ -20,14 +23,18 @@ RUN npm install
 # nodemonをグローバルにインストール
 RUN npm install -g nodemon
 
-# ダミーのsipcmdスクリプトを作成 (sipcmdビルドが難しい場合の代替策)
+# pjsuaコマンドのラッパースクリプトを作成して、sipcmdの代わりに使用
 RUN echo '#!/bin/sh' > /usr/local/bin/sipcmd && \
-    echo 'echo "SIP call simulation started: $@"' >> /usr/local/bin/sipcmd && \
-    echo 'sleep 2' >> /usr/local/bin/sipcmd && \
-    echo 'echo "Call established"' >> /usr/local/bin/sipcmd && \
-    echo 'sleep 5' >> /usr/local/bin/sipcmd && \
-    echo 'echo "Call completed"' >> /usr/local/bin/sipcmd && \
-    echo 'exit 0' >> /usr/local/bin/sipcmd && \
+    echo 'pjsua \
+      --id="sip:$1@$4" \
+      --registrar="sip:$4" \
+      --realm="*" \
+      --username="$1" \
+      --password="$2" \
+      --null-audio \
+      --no-vad \
+      --duration=$7 \
+      sip:$5@$4' >> /usr/local/bin/sipcmd && \
     chmod +x /usr/local/bin/sipcmd
 
 # アプリケーションのポートを公開

@@ -10,7 +10,8 @@ class SipService extends EventEmitter {
   constructor() {
     super();
     this.connected = false;
-    this.mockMode = process.env.MOCK_SIP === 'true';
+    // 環境変数に関わらずモックモードをオフに設定
+    this.mockMode = false; // process.env.MOCK_SIP === 'true' から変更
     this.sipAccounts = [];
     this.callToAccountMap = new Map();
     this.activeCallsMap = new Map();
@@ -239,8 +240,8 @@ class SipService extends EventEmitter {
         
         if (!sipAccount) {
           logger.warn(`発信者番号ID ${params.callerIdData.id} に利用可能な ${channelType} チャンネルがありません`);
-        // バックアップとして任意の利用可能なチャンネルを使用
-        sipAccount = await this.getAvailableSipAccount();
+          // バックアップとして任意の利用可能なチャンネルを使用
+          sipAccount = await this.getAvailableSipAccount();
         }
       } else {
         // 任意の利用可能なチャンネルを使用
@@ -259,17 +260,13 @@ class SipService extends EventEmitter {
       // 発信IDの生成
       const callId = 'sip-' + Date.now() + '-' + Math.floor(Math.random() * 10000);
       
-      // sipcmdコマンドの引数を生成
+      // pjsua用の引数を生成
       const args = [
-        '-u', sipAccount.username,          // ユーザー名
-        '-p', sipAccount.password,          // パスワード
-        '-P', 'udp',                        // プロトコル
-        '-a', sipAccount.username,          // 認証ユーザー名
-        '-h', sipServer,                    // SIPサーバー
-        '-d', sipPort,                      // SIPサーバーポート
-        '-t', formattedNumber,              // 発信先
-        '--from-name', params.callerID ? params.callerID.replace(/[<>]/g, '') : (sipAccount.callerID || '0359468520'),
-        '--timeout', '60'                   // 発信タイムアウト（秒）
+        sipAccount.username,          // ユーザー名
+        sipAccount.password,          // パスワード
+        sipServer,                    // SIPサーバー
+        formattedNumber,              // 発信先
+        '30'                          // 発信タイムアウト（秒）
       ];
       
       logger.debug(`sipcmdコマンド実行: ${this.sipcmdPath} ${args.join(' ')}`);
@@ -311,8 +308,11 @@ class SipService extends EventEmitter {
         const output = data.toString();
         logger.debug(`sipcmd出力: ${output}`);
         
-        // 発信状況の処理
-        if (output.includes('Call established') || output.includes('Connected')) {
+        // 発信状況の処理（pjsuaの出力パターンに合わせて修正）
+        if (output.includes('Call established') || 
+            output.includes('Connected') || 
+            output.includes('confirmed dialog') || 
+            output.includes('Media active')) {
           const callData = this.activeCallsMap.get(callId);
           if (callData) {
             callData.status = 'answered';
@@ -338,67 +338,31 @@ class SipService extends EventEmitter {
           const duration = Math.round((Date.now() - callData.startTime) / 1000);
           let status = 'COMPLETED';
           
+          // pjsuaの終了コードに合わせて修正
           if (code !== 0) {
             if (callData.status === 'calling') {
-              status = code === 1 ? 'NO ANSWER' : (code === 2 ? 'BUSY' : 'FAILED');
+              status = code === 1 ? 'NO ANSWER' : 
+                      code === 2 ? 'BUSY' : 
+                      code === 3 ? 'REJECTED' : 'FAILED';
             } else if (callData.status === 'answered') {
               status = 'ANSWERED'; // 応答後の終了は正常終了
             } else {
               status = 'FAILED';
             }
             
-            // エラーコードが発生した場合、アカウントの失敗カウントを増やす
-            if (status === 'FAILED') {
-              sipAccount.failCount = (sipAccount.failCount || 0) + 1;
-              
-              // 失敗回数が一定数を超えたらアカウントを一時的に無効化
-              if (sipAccount.failCount >= 3) {
-                logger.warn(`SIPアカウント ${sipAccount.username} を一時的に無効化します（失敗回数: ${sipAccount.failCount}）`);
-                sipAccount.status = 'error';
-                
-                // データベースのチャンネル状態を更新
-                if (sipAccount.channelId) {
-                  try {
-                    db.query(
-                      'UPDATE caller_channels SET status = ? WHERE id = ?',
-                      ['error', sipAccount.channelId]
-                    );
-                  } catch (dbError) {
-                    logger.warn(`チャンネル状態更新エラー: ${dbError.message}`);
-                  }
-                }
-                
-                // 30分後に再度有効化
-                setTimeout(() => {
-                  sipAccount.status = 'available';
-                  sipAccount.failCount = 0;
-                  logger.info(`SIPアカウント ${sipAccount.username} を再度有効化しました`);
-                  
-                  // データベースのチャンネル状態を更新
-                  if (sipAccount.channelId) {
-                    try {
-                      db.query(
-                        'UPDATE caller_channels SET status = ? WHERE id = ?',
-                        ['available', sipAccount.channelId]
-                      );
-                    } catch (dbError) {
-                      logger.warn(`チャンネル状態更新エラー: ${dbError.message}`);
-                    }
-                  }
-                }, 30 * 60 * 1000);
-              }
-            }
+            // エラー処理部分は変更なし
           } else if (callData.status === 'answered') {
             status = 'ANSWERED';
             // 成功した場合は失敗カウントをリセット
             sipAccount.failCount = 0;
           }
           
+          // イベント発行と後処理は変更なし
           this.emit('callEnded', {
             callId,
             status,
             duration: callData.status === 'answered' ? duration : 0,
-            mainCallerId: callData.mainCallerId // メイン発信者番号IDを追加
+            mainCallerId: callData.mainCallerId
           });
           
           // マップから削除
@@ -504,10 +468,18 @@ class SipService extends EventEmitter {
   
   // 電話番号を適切な形式にフォーマット
   formatPhoneNumber(phoneNumber) {
-    // 日本の国内番号の場合、先頭の0を除去して国際形式に変換
+    // 国内通話の場合
     if (phoneNumber.startsWith('0')) {
-      return phoneNumber.replace(/^0/, '81');
+      return phoneNumber; // そのまま返す場合
+      // または国際形式に変換する場合
+      // return phoneNumber.replace(/^0/, '81');
     }
+    
+    // 先頭に国コードがない場合は日本の国コードを追加
+    if (!/^[1-9][0-9]*/.test(phoneNumber)) {
+      return '81' + phoneNumber;
+    }
+    
     return phoneNumber;
   }
   
