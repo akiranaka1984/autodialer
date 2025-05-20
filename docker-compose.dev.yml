@@ -1,59 +1,5 @@
 services:
-  # バックエンドサーバー
-  backend:
-    build:
-      context: ./backend
-      dockerfile: Dockerfile.dev
-    ports:
-      - "5001:5000"  # 外部ポートを5001に変更
-    volumes:
-      - ./backend:/app
-      - /app/node_modules
-    environment:
-      NODE_ENV: development
-      MYSQL_HOST: mysql
-      MYSQL_USER: root
-      MYSQL_PASSWORD: password
-      MYSQL_DATABASE: autodialer
-      # モックモードを無効化してTwilioを使用
-      MOCK_ASTERISK: "true"
-      USE_TWILIO: "false"
-      PUBLIC_URL: ${PUBLIC_URL}
-      LANG: "ja_JP.UTF-8"
-      LC_ALL: "ja_JP.UTF-8"
-      USE_SIMPLE_AUTH: "false"
-      USE_MOCK_DATA: "false"
-    depends_on:
-      - mysql
-    networks:
-      - autodialer-network
-
-  # フロントエンドサーバー（変更なし）
-  frontend:
-    build:
-      context: ./frontend
-      dockerfile: Dockerfile.dev
-    ports:
-      - "3003:3000"  # 外部ポートを3003に変更
-    volumes:
-      - ./frontend:/app
-      - /app/node_modules
-    environment:
-      NODE_ENV: development
-      REACT_APP_API_URL: "http://152.42.200.112:5001/api"
-      REACT_APP_USE_MOCK_DATA: "false"
-      CHOKIDAR_USEPOLLING: "true"
-      WDS_SOCKET_HOST: localhost
-      WDS_SOCKET_PORT: 3003
-      DANGEROUSLY_DISABLE_HOST_CHECK: true  # 開発環境のみ
-      PORT : 3000
-      HOST: "0.0.0.0"
-    depends_on:
-      - backend
-    networks:
-      - autodialer-network
-
-  # データベース（変更なし）
+  # データベース（healthcheckを追加）
   mysql:
     image: mysql:8.0
     platform: linux/amd64
@@ -74,6 +20,75 @@ services:
       - ./backend/database/schema.sql:/docker-entrypoint-initdb.d/1-schema.sql
     networks:
       - autodialer-network
+    # 以下のhealthcheckセクションを追加
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-ppassword"]
+      timeout: 5s
+      retries: 10
+      interval: 5s
+
+  # バックエンドサーバー（depends_onを修正）
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile.dev
+    ports:
+      - "5001:5000"
+    volumes:
+      - ./backend:/app
+      - /app/node_modules
+    environment:
+      NODE_ENV: development
+      MYSQL_HOST: mysql
+      MYSQL_USER: root
+      MYSQL_PASSWORD: password
+      MYSQL_DATABASE: autodialer
+      MOCK_ASTERISK: "true"
+      USE_TWILIO: "false"
+      PUBLIC_URL: ${PUBLIC_URL}
+      LANG: "ja_JP.UTF-8"
+      LC_ALL: "ja_JP.UTF-8"
+      USE_SIMPLE_AUTH: "true"  # 認証を簡略化
+      USE_MOCK_DATA: "true"    # モックデータを使用
+      # ヘルスチェックのための待機時間を設定
+      WAIT_HOSTS: mysql:3306
+      WAIT_TIMEOUT: 60
+    # 修正：mysqlがhealthcheckに合格するまで待機
+    depends_on:
+      mysql:
+        condition: service_healthy
+    networks:
+      - autodialer-network
+    # 再起動ポリシーを追加
+    restart: unless-stopped
+
+  # フロントエンドサーバー（APIエンドポイントを修正）
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile.dev
+    ports:
+      - "3003:3000"
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    environment:
+      NODE_ENV: development
+      # APIのURLを修正（localhostを使用）
+      REACT_APP_API_URL: "http://localhost:5001/api"
+      REACT_APP_USE_MOCK_DATA: "true"  # モックデータを使用
+      CHOKIDAR_USEPOLLING: "true"
+      WDS_SOCKET_HOST: localhost
+      WDS_SOCKET_PORT: 3003
+      DANGEROUSLY_DISABLE_HOST_CHECK: true
+      PORT: 3000
+      HOST: "0.0.0.0"
+    depends_on:
+      - backend
+    networks:
+      - autodialer-network
+    # 再起動ポリシーを追加
+    restart: unless-stopped
 
 networks:
   autodialer-network:

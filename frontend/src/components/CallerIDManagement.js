@@ -44,31 +44,48 @@ const CallerIDManagement = () => {
 
   const fetchCallerIds = async () => {
     setLoading(true);
+    setError(null); // エラー状態をリセット
+    
     try {
       const token = localStorage.getItem('token');
-      
-      // 開発環境でモックデータを使用するオプション
-      if (false && process.env.NODE_ENV === 'development' && window.location.hostname === 'localhost') {
-        // モックデータ処理を完全に無効化
-        console.log('モックデータは無効化されています');
-        return; // これを削除してフォールスルーさせる
-      }
       
       console.log('API呼び出し:', `${apiBaseUrl}/caller-ids`);
       
       const response = await fetch(`${apiBaseUrl}/caller-ids`, {
         headers: {
-          'Authorization': `Bearer ${token}`
+          'Authorization': `Bearer ${token}`,
+          'Cache-Control': 'no-cache' // キャッシュを無効化
         }
       });
       
       if (!response.ok) {
-        throw new Error('データの取得に失敗しました');
+        throw new Error(`API Error: ${response.status} ${response.statusText}`);
       }
       
       const data = await response.json();
-      setCallerIds(data);
-      setError(null);
+      console.log('取得データ:', data);
+      
+      // データが配列かどうか確認
+      if (Array.isArray(data)) {
+        // 必須プロパティを持つオブジェクトに変換（必要に応じて）
+        const normalizedData = data.map(item => ({
+          ...item,
+          // IDが数値として返される場合に文字列に変換（必要に応じて）
+          id: item.id.toString ? item.id.toString() : item.id,
+          // nullやundefinedの場合のデフォルト値
+          number: item.number || '',
+          description: item.description || '',
+          active: item.active !== false, // falseの場合のみfalse、それ以外はtrue
+          // チャンネル関連の情報がない場合のデフォルト値
+          channelCount: item.channelCount || 0,
+          availableChannels: item.availableChannels || 0
+        }));
+        
+        setCallerIds(normalizedData);
+      } else {
+        console.warn('APIからの応答が配列ではありません:', data);
+        setCallerIds([]);
+      }
     } catch (err) {
       console.error('API呼び出しエラー:', err);
       setError(err.message);
@@ -780,35 +797,35 @@ const CallerIDManagement = () => {
       {showChannelImport && selectedCallerId && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
           <div className="bg-white rounded-lg shadow-xl p-6 max-w-lg w-full">
-            <h3 className="text-lg font-semibold mb-4">チャンネルをインポート</h3>
-            <p className="mb-4 text-sm text-gray-600">
-              発信者番号 {callerIds.find(c => c.id === selectedCallerId)?.number} のチャンネルをCSVからインポートします。
-            </p>
+            {/* オプション1: シンプルなアップロード */}
+            <SimpleChannelUpload 
+              callerId={selectedCallerId}
+              callerNumber={callerIds.find(c => c.id === selectedCallerId)?.number}
+              onImportComplete={() => {
+                setShowChannelImport(false);
+                if (selectedCallerId) {
+                  fetchChannels(selectedCallerId);
+                  fetchCallerIds();
+                  setSuccessMessage('チャンネルのインポートが完了しました');
+                }
+              }}
+              onCancel={() => setShowChannelImport(false)}
+            />
             
-            {/* ここにチャンネルインポートコンポーネントを配置 */}
-            <div className="mb-4">
-              <div className="bg-yellow-50 border-l-4 border-yellow-400 p-4 mb-4">
-                <p className="text-sm text-yellow-700">
-                  CSVファイルには、少なくとも「ユーザー名」と「パスワード」の列が必要です。
-                </p>
-              </div>
-              
-              {/* 実際のインポートフォームはこちらに実装 */}
-              <div className="flex justify-end space-x-3 mt-6">
-                <button
-                  onClick={() => setShowChannelImport(false)}
-                  className="px-4 py-2 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-opacity-50"
-                >
-                  キャンセル
-                </button>
-                <button
-                  onClick={handleChannelImportComplete}
-                  className="px-4 py-2 bg-blue-600 border border-transparent rounded-md shadow-sm text-sm font-medium text-white hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-opacity-50"
-                >
-                  インポート
-                </button>
-              </div>
-            </div>
+            {/* オプション2: 高度なインポート (コメントアウト状態) */}
+            {/* <CallerIDChannelImport 
+              callerId={selectedCallerId}
+              callerNumber={callerIds.find(c => c.id === selectedCallerId)?.number}
+              onImportComplete={() => {
+                setShowChannelImport(false);
+                if (selectedCallerId) {
+                  fetchChannels(selectedCallerId);
+                  fetchCallerIds();
+                  setSuccessMessage('チャンネルのインポートが完了しました');
+                }
+              }}
+              onCancel={() => setShowChannelImport(false)}
+            /> */}
           </div>
         </div>
       )}

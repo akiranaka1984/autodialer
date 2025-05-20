@@ -14,36 +14,28 @@ exports.getAllCallerIds = async (req, res) => {
     // 文字セットヘッダーを明示的に設定
     res.setHeader('Content-Type', 'application/json; charset=utf-8');
     
-    // db.queryの結果構造を確認するログを追加
-    const result = await db.query('SELECT * FROM caller_ids ORDER BY created_at DESC');
-    console.log('db.query結果の型:', typeof result);
-    console.log('db.query結果の構造:', Object.prototype.toString.call(result));
+    // db.queryの結果をきちんと扱う
+    const resultArray = await db.query('SELECT * FROM caller_ids ORDER BY created_at DESC');
     
-    // 結果が配列かどうかを確認
-    if (Array.isArray(result)) {
-      console.log('結果は配列です。長さ:', result.length);
-      
-      // データをログ出力
-      if (result.length > 0) {
-        console.log('最初のレコードの内容:', JSON.stringify(result[0], null, 2));
+    // mysql2/promiseの結果構造を処理
+    let callerIds = [];
+    if (Array.isArray(resultArray)) {
+      if (resultArray.length === 2 && Array.isArray(resultArray[0])) {
+        // [rows, fields] 形式
+        callerIds = resultArray[0];
+      } else {
+        // 直接配列の場合
+        callerIds = resultArray;
       }
-      
-      res.json(result);
-    } else if (result && Array.isArray(result[0])) {
-      // MySQL2の場合、結果は[rows, fields]の形式で返される
-      console.log('結果は[rows, fields]形式です。行数:', result[0].length);
-      
-      // データをログ出力
-      if (result[0].length > 0) {
-        console.log('最初のレコードの内容:', JSON.stringify(result[0][0], null, 2));
-      }
-      
-      res.json(result[0]);
-    } else {
-      console.log('不明な結果形式:', result);
-      // 空の配列を返して安全に処理
-      res.json([]);
     }
+    
+    // 結果をログ出力
+    console.log('取得された発信者番号数:', callerIds.length);
+    if (callerIds.length > 0) {
+      console.log('最初のレコード:', JSON.stringify(callerIds[0]));
+    }
+    
+    res.json(callerIds);
   } catch (error) {
     console.error('発信者番号取得エラー:', error);
     res.status(500).json({ message: '発信者番号の取得に失敗しました: ' + error.message });
@@ -370,24 +362,44 @@ exports.importCallerChannels = async (req, res) => {
     res.setHeader('Content-Type', 'application/json; charset=utf-8');
     const callerId = req.params.id;
     
-    // Multerミドルウェアを設定
-    const upload = multer({ dest: 'uploads/' });
-    const uploadMiddleware = promisify(upload.single('file'));
-    await uploadMiddleware(req, res);
+    logger.info(`発信者番号ID=${callerId}のチャンネルインポート処理を開始`);
     
+    // Multerミドルウェアを設定
+    const upload = multer({ 
+      dest: 'uploads/',
+      limits: { fileSize: 10 * 1024 * 1024 } // 10MB制限
+    });
+    
+    // ミドルウェアを手動で適用
+    const uploadMiddleware = promisify(upload.single('file'));
+    
+    try {
+      await uploadMiddleware(req, res);
+    } catch (uploadError) {
+      logger.error('ファイルアップロードエラー:', uploadError);
+      return res.status(400).json({ message: `ファイルアップロードエラー: ${uploadError.message}` });
+    }
+    
+    // ファイルのチェック
     if (!req.file) {
+      logger.warn('ファイルが見つかりません');
       return res.status(400).json({ message: 'ファイルが見つかりません' });
     }
+    
+    logger.info(`ファイルアップロード成功: ${req.file.originalname} (${req.file.size} bytes)`);
     
     // マッピング情報の取得
     let mappings;
     try {
-      mappings = JSON.parse(req.body.mappings);
+      mappings = req.body.mappings ? JSON.parse(req.body.mappings) : { username: 0, password: 1, channel_type: 2 };
+      logger.info('マッピング情報:', mappings);
     } catch (error) {
+      logger.error('マッピング解析エラー:', error);
       return res.status(400).json({ message: 'マッピング情報が不正です' });
     }
     
-    if (!mappings.username || !mappings.password) {
+    if (mappings.username === undefined || mappings.password === undefined) {
+      logger.warn('マッピング情報に必須フィールドがありません');
       return res.status(400).json({ message: 'ユーザー名とパスワードのマッピングが必要です' });
     }
     
@@ -397,22 +409,105 @@ exports.importCallerChannels = async (req, res) => {
     const errors = [];
     let totalCount = 0;
     let importedCount = 0;
-    let duplicateCount = 0;
     
-    await new Promise((resolve, reject) => {
-      fs.createReadStream(filePath)
-        .pipe(csv())
-        .on('data', (row) => {
+    try {
+      // 直接ファイルを読み込む方法と、csv-parserを使用する方法を組み合わせる
+      
+      // まずファイル全体を読み込んでヘッダー行の有無を確認
+      const fileContent = await fs.promises.readFile(filePath, 'utf8');
+      const lines = fileContent.split(/\r?\n/).filter(line => line.trim());
+      
+      if (lines.length === 0) {
+        logger.warn('CSVファイルにデータがありません');
+        return res.status(400).json({ message: 'CSVファイルにデータがありません' });
+      }
+      
+      // ヘッダー行の判定（数字とカンマだけ、または既知のチャンネルタイプの値だけで構成されていない行）
+      const hasHeader = lines.length > 0 && 
+                        lines[0].includes(',') && 
+                        !/^\d+,/.test(lines[0]) &&
+                        lines[0].split(',').some(cell => 
+                          isNaN(cell.trim()) && 
+                          !['outbound', 'transfer', 'both'].includes(cell.trim().toLowerCase())
+                        );
+      
+      logger.info(`CSVファイル解析: ${lines.length}行, ヘッダー${hasHeader ? 'あり' : 'なし'}`);
+      
+      // csv-parserを使用する場合の処理（既存コード）
+      if (hasHeader) {
+        await new Promise((resolve, reject) => {
+          fs.createReadStream(filePath)
+            .pipe(csv())
+            .on('data', (row) => {
+              totalCount++;
+              
+              try {
+                // マッピングに従ってデータを抽出
+                const username = row[mappings.username]?.trim();
+                const password = row[mappings.password]?.trim();
+                
+                // チャンネルタイプの処理
+                let channelType = 'both'; // デフォルト値
+                if (mappings.channel_type !== undefined && row[mappings.channel_type]) {
+                  const typeValue = row[mappings.channel_type].trim().toLowerCase();
+                  if (['outbound', 'transfer', 'both'].includes(typeValue)) {
+                    channelType = typeValue;
+                  }
+                }
+                
+                if (!username || !password) {
+                  errors.push(`行 ${totalCount + 1}: ユーザー名またはパスワードが空です`);
+                  return;
+                }
+                
+                // チャンネルを追加
+                channels.push({
+                  caller_id_id: callerId,
+                  username,
+                  password,
+                  channel_type: channelType,
+                  status: 'available'
+                });
+                
+                importedCount++;
+              } catch (error) {
+                errors.push(`行 ${totalCount + 1}: データ処理エラー - ${error.message}`);
+              }
+            })
+            .on('end', resolve)
+            .on('error', reject);
+        });
+      } else {
+        // ヘッダーがない場合、直接行を処理
+        for (let i = 0; i < lines.length; i++) {
+          const line = lines[i].trim();
+          if (!line) continue;
+          
           totalCount++;
+          const values = line.split(',').map(val => val.trim());
+          
+          if (values.length < 2) {
+            errors.push(`行 ${i + 1}: カラムが不足しています`);
+            continue;
+          }
           
           try {
             // マッピングに従ってデータを抽出
-            const username = row[mappings.username].trim();
-            const password = row[mappings.password].trim();
+            const username = values[mappings.username];
+            const password = values[mappings.password];
+            
+            // チャンネルタイプの処理
+            let channelType = 'both'; // デフォルト値
+            if (mappings.channel_type !== undefined && values.length > mappings.channel_type) {
+              const typeValue = values[mappings.channel_type].toLowerCase();
+              if (['outbound', 'transfer', 'both'].includes(typeValue)) {
+                channelType = typeValue;
+              }
+            }
             
             if (!username || !password) {
-              errors.push(`行 ${totalCount + 1}: ユーザー名またはパスワードが空です`);
-              return;
+              errors.push(`行 ${i + 1}: ユーザー名またはパスワードが空です`);
+              continue;
             }
             
             // チャンネルを追加
@@ -420,46 +515,77 @@ exports.importCallerChannels = async (req, res) => {
               caller_id_id: callerId,
               username,
               password,
+              channel_type: channelType,
               status: 'available'
             });
             
             importedCount++;
           } catch (error) {
-            errors.push(`行 ${totalCount + 1}: データ処理エラー - ${error.message}`);
+            errors.push(`行 ${i + 1}: データ処理エラー - ${error.message}`);
           }
-        })
-        .on('end', resolve)
-        .on('error', reject);
-    });
+        }
+      }
+    } catch (readError) {
+      logger.error('CSVファイル読み込みエラー:', readError);
+      return res.status(500).json({ message: `CSVファイル読み込みエラー: ${readError.message}` });
+    }
+    
+    if (channels.length === 0) {
+      logger.warn('インポート可能なチャンネルがありません');
+      return res.status(400).json({ 
+        message: 'インポートできるチャンネルがありません',
+        total_count: totalCount,
+        imported_count: 0,
+        errors: errors.length > 0 ? errors.slice(0, 10) : ['有効なデータが見つかりませんでした']
+      });
+    }
+    
+    logger.info(`${channels.length}件のチャンネルをインポートします`);
     
     // 一括挿入処理
     const connection = await db.beginTransaction();
     try {
       for (const channel of channels) {
         await connection.query(
-          'INSERT INTO caller_channels (caller_id_id, username, password, status) VALUES (?, ?, ?, ?)',
-          [channel.caller_id_id, channel.username, channel.password, channel.status]
+          'INSERT INTO caller_channels (caller_id_id, username, password, status, channel_type) VALUES (?, ?, ?, ?, ?)',
+          [channel.caller_id_id, channel.username, channel.password, channel.status, channel.channel_type]
         );
       }
       
       await db.commit(connection);
-    } catch (error) {
+      logger.info(`データベースへの挿入が完了しました: ${importedCount}件`);
+    } catch (dbError) {
       await db.rollback(connection);
-      throw error;
+      logger.error('データベース挿入エラー:', dbError);
+      return res.status(500).json({ message: `データベースエラー: ${dbError.message}` });
     }
     
     // 一時ファイルを削除
-    fs.unlink(filePath, () => {});
+    try {
+      await fs.promises.unlink(filePath);
+      logger.info('一時ファイルを削除しました');
+    } catch (unlinkErr) {
+      logger.warn('一時ファイル削除エラー:', unlinkErr);
+    }
     
     res.json({
       message: `${importedCount}件のチャンネルをインポートしました`,
       total_count: totalCount,
       imported_count: importedCount,
-      errors: errors.slice(0, 10)
+      errors: errors.length > 0 ? errors.slice(0, 10) : []
     });
   } catch (error) {
-    logger.error('チャンネルインポートエラー:', error);
-    if (req.file) fs.unlink(req.file.path, () => {});
+    logger.error('チャンネルインポート全体エラー:', error);
+    
+    // 一時ファイルがある場合は削除
+    if (req.file) {
+      try {
+        await fs.promises.unlink(req.file.path);
+      } catch (unlinkErr) {
+        logger.warn('エラー処理時の一時ファイル削除エラー:', unlinkErr);
+      }
+    }
+    
     res.status(500).json({ message: `エラー: ${error.message}` });
   }
 };

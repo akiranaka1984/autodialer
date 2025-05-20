@@ -1,23 +1,20 @@
-// frontend/src/components/CallerIDImport.js
-import React, { useState } from 'react';
+// frontend/src/components/CallerIDChannelImport.js
+import React, { useState, useRef } from 'react';
 import { Upload, AlertCircle, Check, File } from 'lucide-react';
 
-const CallerIDImport = ({ onImportComplete }) => {
+const CallerIDChannelImport = ({ callerId, callerNumber, onImportComplete, onCancel }) => {
   const [file, setFile] = useState(null);
   const [progress, setProgress] = useState(0);
   const [status, setStatus] = useState('idle'); // idle, loading, success, error
   const [message, setMessage] = useState('');
   const [preview, setPreview] = useState([]);
   const [mappings, setMappings] = useState({
-    number: '',
-    description: '',
-    provider: '',
-    sip_host: '',
-    auth_username: '',
-    auth_password: '',
-    active: ''
+    username: '',
+    password: '',
+    channel_type: ''
   });
   const [headers, setHeaders] = useState([]);
+  const fileInputRef = useRef(null);
 
   // ファイル選択ハンドラ
   const handleFileChange = (e) => {
@@ -39,62 +36,70 @@ const CallerIDImport = ({ onImportComplete }) => {
     reader.onload = (event) => {
       const text = event.target.result;
       const rows = text.split('\n');
-      const headers = rows[0].split(',').map(header => header.trim());
+      const rowsFiltered = rows.filter(row => row.trim() !== '');
+      
+      if (rowsFiltered.length === 0) {
+        setMessage('CSVファイルにデータがありません。');
+        setStatus('error');
+        return;
+      }
+      
+      const headers = rowsFiltered[0].split(',').map(header => header.trim());
       
       // ヘッダー行を設定
       setHeaders(headers);
       
       // 自動的にマッピングを試みる
-      const possibleNumberHeaders = ['電話番号', '番号', 'number', 'phone', 'caller_id'];
-      const possibleDescHeaders = ['説明', 'description', '名前', 'name'];
-      const possibleProviderHeaders = ['プロバイダ', 'provider', 'service'];
-      const possibleHostHeaders = ['SIPホスト', 'sip_host', 'host', 'server'];
-      const possibleUsernameHeaders = ['ユーザー名', 'username', 'auth_username', 'user'];
-      const possiblePasswordHeaders = ['パスワード', 'password', 'auth_password', 'secret'];
-      const possibleActiveHeaders = ['有効', 'active', 'status', '状態'];
+      const possibleUsernameHeaders = ['ユーザー名', 'username', 'user', 'id', 'user_id'];
+      const possiblePasswordHeaders = ['パスワード', 'password', 'pass', 'secret'];
+      const possibleTypeHeaders = ['タイプ', 'type', 'channel_type', '用途', 'purpose'];
       
       const newMappings = { ...mappings };
       
       headers.forEach((header, index) => {
         const lowerHeader = header.toLowerCase();
         
-        if (possibleNumberHeaders.some(h => lowerHeader.includes(h.toLowerCase()))) {
-          newMappings.number = index.toString();
-        }
-        
-        if (possibleDescHeaders.some(h => lowerHeader.includes(h.toLowerCase()))) {
-          newMappings.description = index.toString();
-        }
-        
-        if (possibleProviderHeaders.some(h => lowerHeader.includes(h.toLowerCase()))) {
-          newMappings.provider = index.toString();
-        }
-        
-        if (possibleHostHeaders.some(h => lowerHeader.includes(h.toLowerCase()))) {
-          newMappings.sip_host = index.toString();
-        }
-        
         if (possibleUsernameHeaders.some(h => lowerHeader.includes(h.toLowerCase()))) {
-          newMappings.auth_username = index.toString();
+          newMappings.username = index.toString();
         }
         
         if (possiblePasswordHeaders.some(h => lowerHeader.includes(h.toLowerCase()))) {
-          newMappings.auth_password = index.toString();
+          newMappings.password = index.toString();
         }
         
-        if (possibleActiveHeaders.some(h => lowerHeader.includes(h.toLowerCase()))) {
-          newMappings.active = index.toString();
+        if (possibleTypeHeaders.some(h => lowerHeader.includes(h.toLowerCase()))) {
+          newMappings.channel_type = index.toString();
         }
       });
       
+      // ヘッダーがない場合は、index値を自動設定
+      const hasHeader = !/^\d+,/.test(rowsFiltered[0]) && 
+        headers.some(h => isNaN(h) && !['outbound', 'transfer', 'both'].includes(h.toLowerCase()));
+      
+      if (!hasHeader) {
+        // ヘッダーがない場合、デフォルトのマッピングを設定
+        newMappings.username = "0";
+        newMappings.password = "1";
+        if (headers.length > 2) {
+          newMappings.channel_type = "2";
+        }
+        
+        // プレビューデータを設定（最大5行、1行目から）
+        const previewRows = rowsFiltered.slice(0, 5).map(row => {
+          return row.split(',').map(cell => cell.trim());
+        }).filter(row => row.some(cell => cell));
+        
+        setPreview(previewRows);
+      } else {
+        // ヘッダーがある場合、2行目からデータを表示
+        const previewRows = rowsFiltered.slice(1, 6).map(row => {
+          return row.split(',').map(cell => cell.trim());
+        }).filter(row => row.some(cell => cell));
+        
+        setPreview(previewRows);
+      }
+      
       setMappings(newMappings);
-      
-      // プレビューデータを設定（最大5行）
-      const previewRows = rows.slice(1, 6).map(row => {
-        return row.split(',').map(cell => cell.trim());
-      }).filter(row => row.length === headers.length && row.some(cell => cell));
-      
-      setPreview(previewRows);
     };
     reader.readAsText(selectedFile);
   };
@@ -107,6 +112,11 @@ const CallerIDImport = ({ onImportComplete }) => {
     });
   };
 
+  // ファイル選択ダイアログを開く
+  const openFileDialog = () => {
+    fileInputRef.current.click();
+  };
+
   // インポート処理
   const handleImport = async () => {
     if (!file) {
@@ -115,8 +125,8 @@ const CallerIDImport = ({ onImportComplete }) => {
       return;
     }
     
-    if (!mappings.number) {
-      setMessage('電話番号フィールドのマッピングは必須です');
+    if (!mappings.username || !mappings.password) {
+      setMessage('ユーザー名とパスワードフィールドのマッピングは必須です');
       setStatus('error');
       return;
     }
@@ -143,15 +153,22 @@ const CallerIDImport = ({ onImportComplete }) => {
       
       xhr.addEventListener('load', () => {
         if (xhr.status >= 200 && xhr.status < 300) {
-          const response = JSON.parse(xhr.responseText);
-          setMessage(`${response.imported_count}件の発信者番号をインポートしました`);
-          setStatus('success');
-          
-          if (onImportComplete) {
-            onImportComplete();
+          try {
+            const response = JSON.parse(xhr.responseText);
+            setMessage(`${response.importedCount || 0}件のチャンネルをインポートしました`);
+            setStatus('success');
+            
+            setTimeout(() => {
+              if (onImportComplete) {
+                onImportComplete(response);
+              }
+            }, 1500);
+          } catch (e) {
+            setMessage('レスポンスの解析に失敗しました');
+            setStatus('error');
           }
         } else {
-          let errorMessage = '発信者番号のインポートに失敗しました';
+          let errorMessage = 'チャンネルのインポートに失敗しました';
           try {
             const response = JSON.parse(xhr.responseText);
             errorMessage = response.message || errorMessage;
@@ -169,22 +186,30 @@ const CallerIDImport = ({ onImportComplete }) => {
       });
       
       // 開発環境でモックデータを使用するオプション
-      if (process.env.NODE_ENV === 'development' && window.location.hostname === 'localhost') {
-        console.log('開発環境でモックデータを使用 - インポート処理');
-        // モックデータのセット
+      if (process.env.NODE_ENV === 'development' && process.env.REACT_APP_USE_MOCK_DATA === 'true') {
+        console.log('開発環境でモックデータを使用 - チャンネルインポート処理');
+        // モックデータのシミュレーション
         setTimeout(() => {
           setProgress(100);
           setStatus('success');
-          setMessage('3件の発信者番号をインポートしました（モックモード）');
+          setMessage('3件のチャンネルをインポートしました（モックモード）');
           
           if (onImportComplete) {
-            onImportComplete();
+            onImportComplete({
+              message: '3件のチャンネルをインポートしました',
+              totalCount: 3,
+              importedCount: 3,
+              errors: []
+            });
           }
         }, 1500);
         return;
       }
       
-      xhr.open('POST', `${process.env.REACT_APP_API_URL}/caller-ids/import`);
+      // APIのベースURLを環境変数から取得
+      const apiBaseUrl = process.env.REACT_APP_API_URL || '/api';
+      
+      xhr.open('POST', `${apiBaseUrl}/caller-ids/${callerId}/channels/import`);
       xhr.setRequestHeader('Authorization', `Bearer ${token}`);
       xhr.send(formData);
     } catch (error) {
@@ -194,8 +219,11 @@ const CallerIDImport = ({ onImportComplete }) => {
   };
 
   return (
-    <div className="bg-white rounded-lg shadow-md p-6">
-      <h2 className="text-lg font-semibold mb-4">CSVからインポート</h2>
+    <div className="p-6">
+      <h2 className="text-lg font-semibold mb-2">チャンネルをインポート</h2>
+      <p className="mb-4 text-sm text-gray-600">
+        発信者番号 {callerNumber} のチャンネルをCSVからインポートします。
+      </p>
       
       {message && (
         <div className={`p-4 mb-4 rounded-md ${
@@ -221,6 +249,7 @@ const CallerIDImport = ({ onImportComplete }) => {
               </p>
             </div>
             <input
+              ref={fileInputRef}
               type="file"
               className="hidden"
               accept=".csv"
@@ -252,24 +281,24 @@ const CallerIDImport = ({ onImportComplete }) => {
         <div className="mb-6">
           <h3 className="text-md font-semibold mb-2">CSVマッピング</h3>
           <p className="text-sm text-gray-500 mb-4">
-            CSVの各列を発信者番号の属性にマッピングしてください。「*」は必須項目です。
+            CSVの各列をチャンネルの属性にマッピングしてください。「*」は必須項目です。
           </p>
           
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-2">
-                電話番号 *
+                ユーザー名 *
               </label>
               <select
-                value={mappings.number}
-                onChange={(e) => handleMappingChange('number', e.target.value)}
+                value={mappings.username}
+                onChange={(e) => handleMappingChange('username', e.target.value)}
                 className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-300 focus:ring focus:ring-blue-200 focus:ring-opacity-50"
                 required
               >
                 <option value="">選択してください</option>
                 {headers.map((header, index) => (
                   <option key={index} value={index}>
-                    {header}
+                    {header} (列 {index+1})
                   </option>
                 ))}
               </select>
@@ -277,17 +306,18 @@ const CallerIDImport = ({ onImportComplete }) => {
             
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-2">
-                説明
+                パスワード *
               </label>
               <select
-                value={mappings.description}
-                onChange={(e) => handleMappingChange('description', e.target.value)}
+                value={mappings.password}
+                onChange={(e) => handleMappingChange('password', e.target.value)}
                 className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-300 focus:ring focus:ring-blue-200 focus:ring-opacity-50"
+                required
               >
-                <option value="">未選択</option>
+                <option value="">選択してください</option>
                 {headers.map((header, index) => (
                   <option key={index} value={index}>
-                    {header}
+                    {header} (列 {index+1})
                   </option>
                 ))}
               </select>
@@ -295,92 +325,23 @@ const CallerIDImport = ({ onImportComplete }) => {
             
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-2">
-                プロバイダ
+                チャンネル用途
               </label>
               <select
-                value={mappings.provider}
-                onChange={(e) => handleMappingChange('provider', e.target.value)}
+                value={mappings.channel_type}
+                onChange={(e) => handleMappingChange('channel_type', e.target.value)}
                 className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-300 focus:ring focus:ring-blue-200 focus:ring-opacity-50"
               >
-                <option value="">未選択</option>
+                <option value="">未選択 (デフォルト: 両方)</option>
                 {headers.map((header, index) => (
                   <option key={index} value={index}>
-                    {header}
+                    {header} (列 {index+1})
                   </option>
                 ))}
               </select>
-            </div>
-            
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                SIPホスト
-              </label>
-              <select
-                value={mappings.sip_host}
-                onChange={(e) => handleMappingChange('sip_host', e.target.value)}
-                className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-300 focus:ring focus:ring-blue-200 focus:ring-opacity-50"
-              >
-                <option value="">未選択</option>
-                {headers.map((header, index) => (
-                  <option key={index} value={index}>
-                    {header}
-                  </option>
-                ))}
-              </select>
-            </div>
-            
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                認証ユーザー名
-              </label>
-              <select
-                value={mappings.auth_username}
-                onChange={(e) => handleMappingChange('auth_username', e.target.value)}
-                className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-300 focus:ring focus:ring-blue-200 focus:ring-opacity-50"
-              >
-                <option value="">未選択</option>
-                {headers.map((header, index) => (
-                  <option key={index} value={index}>
-                    {header}
-                  </option>
-                ))}
-              </select>
-            </div>
-            
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                認証パスワード
-              </label>
-              <select
-                value={mappings.auth_password}
-                onChange={(e) => handleMappingChange('auth_password', e.target.value)}
-                className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-300 focus:ring focus:ring-blue-200 focus:ring-opacity-50"
-              >
-                <option value="">未選択</option>
-                {headers.map((header, index) => (
-                  <option key={index} value={index}>
-                    {header}
-                  </option>
-                ))}
-              </select>
-            </div>
-            
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                有効/無効
-              </label>
-              <select
-                value={mappings.active}
-                onChange={(e) => handleMappingChange('active', e.target.value)}
-                className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-300 focus:ring focus:ring-blue-200 focus:ring-opacity-50"
-              >
-                <option value="">未選択 (デフォルト: 有効)</option>
-                {headers.map((header, index) => (
-                  <option key={index} value={index}>
-                    {header}
-                  </option>
-                ))}
-              </select>
+              <p className="mt-1 text-xs text-gray-500">
+                用途の値は「outbound」「transfer」「both」のいずれかである必要があります
+              </p>
             </div>
           </div>
           
@@ -395,20 +356,16 @@ const CallerIDImport = ({ onImportComplete }) => {
                         key={index}
                         scope="col"
                         className={`px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider ${
-                          index.toString() === mappings.number ? 'bg-blue-50' :
-                          index.toString() === mappings.description ? 'bg-green-50' :
-                          index.toString() === mappings.provider ? 'bg-yellow-50' : ''
+                          index.toString() === mappings.username ? 'bg-blue-50' :
+                          index.toString() === mappings.password ? 'bg-green-50' :
+                          index.toString() === mappings.channel_type ? 'bg-yellow-50' : ''
                         }`}
                       >
                         {header}
                         <div className="text-xs font-normal mt-1">
-                          {index.toString() === mappings.number && '電話番号'}
-                          {index.toString() === mappings.description && '説明'}
-                          {index.toString() === mappings.provider && 'プロバイダ'}
-                          {index.toString() === mappings.sip_host && 'SIPホスト'}
-                          {index.toString() === mappings.auth_username && 'ユーザー名'}
-                          {index.toString() === mappings.auth_password && 'パスワード'}
-                          {index.toString() === mappings.active && '有効/無効'}
+                          {index.toString() === mappings.username && 'ユーザー名'}
+                          {index.toString() === mappings.password && 'パスワード'}
+                          {index.toString() === mappings.channel_type && 'チャンネル用途'}
                         </div>
                       </th>
                     ))}
@@ -421,9 +378,9 @@ const CallerIDImport = ({ onImportComplete }) => {
                         <td 
                           key={cellIndex}
                           className={`px-6 py-4 whitespace-nowrap text-sm ${
-                            cellIndex.toString() === mappings.number ? 'bg-blue-50' :
-                            cellIndex.toString() === mappings.description ? 'bg-green-50' :
-                            cellIndex.toString() === mappings.provider ? 'bg-yellow-50' : ''
+                            cellIndex.toString() === mappings.username ? 'bg-blue-50' :
+                            cellIndex.toString() === mappings.password ? 'bg-green-50' :
+                            cellIndex.toString() === mappings.channel_type ? 'bg-yellow-50' : ''
                           }`}
                         >
                           {cell}
@@ -440,33 +397,42 @@ const CallerIDImport = ({ onImportComplete }) => {
         </div>
       )}
       
-      <div className="flex justify-end">
+      <div className="mt-6 bg-gray-50 p-4 rounded-md">
+        <h4 className="text-sm font-medium text-gray-700 mb-2">CSVファイル形式について</h4>
+        <p className="text-sm text-gray-600 mb-2">以下の列を含むCSVファイルを準備してください:</p>
+        <pre className="bg-gray-100 p-2 rounded text-xs font-mono mb-2">
+          username,password,channel_type<br />
+          03080001,password123,outbound<br />
+          03080002,password456,transfer<br />
+          03080003,password789,both
+        </pre>
+        <ul className="list-disc text-xs text-gray-600 pl-5">
+          <li><strong>ユーザー名</strong>（必須）: SIPアカウントのユーザー名</li>
+          <li><strong>パスワード</strong>（必須）: SIPアカウントのパスワード</li>
+          <li><strong>チャンネル用途</strong>（オプション）: 「outbound」（発信専用）、「transfer」（転送専用）、または「both」（両方）</li>
+        </ul>
+        <p className="text-xs text-gray-500 mt-2">※ヘッダー行はあってもなくても構いません</p>
+      </div>
+      
+      <div className="flex justify-end space-x-3 mt-4">
+        <button
+          onClick={onCancel}
+          className="px-4 py-2 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-opacity-50"
+        >
+          キャンセル
+        </button>
         <button
           onClick={handleImport}
-          disabled={!file || status === 'loading' || !mappings.number}
+          disabled={!file || status === 'loading' || !mappings.username || !mappings.password}
           className={`px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-opacity-50 ${
-            (!file || status === 'loading' || !mappings.number) ? 'opacity-50 cursor-not-allowed' : ''
+            (!file || status === 'loading' || !mappings.username || !mappings.password) ? 'opacity-50 cursor-not-allowed' : ''
           }`}
         >
           {status === 'loading' ? 'インポート中...' : 'インポート実行'}
         </button>
       </div>
-      
-      <div className="mt-4 text-sm text-gray-500">
-        <h4 className="font-medium">CSVファイル形式について</h4>
-        <p>以下のヘッダーを含むCSVファイルをご用意ください：</p>
-        <ul className="list-disc pl-5 mt-1">
-          <li>電話番号（必須）: 例「0312345678」（ハイフンなし）</li>
-          <li>説明: 例「東京オフィス」</li>
-          <li>プロバイダ: 例「SIP Provider A」</li>
-          <li>SIPホスト: 例「sip.provider-a.com」</li>
-          <li>認証ユーザー名: 例「tokyo_office」</li>
-          <li>認証パスワード: 例「password123」</li>
-          <li>有効/無効: 例「true」または「false」（空の場合は「true」）</li>
-        </ul>
-      </div>
     </div>
   );
 };
 
-export default CallerIDImport;
+export default CallerIDChannelImport;
