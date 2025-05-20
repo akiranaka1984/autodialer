@@ -86,6 +86,28 @@ const AudioFileUploader = ({ campaignId, audioType, onUploadSuccess }) => {
       // APIのベースURL
       const apiBaseUrl = getApiBaseUrl();
       const token = localStorage.getItem('token');
+      // トークンの存在をチェック
+      if (!token) {
+        console.error('認証トークンがありません');
+        setError('認証エラー：ログインが必要です');
+        return;
+      }
+
+      // ここにデバッグログを追加
+    console.log('アップロードリクエスト情報:', {
+      url: `${apiBaseUrl}/ivr/upload-audio`,
+      token: token ? '設定済み' : '未設定',
+      file: file ? {
+        name: file.name,
+        type: file.type,
+        size: file.size
+      } : 'なし',
+      formData: {
+        name: fileName,
+        audioType,
+        campaignId
+      }
+    });
       
       const response = await fetch(`${apiBaseUrl}/ivr/upload-audio`, {
         method: 'POST',
@@ -96,8 +118,32 @@ const AudioFileUploader = ({ campaignId, audioType, onUploadSuccess }) => {
       });
       
       if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.message || 'アップロードに失敗しました');
+        const contentType = response.headers.get('content-type');
+        
+        try {
+          if (contentType && contentType.includes('application/json')) {
+            // JSONレスポンスの場合
+            const errorData = await response.json();
+            throw new Error(errorData.message || 'アップロードに失敗しました');
+          } else {
+            // テキスト（HTML）レスポンスの場合
+            const errorText = await response.text();
+            console.error('非JSONレスポンス:', {
+              status: response.status,
+              contentType,
+              text: errorText.substring(0, 200) // 長すぎる場合は切り詰める
+            });
+            throw new Error(`アップロードに失敗しました (${response.status})`);
+          }
+        } catch (parseError) {
+          if (parseError.name === 'SyntaxError') {
+            // JSONパースエラーの場合
+            console.error('レスポンス解析エラー:', parseError);
+            throw new Error(`レスポンスの解析に失敗しました (${response.status})`);
+          }
+          // その他のエラーはそのまま再スロー
+          throw parseError;
+        }
       }
       
       const data = await response.json();

@@ -60,65 +60,6 @@ app.get('/', (req, res) => {
   });
 });
 
-// 利用可能なルートを確認して使用
-try {
-  // 発信者番号ルート
-  const callerIdRoutes = require('./routes/callerIds');
-  app.use('/api/caller-ids', callerIdRoutes);
-  logger.info('発信者番号APIを有効化しました');
-} catch (error) {
-  logger.warn('発信者番号APIの読み込みに失敗しました:', error.message);
-  // バックアップの基本ルート
-  app.get('/api/caller-ids', async (req, res) => {
-    try {
-      const result = await db.query('SELECT * FROM caller_ids ORDER BY created_at DESC');
-      const callerIds = Array.isArray(result) && result.length === 2 ? result[0] : result;
-      res.json(callerIds);
-    } catch (error) {
-      logger.error('発信者番号取得エラー:', error);
-      res.status(500).json({ message: '発信者番号の取得に失敗しました: ' + error.message });
-    }
-  });
-}
-
-try {
-  // キャンペーンルート
-  const campaignRoutes = require('./routes/campaigns');
-  app.use('/api/campaigns', campaignRoutes);
-  logger.info('キャンペーンAPIを有効化しました');
-} catch (error) {
-  logger.warn('キャンペーンAPIの読み込みに失敗しました:', error.message);
-}
-
-try {
-  // 連絡先ルート
-  const contactRoutes = require('./routes/contacts');
-  app.use('/api/contacts', contactRoutes);
-  logger.info('連絡先APIを有効化しました');
-} catch (error) {
-  logger.warn('連絡先APIの読み込みに失敗しました:', error.message);
-}
-
-try {
-  // DNCリストルート
-  const dncRoutes = require('./routes/dnc');
-  app.use('/api/dnc', dncRoutes);
-  logger.info('DNCリストAPIを有効化しました');
-} catch (error) {
-  logger.warn('DNCリストAPIの読み込みに失敗しました:', error.message);
-}
-
-// 404エラーハンドリング - すべてのルートに一致しなかった場合
-app.use((req, res, next) => {
-  res.status(404).json({ message: '要求されたリソースが見つかりません' });
-});
-
-// エラーハンドリングミドルウェア
-app.use((err, req, res, next) => {
-  logger.error('アプリケーションエラー:', err);
-  res.status(500).json({ message: '内部サーバーエラー', error: err.message });
-});
-
 // サーバー起動 - 非同期処理の部分を修正
 const startServer = async () => {
   try {
@@ -131,6 +72,54 @@ const startServer = async () => {
       logger.info(`サーバーが起動しました: http://localhost:${PORT}`);
       logger.info(`実行モード: ${process.env.NODE_ENV}`);
     });
+
+    // 全てのルートをここで定義する
+    try {
+      // 発信者番号ルート
+      const callerIdRoutes = require('./routes/callerIds');
+      app.use('/api/caller-ids', callerIdRoutes);
+      logger.info('発信者番号APIを有効化しました');
+    } catch (error) {
+      logger.warn('発信者番号APIの読み込みに失敗しました:', error.message);
+      // バックアップの基本ルート
+      app.get('/api/caller-ids', async (req, res) => {
+        try {
+          const result = await db.query('SELECT * FROM caller_ids ORDER BY created_at DESC');
+          const callerIds = Array.isArray(result) && result.length === 2 ? result[0] : result;
+          res.json(callerIds);
+        } catch (error) {
+          logger.error('発信者番号取得エラー:', error);
+          res.status(500).json({ message: '発信者番号の取得に失敗しました: ' + error.message });
+        }
+      });
+    }
+
+    try {
+      // キャンペーンルート
+      const campaignRoutes = require('./routes/campaigns');
+      app.use('/api/campaigns', campaignRoutes);
+      logger.info('キャンペーンAPIを有効化しました');
+    } catch (error) {
+      logger.warn('キャンペーンAPIの読み込みに失敗しました:', error.message);
+    }
+
+    try {
+      // 連絡先ルート
+      const contactRoutes = require('./routes/contacts');
+      app.use('/api/contacts', contactRoutes);
+      logger.info('連絡先APIを有効化しました');
+    } catch (error) {
+      logger.warn('連絡先APIの読み込みに失敗しました:', error.message);
+    }
+
+    try {
+      // DNCリストルート
+      const dncRoutes = require('./routes/dnc');
+      app.use('/api/dnc', dncRoutes);
+      logger.info('DNCリストAPIを有効化しました');
+    } catch (error) {
+      logger.warn('DNCリストAPIの読み込みに失敗しました:', error.message);
+    }
 
     // コールサービスは後から初期化
     try {
@@ -222,6 +211,37 @@ const startServer = async () => {
     } catch (error) {
       logger.warn('IVR設定APIの読み込みに失敗しました:', error.message);
     }
+
+    // 登録されたルートをログに出力（デバッグ用）
+    logger.info('---登録されたルート一覧---');
+    app._router.stack.forEach(r => {
+      if (r.route && r.route.path) {
+        logger.info(`${Object.keys(r.route.methods).join(',')} ${r.route.path}`);
+      } else if (r.name === 'router') {
+        logger.info(`マウントポイント: ${r.regexp}`);
+      }
+    });
+    logger.info('-------------------------');
+
+    // 全てのルート登録後、404エラーハンドラーをここに配置
+    app.use((req, res, next) => {
+      logger.warn(`404エラー: ${req.method} ${req.originalUrl} - 要求されたリソースが見つかりません`);
+      // 常にJSONレスポンスを返すように設定
+      res.status(404).json({ 
+        message: '要求されたリソースが見つかりません',
+        path: req.originalUrl,
+        method: req.method
+      });
+    });
+
+    // エラーハンドリングミドルウェア
+    app.use((err, req, res, next) => {
+      logger.error('アプリケーションエラー:', err);
+      res.status(500).json({ 
+        message: '内部サーバーエラー', 
+        error: err.message 
+      });
+    });
   } catch (error) {
     logger.error('サーバー起動エラー:', error);
     // プロセスを終了しない

@@ -300,6 +300,15 @@ router.post('/test-call/:id', async (req, res) => {
 // IVR設定画面から直接音声ファイルをアップロードするAPI
 router.post('/upload-audio', upload.single('file'), async (req, res) => {
   try {
+    // デバッグ用にリクエスト情報をログ出力
+    console.log('アップロードリクエスト受信:', {
+      file: req.file ? { 
+        filename: req.file.originalname,
+        mimetype: req.file.mimetype,
+        size: req.file.size
+      } : 'なし',
+      body: req.body
+    });
     if (!req.file) {
       return res.status(400).json({ message: 'ファイルが見つかりません' });
     }
