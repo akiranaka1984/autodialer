@@ -1,11 +1,9 @@
-// backend/src/index.js の修正版
+// backend/src/index.js の改良版
 const express = require('express');
 const cors = require('cors');
 const http = require('http');
 const logger = require('./services/logger');
 const db = require('./services/database');
-const callService = require('./services/callService');  // ここで一度だけ宣言
-const websocketService = require('./services/websocketService');
 
 // 環境変数の読み込み
 require('dotenv').config();
@@ -16,9 +14,6 @@ const PORT = process.env.PORT || 5000;
 
 // HTTPサーバーの作成
 const server = http.createServer(app);
-
-// WebSocketサービスの初期化
-websocketService.initialize(server);
 
 // CORS設定を見直し
 app.use(cors({
@@ -36,8 +31,17 @@ app.use((req, res, next) => {
 
 app.use(express.json());
 
+// ヘルスチェックエンドポイント
 app.get('/health', (req, res) => {
-  res.json({ status: 'ok', timestamp: new Date().toISOString() });
+  res.json({ 
+    status: 'ok', 
+    timestamp: new Date().toISOString(),
+    cors: 'enabled',
+    providers: {
+      default: process.env.DEFAULT_CALL_PROVIDER,
+      mockMode: process.env.MOCK_ASTERISK === 'true'
+    }
+  });
 });
 
 // リクエストロギングミドルウェア - デバッグ用に詳細なログを追加
@@ -56,21 +60,6 @@ app.get('/', (req, res) => {
   });
 });
 
-// ヘルスチェックエンドポイント - CORSのテストにも使用可能
-app.get('/health', (req, res) => {
-  res.json({ 
-    status: 'ok', 
-    timestamp: new Date(), 
-    cors: 'enabled',
-    providers: {
-      default: process.env.DEFAULT_CALL_PROVIDER,
-      mockMode: process.env.MOCK_ASTERISK === 'true',
-      fallbackEnabled: process.env.FALLBACK_ENABLED === 'true',
-      loadBalancingEnabled: process.env.LOAD_BALANCING_ENABLED === 'true'
-    }
-  });
-});
-
 // 利用可能なルートを確認して使用
 try {
   // 発信者番号ルート
@@ -79,40 +68,17 @@ try {
   logger.info('発信者番号APIを有効化しました');
 } catch (error) {
   logger.warn('発信者番号APIの読み込みに失敗しました:', error.message);
-}
-
-try {
-  // 通話ルート
-  const callRoutes = require('./routes/calls');
-  app.use('/api/calls', callRoutes);
-  logger.info('通話APIを有効化しました');
-} catch (error) {
-  logger.warn('通話APIの読み込みに失敗しました:', error.message);
-}
-
-try {
-  // 連絡先ルート
-  const contactRoutes = require('./routes/contacts');
-  app.use('/api/contacts', contactRoutes);
-  logger.info('連絡先APIを有効化しました');
-} catch (error) {
-  // より詳細なエラー情報をログに出力
-  logger.warn('連絡先APIの読み込みに失敗しました:', {
-    name: error.name,
-    message: error.message,
-    stack: error.stack,
-    code: error.code
+  // バックアップの基本ルート
+  app.get('/api/caller-ids', async (req, res) => {
+    try {
+      const result = await db.query('SELECT * FROM caller_ids ORDER BY created_at DESC');
+      const callerIds = Array.isArray(result) && result.length === 2 ? result[0] : result;
+      res.json(callerIds);
+    } catch (error) {
+      logger.error('発信者番号取得エラー:', error);
+      res.status(500).json({ message: '発信者番号の取得に失敗しました: ' + error.message });
+    }
   });
-  
-  // 依存関係のパスが正しく解決されているか確認
-  try {
-    logger.info('パス解決テスト:',  {
-      contactsController: require.resolve('./controllers/contactsController'),
-      databaseService: require.resolve('./services/database')
-    });
-  } catch (resolveError) {
-    logger.error('パス解決エラー:', resolveError.message);
-  }
 }
 
 try {
@@ -125,123 +91,21 @@ try {
 }
 
 try {
-  // 認証ルート
-  const authRoutes = require('./routes/auth');
-  app.use('/api/auth', authRoutes);
-  logger.info('認証APIを有効化しました');
+  // 連絡先ルート
+  const contactRoutes = require('./routes/contacts');
+  app.use('/api/contacts', contactRoutes);
+  logger.info('連絡先APIを有効化しました');
 } catch (error) {
-  logger.warn('認証APIの読み込みに失敗しました:', error.message);
+  logger.warn('連絡先APIの読み込みに失敗しました:', error.message);
 }
 
 try {
-  // コールバックルート
-  const callbackRoutes = require('./routes/callback');
-  app.use('/api/callback', callbackRoutes);
-  logger.info('コールバックAPIを有効化しました');
-} catch (error) {
-  logger.warn('コールバックAPIの読み込みに失敗しました:', error.message);
-}
-
-try {
-  // 統計ルート
-  const statsRoutes = require('./routes/stats');
-  app.use('/api/stats', statsRoutes);
-  logger.info('統計APIを有効化しました');
-} catch (error) {
-  logger.warn('統計APIの読み込みに失敗しました:', error.message);
-}
-
-// レポートルートを追加
-try {
-  const reportRoutes = require('./routes/reports');
-  app.use('/api/reports', reportRoutes);
-  logger.info('レポートAPIを有効化しました');
-} catch (error) {
-  // より詳細なエラー情報をログに出力
-  logger.warn('レポートAPIの読み込みに失敗しました:', {
-    name: error.name,
-    message: error.message,
-    stack: error.stack,
-    code: error.code
-  });
-  
-  // 依存関係のパスが正しく解決されているか確認
-  try {
-    const fs = require('fs');
-    const reportsRoutePath = './routes/reports.js';
-    const reportsControllerPath = './controllers/reportsController.js';
-    
-    if (fs.existsSync(reportsRoutePath)) {
-      logger.info('reports.js ファイルは存在します');
-      
-      // ファイルの内容を確認
-      const routeContent = fs.readFileSync(reportsRoutePath, 'utf8');
-      logger.info(`reports.js の最初の100文字: ${routeContent.substring(0, 100)}...`);
-      
-      // コントローラーの存在確認
-      if (fs.existsSync(reportsControllerPath)) {
-        logger.info('reportsController.js ファイルは存在します');
-      } else {
-        logger.warn('reportsController.js ファイルが見つかりません');
-      }
-      
-      // モジュール解決を試みる
-      try {
-        require.resolve('./controllers/reportsController');
-        logger.info('reportsController モジュールは解決可能です');
-      } catch (resolveError) {
-        logger.error('reportsController モジュール解決エラー:', resolveError.message);
-      }
-    } else {
-      logger.warn('reports.js ファイルが見つかりません');
-    }
-  } catch (fsError) {
-    logger.error('ファイル存在確認エラー:', fsError.message);
-  }
-}
-
-// 設定ルート
-try {
-  const settingsRoutes = require('./routes/settings');
-  app.use('/api/settings', settingsRoutes);
-  logger.info('設定APIを有効化しました');
-} catch (error) {
-  logger.warn('設定APIの読み込みに失敗しました:', error.message);
-}
-
-// オペレーター管理ルート
-try {
-  const operatorRoutes = require('./routes/operators');
-  app.use('/api/operators', operatorRoutes);
-  logger.info('オペレーター管理APIを有効化しました');
-} catch (error) {
-  logger.warn('オペレーター管理APIの読み込みに失敗しました:', error.message);
-}
-
-// DNCリストルート
-try {
+  // DNCリストルート
   const dncRoutes = require('./routes/dnc');
   app.use('/api/dnc', dncRoutes);
   logger.info('DNCリストAPIを有効化しました');
 } catch (error) {
   logger.warn('DNCリストAPIの読み込みに失敗しました:', error.message);
-}
-
-// IVRおよび音声ファイルルートを正しく設定
-try {
-  const audioRoutes = require('./routes/audio');
-  app.use('/api/audio', audioRoutes);
-  logger.info('音声ファイル管理APIを有効化しました');
-} catch (error) {
-  logger.error('音声ファイル管理APIの読み込みに失敗しました:', error);
-}
-
-try {
-  const ivrRoutes = require('./routes/ivr');
-  app.use('/api/ivr', ivrRoutes);
-  logger.info('IVR設定APIを有効化しました');
-} catch (error) {
-  logger.error('IVR設定APIの読み込みに失敗しました:', error);
 }
 
 // 404エラーハンドリング - すべてのルートに一致しなかった場合
@@ -255,38 +119,129 @@ app.use((err, req, res, next) => {
   res.status(500).json({ message: '内部サーバーエラー', error: err.message });
 });
 
-// サーバー起動
+// サーバー起動 - 非同期処理の部分を修正
 const startServer = async () => {
   try {
     // データベース接続確認
     await db.query('SELECT 1');
     logger.info('データベースに接続しました');
     
-    // 統合コールサービスを初期化
-    await callService.initialize();
-    logger.info('統合コールサービスを初期化しました');
-    
     // サーバー起動（HTTPサーバーインスタンスを使用）
     server.listen(PORT, '0.0.0.0', () => {
       logger.info(`サーバーが起動しました: http://localhost:${PORT}`);
       logger.info(`実行モード: ${process.env.NODE_ENV}`);
-      logger.info(`コールサービス: デフォルトプロバイダ=${process.env.DEFAULT_CALL_PROVIDER}, モックモード=${process.env.MOCK_ASTERISK === 'true'}`);
-      logger.info(`フォールバック: ${process.env.FALLBACK_ENABLED === 'true' ? '有効' : '無効'}, ロードバランシング: ${process.env.LOAD_BALANCING_ENABLED === 'true' ? '有効' : '無効'}`);
     });
+
+    // コールサービスは後から初期化
+    try {
+      const callService = require('./services/callService');
+      await callService.initialize();
+      logger.info('統合コールサービスを初期化しました');
+      
+      // WebSocketサービスの初期化（コールサービスの後）
+      try {
+        const websocketService = require('./services/websocketService');
+        websocketService.initialize(server);
+        logger.info('WebSocketサービスを初期化しました');
+      } catch (wsError) {
+        logger.warn('WebSocketサービスの初期化に失敗しましたが、サーバーは動作しています:', wsError.message);
+      }
+    } catch (callServiceError) {
+      logger.warn('コールサービスの初期化に失敗しましたが、サーバーは動作しています:', callServiceError.message);
+    }
+
+    // 追加のAPIを初期化
+    try {
+      // 通話ルート
+      const callRoutes = require('./routes/calls');
+      app.use('/api/calls', callRoutes);
+      logger.info('通話APIを有効化しました');
+    } catch (error) {
+      logger.warn('通話APIの読み込みに失敗しました:', error.message);
+    }
+
+    try {
+      // 認証ルート
+      const authRoutes = require('./routes/auth');
+      app.use('/api/auth', authRoutes);
+      logger.info('認証APIを有効化しました');
+    } catch (error) {
+      logger.warn('認証APIの読み込みに失敗しました:', error.message);
+    }
+
+    try {
+      // コールバックルート
+      const callbackRoutes = require('./routes/callback');
+      app.use('/api/callback', callbackRoutes);
+      logger.info('コールバックAPIを有効化しました');
+    } catch (error) {
+      logger.warn('コールバックAPIの読み込みに失敗しました:', error.message);
+    }
+
+    try {
+      // 統計ルート
+      const statsRoutes = require('./routes/stats');
+      app.use('/api/stats', statsRoutes);
+      logger.info('統計APIを有効化しました');
+    } catch (error) {
+      logger.warn('統計APIの読み込みに失敗しました:', error.message);
+    }
+
+    try {
+      // 設定ルート
+      const settingsRoutes = require('./routes/settings');
+      app.use('/api/settings', settingsRoutes);
+      logger.info('設定APIを有効化しました');
+    } catch (error) {
+      logger.warn('設定APIの読み込みに失敗しました:', error.message);
+    }
+
+    try {
+      // オペレーター管理ルート
+      const operatorRoutes = require('./routes/operators');
+      app.use('/api/operators', operatorRoutes);
+      logger.info('オペレーター管理APIを有効化しました');
+    } catch (error) {
+      logger.warn('オペレーター管理APIの読み込みに失敗しました:', error.message);
+    }
+
+    try {
+      // 音声ファイル管理ルート
+      const audioRoutes = require('./routes/audio');
+      app.use('/api/audio', audioRoutes);
+      logger.info('音声ファイル管理APIを有効化しました');
+    } catch (error) {
+      logger.warn('音声ファイル管理APIの読み込みに失敗しました:', error.message);
+    }
+
+    try {
+      // IVR設定ルート
+      const ivrRoutes = require('./routes/ivr');
+      app.use('/api/ivr', ivrRoutes);
+      logger.info('IVR設定APIを有効化しました');
+    } catch (error) {
+      logger.warn('IVR設定APIの読み込みに失敗しました:', error.message);
+    }
   } catch (error) {
     logger.error('サーバー起動エラー:', error);
-    process.exit(1);
+    // プロセスを終了しない
+    logger.info('エラーがありましたが、サーバーを起動試行します');
+    server.listen(PORT, '0.0.0.0', () => {
+      logger.info(`エラー復旧後、サーバーが起動しました: http://localhost:${PORT}`);
+    });
   }
 };
 
-// 未処理のエラーハンドリング
+// 未処理のエラーハンドリング - プロセスを終了しないように変更
 process.on('unhandledRejection', (reason, promise) => {
   logger.error('Unhandled Rejection:', reason);
+  // プロセスを終了しない
 });
 
 process.on('uncaughtException', (error) => {
   logger.error('Uncaught Exception:', error);
-  process.exit(1);
+  // プロセスを終了しない
+  // process.exit(1);
 });
 
 // アプリケーションの終了処理
@@ -295,9 +250,14 @@ process.on('SIGINT', async () => {
   
   try {
     // コールサービスの終了処理
-    if (callService.shutdown) {
-      await callService.shutdown();
-      logger.info('コールサービスを正常に終了しました');
+    try {
+      const callService = require('./services/callService');
+      if (callService && callService.shutdown) {
+        await callService.shutdown();
+        logger.info('コールサービスを正常に終了しました');
+      }
+    } catch (error) {
+      logger.warn('コールサービス終了処理中のエラー:', error.message);
     }
     
     // データベース接続のクローズ
