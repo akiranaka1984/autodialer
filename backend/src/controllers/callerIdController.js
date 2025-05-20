@@ -67,16 +67,21 @@ exports.getCallerIdById = async (req, res) => {
 // 新しいチャンネルを追加
 exports.addCallerChannel = async (req, res) => {
   try {
-    const { caller_id_id, username, password } = req.body;
+    const { caller_id_id, username, password, channel_type } = req.body;
     
     if (!caller_id_id || !username || !password) {
       return res.status(400).json({ message: '必須フィールドが不足しています' });
     }
     
-    // チャンネルを追加
+    // チャンネルタイプの検証（指定されていない場合はデフォルト値を使用）
+    const validType = channel_type && ['outbound', 'transfer', 'both'].includes(channel_type) 
+      ? channel_type 
+      : 'both';
+    
+    // チャンネルを追加（channel_typeも含める）
     const [result] = await db.query(
-      'INSERT INTO caller_channels (caller_id_id, username, password) VALUES (?, ?, ?)',
-      [caller_id_id, username, password]
+      'INSERT INTO caller_channels (caller_id_id, username, password, channel_type) VALUES (?, ?, ?, ?)',
+      [caller_id_id, username, password, validType]
     );
     
     res.status(201).json({ 
@@ -84,6 +89,7 @@ exports.addCallerChannel = async (req, res) => {
       caller_id_id,
       username,
       password,
+      channel_type: validType,
       status: 'available'
     });
   } catch (error) {
@@ -438,10 +444,17 @@ exports.importCallerChannels = async (req, res) => {
 // 特定の発信者番号のチャンネル一覧を取得
 exports.getCallerChannels = async (req, res) => {
   try {
-    const [channels] = await db.query(
-      'SELECT * FROM caller_channels WHERE caller_id_id = ?',
-      [req.params.id]
-    );
+    logger.info(`発信者番号ID=${req.params.id}のチャンネル一覧を取得`);
+    
+    // 明示的にすべてのフィールドを指定（channel_typeも含む）
+    const [channels] = await db.query(`
+      SELECT id, caller_id_id, username, password, status, last_used, channel_type
+      FROM caller_channels 
+      WHERE caller_id_id = ?
+    `, [req.params.id]);
+    
+    logger.info(`${channels.length}件のチャンネルを取得しました`);
+    
     res.json(channels);
   } catch (error) {
     logger.error('チャンネル取得エラー:', error);
@@ -449,23 +462,38 @@ exports.getCallerChannels = async (req, res) => {
   }
 };
 
-// チャンネル情報を更新
 exports.updateCallerChannel = async (req, res) => {
   try {
-    const { username, password } = req.body;
+    const { username, password, channel_type } = req.body;
     let updateQuery = 'UPDATE caller_channels SET ';
     const queryParams = [];
+    let hasUpdates = false;
 
-    // パスワードが提供されている場合のみ更新
+    // ユーザー名の更新
     if (username) {
       updateQuery += 'username = ?';
       queryParams.push(username);
+      hasUpdates = true;
     }
 
+    // パスワードの更新
     if (password) {
-      if (username) updateQuery += ', ';
+      if (hasUpdates) updateQuery += ', ';
       updateQuery += 'password = ?';
       queryParams.push(password);
+      hasUpdates = true;
+    }
+    
+    // チャンネルタイプの更新
+    if (channel_type && ['outbound', 'transfer', 'both'].includes(channel_type)) {
+      if (hasUpdates) updateQuery += ', ';
+      updateQuery += 'channel_type = ?';
+      queryParams.push(channel_type);
+      hasUpdates = true;
+    }
+
+    if (!hasUpdates) {
+      return res.status(400).json({ message: '更新するフィールドがありません' });
     }
 
     updateQuery += ' WHERE id = ?';
@@ -477,7 +505,15 @@ exports.updateCallerChannel = async (req, res) => {
       return res.status(404).json({ message: 'チャンネルが見つかりません' });
     }
 
-    res.json({ message: 'チャンネルが更新されました' });
+    res.json({ 
+      message: 'チャンネルが更新されました',
+      id: parseInt(req.params.id),
+      updates: {
+        username: username || undefined,
+        channel_type: channel_type || undefined,
+        password: password ? '********' : undefined
+      }
+    });
   } catch (error) {
     logger.error('チャンネル更新エラー:', error);
     res.status(500).json({ message: 'サーバーエラーが発生しました: ' + error.message });

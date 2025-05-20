@@ -25,7 +25,8 @@ const CallerIDManagement = () => {
   const [channelFormData, setChannelFormData] = useState({
     username: '',
     password: '',
-    caller_id_id: null
+    caller_id_id: null,
+    channel_type: 'both'  // デフォルト値を設定
   });
   const [showChannelForm, setShowChannelForm] = useState(false);
   const [channelFormMode, setChannelFormMode] = useState('add'); // 'add' または 'edit'
@@ -117,33 +118,6 @@ const CallerIDManagement = () => {
     setLoadingChannels(prev => ({ ...prev, [callerId]: true }));
     try {
       const token = localStorage.getItem('token');
-      
-      // 開発環境でモックデータを使用するオプション
-      if (process.env.NODE_ENV === 'development' && window.location.hostname === 'localhost') {
-        console.log('開発環境でモックデータを使用 - チャンネル取得');
-        
-        // モックデータのセット
-        setTimeout(() => {
-          const prefix = callerId === 1 ? '03080' : callerId === 2 ? '03090' : '05010';
-          const channelCount = callerId === 3 ? 5 : 20;
-          
-          const mockChannels = Array.from({ length: channelCount }, (_, i) => {
-            const num = (i + 1).toString().padStart(2, '0');
-            return {
-              id: parseInt(`${callerId}${i+1}`),
-              caller_id_id: callerId,
-              username: `${prefix}${num}`,
-              password: Math.floor(10000000 + Math.random() * 90000000).toString(),
-              status: i % 5 === 0 ? 'busy' : 'available',
-              last_used: i % 5 === 0 ? new Date().toISOString() : null
-            };
-          });
-          
-          setChannels(prev => ({ ...prev, [callerId]: mockChannels }));
-          setLoadingChannels(prev => ({ ...prev, [callerId]: false }));
-        }, 500);
-        return;
-      }
       
       console.log('API呼び出し:', `${apiBaseUrl}/caller-ids/${callerId}/channels`);
       
@@ -314,7 +288,8 @@ const CallerIDManagement = () => {
     setChannelFormData({
       username: channel.username,
       password: '',  // パスワードは表示しない
-      caller_id_id: channel.caller_id_id
+      caller_id_id: channel.caller_id_id,
+      channel_type: channel.channel_type || 'both' // 確実に含める
     });
     setEditingChannelId(channel.id);
     setChannelFormMode('edit');
@@ -453,6 +428,8 @@ const CallerIDManagement = () => {
       const token = localStorage.getItem('token');
       const isUpdate = channelFormMode === 'edit';
       const callerId = channelFormData.caller_id_id;
+
+      console.log('送信するチャンネルデータ:', channelFormData);
       
       // 開発環境でモックデータを使用するオプション
       if (process.env.NODE_ENV === 'development' && window.location.hostname === 'localhost') {
@@ -1001,20 +978,35 @@ const CallerIDManagement = () => {
                             ) : channels[callerId.id] && channels[callerId.id].length > 0 ? (
                               <div className="overflow-x-auto">
                                 <table className="min-w-full divide-y divide-gray-200">
-                                  <thead className="bg-gray-100">
-                                    <tr>
-                                      <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">ユーザー名</th>
-                                      <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">ステータス</th>
-                                      <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">最終使用</th>
-                                      <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">操作</th>
-                                    </tr>
-                                  </thead>
-                                  <tbody className="bg-white divide-y divide-gray-200">
-                                    {channels[callerId.id].map((channel) => (
-                                      <tr key={channel.id} className="hover:bg-gray-50">
-                                        <td className="px-4 py-2 whitespace-nowrap text-sm">
-                                          {channel.username}
-                                        </td>
+                                <thead className="bg-gray-100">
+                                  <tr>
+                                    <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">ユーザー名</th>
+                                    <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">用途</th>
+                                    <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">ステータス</th>
+                                    <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">最終使用</th>
+                                    <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">操作</th>
+                                  </tr>
+                                </thead>
+                                <tbody className="bg-white divide-y divide-gray-200">
+                                  {channels[callerId.id].map((channel) => (
+                                    <tr key={channel.id} className="hover:bg-gray-50">
+                                      <td className="px-4 py-2 whitespace-nowrap text-sm">
+                                        {channel.username}
+                                      </td>
+                                      {/* 用途の表示を追加 */}
+                                      <td className="px-4 py-2 whitespace-nowrap">
+                                        {/* デバッグ情報付きで表示 */}
+                                        <span className={`px-2 py-1 inline-flex text-xs leading-4 font-medium rounded-full ${
+                                          channel.channel_type === 'outbound' ? 'bg-blue-100 text-blue-800' : 
+                                          channel.channel_type === 'transfer' ? 'bg-purple-100 text-purple-800' : 
+                                          'bg-gray-100 text-gray-800'
+                                        }`}>
+                                          {channel.channel_type === 'outbound' ? '発信専用' : 
+                                          channel.channel_type === 'transfer' ? '転送専用' : 
+                                          '両方'}
+                                        </span>
+                                      </td>
+                                        <td className="px-4 py-2 whitespace-nowrap"></td>
                                         <td className="px-4 py-2 whitespace-nowrap">
                                           <span className={`px-2 py-1 inline-flex text-xs leading-4 font-medium rounded-full ${
                                             channel.status === 'available' ? 'bg-green-100 text-green-800' :
@@ -1107,6 +1099,27 @@ const CallerIDManagement = () => {
                   className="shadow appearance-none border rounded w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:shadow-outline"
                   {...(channelFormMode === 'add' ? { required: true } : {})}
                 />
+              </div>
+
+              {/* パスワードフィールドの後に追加 */}
+              <div className="mb-6">
+                <label className="block text-gray-700 text-sm font-bold mb-2" htmlFor="channel_type">
+                  チャンネル用途
+                </label>
+                <select
+                  id="channel_type"
+                  name="channel_type"
+                  value={channelFormData.channel_type || 'both'}
+                  onChange={handleChannelInputChange}
+                  className="shadow appearance-none border rounded w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:shadow-outline"
+                >
+                  <option value="both">両方（発信・転送）</option>
+                  <option value="outbound">発信専用</option>
+                  <option value="transfer">転送専用</option>
+                </select>
+                <p className="mt-1 text-xs text-gray-500">
+                  このチャンネルの主な用途を選択してください
+                </p>
               </div>
               
               <div className="flex justify-end space-x-3">

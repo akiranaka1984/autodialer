@@ -264,6 +264,32 @@ class CallQueueService {
   async transferToOperator(callId, campaignId, transferOptions = {}) {
     try {
       logger.info(`オペレーター転送リクエスト: callId=${callId}`);
+      // 以下を追加
+      // 転送用のSIPアカウントを取得
+      const sipService = require('./sipService');
+      let transferAccount = null;
+      
+      if (campaignId) {
+        // キャンペーンの発信者番号IDを取得
+        const [campaigns] = await db.query(
+          'SELECT caller_id_id FROM campaigns WHERE id = ?',
+          [campaignId]
+        );
+        
+        if (campaigns.length > 0 && campaigns[0].caller_id_id) {
+          // 転送用チャンネルを取得
+          transferAccount = await sipService.getAvailableSipAccountByType(
+            campaigns[0].caller_id_id, 
+            'transfer'  // 転送用チャンネルを指定
+          );
+          
+          if (transferAccount) {
+            logger.info(`転送用チャンネルを使用: ${transferAccount.username}`);
+          } else {
+            logger.warn(`転送用チャンネルが見つからないため、汎用チャンネルを使用します`);
+          }
+        }
+      }
       
       // 利用可能なオペレーターを確認
       const operatorCount = await this.getActiveOperatorCount();

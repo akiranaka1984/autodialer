@@ -16,6 +16,7 @@ const PORT = parseInt(process.env.PORT || '5000', 10); // コンテナ内のポ�
 // HTTPサーバーの作成
 const server = http.createServer(app);
 
+// ★★★ 重要: CORSの設定をルーター登録よりも前に移動 ★★★
 // CORSの設定を修正
 app.use(cors({
   origin: process.env.NODE_ENV === 'production' 
@@ -29,6 +30,18 @@ app.use(cors({
 // プリフライトリクエストの処理を追加
 app.options('*', cors());
 
+// ★★★ 追加: 個別のCORSヘッダーも設定 ★★★
+app.use((req, res, next) => {
+  res.header('Access-Control-Allow-Origin', '*');
+  res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS, PATCH');
+  res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, Cache-Control');
+  // プリフライトリクエスト対応
+  if (req.method === 'OPTIONS') {
+    return res.sendStatus(200);
+  }
+  next();
+});
+
 // リクエストログ
 app.use((req, res, next) => {
   logger.debug(`${req.method} ${req.url} - Origin: ${req.headers.origin || 'none'}`);
@@ -36,6 +49,10 @@ app.use((req, res, next) => {
 });
 
 app.use(express.json());
+
+// ★★★ ここに移動：ルーターの登録 ★★★
+const callerIdsRouter = require('./routes/callerIds');
+app.use('/api/caller-ids', callerIdsRouter);
 
 // ヘルスチェックエンドポイント - 最優先で定義
 app.get('/health', (req, res) => {
@@ -47,6 +64,34 @@ app.get('/health', (req, res) => {
       default: process.env.DEFAULT_CALL_PROVIDER,
       mockMode: process.env.MOCK_ASTERISK === 'true'
     }
+  });
+});
+
+// ★★★ 追加: テスト用のエンドポイント ★★★
+app.get('/api/test-cors', (req, res) => {
+  res.json({ 
+    message: 'CORS設定テスト成功',
+    origin: req.headers.origin || 'unknown',
+    time: new Date().toISOString()
+  });
+});
+
+// ★★★ 追加: チャンネル用のテストエンドポイント ★★★
+app.get('/api/test-channels/:id', (req, res) => {
+  res.json([
+    { id: 1, username: '03080001', channel_type: 'outbound', status: 'available', last_used: null },
+    { id: 2, username: '03080002', channel_type: 'transfer', status: 'available', last_used: null },
+    { id: 3, username: '03080003', channel_type: 'both', status: 'available', last_used: null }
+  ]);
+});
+
+// ルートエンドポイント
+app.get('/', (req, res) => {
+  res.json({ 
+    message: 'オートコールシステムAPI稼働中',
+    version: '1.1.0',
+    mode: process.env.MOCK_ASTERISK === 'true' ? 'モックモード' : '本番モード',
+    defaultProvider: process.env.DEFAULT_CALL_PROVIDER || 'asterisk'
   });
 });
 

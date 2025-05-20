@@ -94,10 +94,11 @@ class SipService extends EventEmitter {
     try {
       logger.info('データベースからSIPチャンネル情報を読み込み中...');
       
-      // caller_idsとcaller_channelsテーブルからデータを取得
+      // caller_idsとcaller_channelsテーブルからデータを取得（channel_typeも含める）
       const [channels] = await db.query(`
         SELECT cc.*, ci.number as caller_number, ci.description as description, 
-               ci.provider, ci.domain, ci.id as main_caller_id
+              ci.provider, ci.domain, ci.id as main_caller_id,
+              cc.channel_type
         FROM caller_channels cc
         JOIN caller_ids ci ON cc.caller_id_id = ci.id
         WHERE ci.active = true
@@ -117,6 +118,7 @@ class SipService extends EventEmitter {
         domain: channel.domain,
         provider: channel.provider,
         mainCallerId: channel.main_caller_id, // メイン発信者番号IDを保持
+        channelType: channel.channel_type || 'both', // チャンネルタイプを追加
         status: channel.status || 'available', // DBにステータスが保存されていればそれを使用
         lastUsed: channel.last_used || null,
         failCount: 0
@@ -154,6 +156,7 @@ class SipService extends EventEmitter {
   // ファイルからSIPアカウント情報を読み込む（従来機能）
   loadSipAccountsFromFile() {
     logger.info('ファイルからSIPアカウントを読み込み中...');
+    
     
     try {
       // 環境変数から読み込む
@@ -224,16 +227,20 @@ class SipService extends EventEmitter {
     
     try {
       // 特定の発信者番号のチャンネルを使用する場合
+      // 使用目的を取得（デフォルトはoutbound）
+      const channelType = params.channelType || 'outbound';
+      
+      // 特定の発信者番号のチャンネルを使用する場合
       let sipAccount = null;
       
       if (params.callerIdData && params.callerIdData.id) {
-        // 特定の発信者番号ID向けの利用可能なチャンネルを探す
-        sipAccount = await this.getAvailableSipAccountForCallerId(params.callerIdData.id);
+        // 特定の発信者番号ID向けの利用可能な指定用途のチャンネルを探す
+        sipAccount = await this.getAvailableSipAccountByType(params.callerIdData.id, channelType);
         
         if (!sipAccount) {
-          logger.warn(`発信者番号ID ${params.callerIdData.id} に利用可能なチャンネルがありません`);
-          // バックアップとして任意の利用可能なチャンネルを使用
-          sipAccount = await this.getAvailableSipAccount();
+          logger.warn(`発信者番号ID ${params.callerIdData.id} に利用可能な ${channelType} チャンネルがありません`);
+        // バックアップとして任意の利用可能なチャンネルを使用
+        sipAccount = await this.getAvailableSipAccount();
         }
       } else {
         // 任意の利用可能なチャンネルを使用
@@ -868,6 +875,33 @@ class SipService extends EventEmitter {
       logger.error('チャンネル状態同期エラー:', error);
       return false;
     }
+  }
+
+  // 特定の用途に対応した利用可能なSIPアカウントを取得する関数
+  async getAvailableSipAccountByType(callerId, channelType = 'outbound') {
+    logger.info(`発信者番号ID ${callerId} の ${channelType} 用の利用可能なSIPアカウントを検索中`);
+    
+    // 発信者番号IDに関連付けられたチャンネルを取得
+    const channels = this.callerIdToChannelsMap.get(parseInt(callerId));
+    
+    if (!channels || channels.length === 0) {
+      logger.warn(`発信者番号ID ${callerId} に関連付けられたチャンネルが見つかりません`);
+      return null;
+    }
+    
+    // 指定された用途と一致するチャンネルのみをフィルタリング
+    const filteredChannels = channels.filter(account => 
+      account.status === 'available' && 
+      (account.channelType === channelType || account.channelType === 'both')
+    );
+    
+    if (filteredChannels.length === 0) {
+      logger.warn(`発信者番号ID ${callerId} に利用可能な ${channelType} チャンネルがありません`);
+      return null;
+    }
+    
+    logger.info(`発信者番号ID ${callerId} の利用可能な ${channelType} チャンネルを見つけました: ${filteredChannels[0].username}`);
+    return filteredChannels[0];
   }
 }
 
