@@ -515,20 +515,37 @@ const ContactsList = ({ campaignId }) => {
       });
       
       if (!response.ok) {
-        const errorData = await response.text();
-        console.error('連絡先取得API応答エラー:', errorData);
+        // エラーのレスポンスボディをログ出力
+        let errorText = '';
+        try {
+          errorText = await response.text();
+          console.error('連絡先取得API応答エラー:', errorText);
+          
+          // JSONとしてパース可能か試みる
+          const errorData = JSON.parse(errorText);
+          if (errorData.message) {
+            throw new Error(errorData.message);
+          }
+        } catch (parseError) {
+          // JSONパースエラーの場合、または明示的なエラーメッセージがない場合
+          console.error('エラーレスポンスのパースエラー:', parseError);
+        }
+        
         throw new Error(`連絡先の取得に失敗しました (${response.status})`);
       }
       
       const data = await response.json();
       console.log('取得した連絡先データ:', data);
       
-      // APIレスポンスの構造をチェック
+      // バックエンドからのレスポンス形式に合わせて処理
       if (data && Array.isArray(data.contacts)) {
+        // 正しいレスポンス形式: { contacts: [], total: number, page: number, totalPages: number }
         setContacts(data.contacts);
         setPagination(prev => ({ 
           ...prev, 
-          total: data.pagination?.total || data.contacts.length 
+          total: data.total || 0,
+          page: data.page || prev.page,
+          totalPages: data.totalPages || 1
         }));
       } else if (Array.isArray(data)) {
         // APIが配列を直接返す場合の対応
@@ -536,6 +553,7 @@ const ContactsList = ({ campaignId }) => {
         setPagination(prev => ({ ...prev, total: data.length }));
       } else {
         console.warn('予期しないAPIレスポンス形式:', data);
+        // データが全くない状態として扱う（空の配列を設定）
         setContacts([]);
         setPagination(prev => ({ ...prev, total: 0 }));
       }

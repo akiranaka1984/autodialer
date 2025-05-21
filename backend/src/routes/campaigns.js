@@ -287,12 +287,13 @@ router.get('/:id/details', auth, async (req, res) => {
   }
 });
 
-// キャンペーン開始
+// キャンペーン開始エンドポイント修正
 router.post('/:id/start', auth, async (req, res) => {
   try {
     const campaignId = req.params.id;
+    logger.info(`キャンペーン開始リクエスト受信: ID=${campaignId}`);
     
-    // キャンペーンの検証
+    // キャンペーンの検証（既存コード）
     const [campaign] = await db.query(`
       SELECT c.*, ci.active as caller_id_active,
              (SELECT COUNT(*) FROM contacts WHERE campaign_id = c.id) as contact_count
@@ -313,13 +314,44 @@ router.post('/:id/start', auth, async (req, res) => {
       return res.status(400).json({ message: '連絡先が登録されていません' });
     }
     
+    // 発信サービスを明示的にインポート
+    const dialerService = require('../services/dialerService');
+    
     // キャンペーンのステータスを更新
     await db.query(
       'UPDATE campaigns SET status = ? WHERE id = ?',
       ['active', campaignId]
     );
     
-    res.json({ message: 'キャンペーンを開始しました', status: 'active' });
+    // 発信サービスに通知
+    try {
+      // 発信サービスでキャンペーン開始
+      const started = await dialerService.startCampaign(campaignId);
+      logger.info(`発信サービスからの応答: ${started ? '成功' : '失敗'}`);
+      
+      // 即座に発信キュー処理を実行
+      await dialerService.processDialerQueue();
+      logger.info(`発信キュー処理が実行されました`);
+      
+      // Promiseを返さないようにsetTimeout()を使用
+      setTimeout(() => {
+        dialerService.processDialerQueue()
+          .then(() => logger.info(`二次発信キュー処理が実行されました`))
+          .catch(err => logger.error(`二次発信キュー処理エラー: ${err.message}`));
+      }, 5000); // 5秒後に再度実行
+      
+      res.json({ 
+        message: 'キャンペーンを開始しました', 
+        status: 'active',
+        serviceStarted: started 
+      });
+    } catch (serviceError) {
+      logger.error(`発信サービスエラー: ${serviceError.message}`);
+      res.status(500).json({ 
+        message: 'キャンペーンの開始は成功しましたが、発信処理でエラーが発生しました',
+        error: serviceError.message
+      });
+    }
   } catch (error) {
     logger.error('キャンペーン開始エラー:', error);
     res.status(500).json({ message: 'エラーが発生しました' });

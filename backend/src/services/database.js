@@ -57,12 +57,25 @@ const getPool = async () => {
 };
 
 // クエリを実行する関数
+// クエリを実行する関数
 const query = async (sql, params = []) => {
   const conn = await getPool();
   try {
+    // LIMIT句を含むSQLの特別な処理
+    if (sql.includes('LIMIT ?') && params.length > 0) {
+      // 最後のパラメータが数値であることを確認
+      const lastParam = params[params.length - 1];
+      if (typeof lastParam !== 'number') {
+        // LIMIT句のプレースホルダーを直接置換
+        sql = sql.replace('LIMIT ?', `LIMIT ${parseInt(lastParam, 10) || 1}`);
+        // 最後のパラメータを削除
+        params = params.slice(0, -1);
+      }
+    }
+    
     // execute を使用
+    logger.debug(`SQL実行: ${sql}, パラメータ: ${JSON.stringify(params)}`);
     const result = await conn.execute(sql, params);
-    // mysql2/promiseの結果は[rows, fields]形式なので、きちんと返す
     return result;
   } catch (error) {
     logger.error(`クエリエラー: ${sql}`, error);

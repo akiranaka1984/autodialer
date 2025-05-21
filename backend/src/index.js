@@ -1,4 +1,4 @@
-// backend/src/index.js の修正版
+// backend/src/index.js
 const express = require('express');
 const cors = require('cors');
 const http = require('http');
@@ -61,6 +61,9 @@ app.use('/api/calls', callsRouter);
 // contacts ルーターは routes/contacts.js 内で mergeParams: true と設定
 const contactsRouter = require('./routes/contacts');
 app.use('/api/campaigns/:campaignId/contacts', contactsRouter);
+
+// 追加: 独立した contacts ルートパスを追加
+app.use('/api/contacts', contactsRouter);
 
 // ヘルスチェックエンドポイント
 app.get('/health', (req, res) => {
@@ -376,6 +379,44 @@ process.on('SIGINT', async () => {
     logger.error('終了処理中にエラーが発生しました:', error);
     process.exit(1);
   }
+});
+
+// サーバー起動後に各サービスを初期化
+server.on('listening', async () => {
+  logger.info('サービスの初期化を開始します...');
+  
+  // SIPサービスの初期化
+  try {
+    const sipService = require('./services/sipService');
+    await sipService.connect();
+    logger.info('SIPサービスの初期化が完了しました');
+  } catch (error) {
+    logger.error('SIPサービス初期化エラー:', error);
+  }
+  
+  // コールサービスの初期化
+  try {
+    const callService = require('./services/callService');
+    await callService.initialize();
+    logger.info('コールサービスの初期化が完了しました');
+  } catch (error) {
+    logger.error('コールサービス初期化エラー:', error);
+  }
+  
+  // 発信サービスの初期化
+  try {
+    const dialerService = require('./services/dialerService');
+    const result = await dialerService.initializeService();
+    if (result) {
+      logger.info('発信サービスの初期化が完了しました');
+    } else {
+      logger.warn('発信サービスの初期化が不完全です');
+    }
+  } catch (error) {
+    logger.error('発信サービス初期化エラー:', error);
+  }
+  
+  logger.info('全サービスの初期化が完了しました');
 });
 
 // サーバー起動

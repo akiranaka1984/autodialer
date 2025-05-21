@@ -271,4 +271,52 @@ router.post('/dnc', async (req, res) => {
   }
 });
 
+// backend/src/routes/contacts.js に以下のルートを追加する
+// 既存のコードはそのまま残し、これを追加します
+
+// キャンペーンIDに基づく連絡先一覧の取得（別パスでの対応）
+// backend/src/routes/contacts.js の該当部分を修正
+router.get('/campaign/:campaignId', auth, async (req, res) => {
+  try {
+    const campaignId = req.params.campaignId;
+    const limit = parseInt(req.query.limit) || 20;
+    const offset = parseInt(req.query.offset) || 0;
+    
+    console.log(`連絡先データを検索: campaign_id=${campaignId}, limit=${limit}, offset=${offset}`);
+    
+    // ===== 修正部分：LIMIT と OFFSET を直接クエリ文字列に埋め込む =====
+    const [contacts] = await db.query(`
+      SELECT * FROM contacts 
+      WHERE campaign_id = ? 
+      ORDER BY id DESC 
+      LIMIT ${limit} OFFSET ${offset}
+    `, [campaignId]);
+    
+    // 総件数を取得
+    const [countResult] = await db.query(
+      'SELECT COUNT(*) as total FROM contacts WHERE campaign_id = ?',
+      [campaignId]
+    );
+    
+    // countResultは配列形式なので最初の要素のtotalプロパティを取得
+    const total = countResult[0]?.total || 0;
+    
+    res.json({
+      contacts: contacts, // 配列を返す
+      total: total,
+      page: Math.floor(offset / limit) + 1,
+      totalPages: Math.ceil(total / limit) || 1
+    });
+  } catch (error) {
+    console.error('連絡先取得エラー詳細:', error);
+    
+    // エラー情報を詳細に返す
+    res.status(500).json({ 
+      message: 'データの取得に失敗しました', 
+      error: error.message,
+      stack: error.stack
+    });
+  }
+});
+
 module.exports = router;
