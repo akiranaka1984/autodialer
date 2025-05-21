@@ -4,6 +4,9 @@ WORKDIR /app
 
 # 必要なパッケージと開発ツールをインストール
 RUN apk update && apk add --no-cache \
+    alsa-lib \
+    alsa-utils \
+    alsa-plugins-null \
     build-base \
     git \
     make \
@@ -12,12 +15,18 @@ RUN apk update && apk add --no-cache \
     linux-headers \
     # PJSIPをインストール
     pjproject \
-    pjproject-dev
+    pjproject-dev \
+    pjsua \ 
+    iputils \
+    netcat-openbsd \
+    libsrtp \
+    tcpdump \
+    socat
 
 # パッケージインストール用ファイルのみコピー
 COPY package*.json ./
 
-# 通常のnpm installを使用して依存関係をインストール
+# 依存関係をインストール
 RUN npm install
 
 # nodemonをグローバルにインストール
@@ -34,8 +43,25 @@ RUN echo '#!/bin/sh' > /usr/local/bin/sipcmd && \
       --null-audio \
       --no-vad \
       --duration=$7 \
+      --log-level=5 \
       sip:$5@$4' >> /usr/local/bin/sipcmd && \
     chmod +x /usr/local/bin/sipcmd
+
+# デバッグ用の簡易シェルスクリプトを作成
+RUN echo '#!/bin/sh' > /usr/local/bin/test-sip && \
+    echo 'echo "Testing SIP connection to $1 with account $2..."' >> /usr/local/bin/test-sip && \
+    echo 'pjsua \
+      --id="sip:$2@ito258258.site" \
+      --registrar="sip:ito258258.site" \
+      --realm="*" \
+      --username="$2" \
+      --password="$3" \
+      --null-audio \
+      --no-vad \
+      --duration=30 \
+      --log-level=5 \
+      sip:$1@ito258258.site' >> /usr/local/bin/test-sip && \
+    chmod +x /usr/local/bin/test-sip
 
 # アプリケーションのポートを公開
 EXPOSE 5000
