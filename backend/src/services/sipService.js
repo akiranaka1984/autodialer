@@ -256,6 +256,7 @@ class SipService extends EventEmitter {
       const formattedNumber = this.formatPhoneNumber(params.phoneNumber);
       const sipServer = process.env.SIP_SERVER || 'ito258258.site';
       const sipPort = process.env.SIP_PORT || '5060';
+      const callDuration = '30'; // 通話継続時間を指定
       
       // 発信IDの生成
       const callId = 'sip-' + Date.now() + '-' + Math.floor(Math.random() * 10000);
@@ -266,7 +267,7 @@ class SipService extends EventEmitter {
         sipAccount.password,          // パスワード
         sipServer,                    // SIPサーバー
         formattedNumber,              // 発信先
-        '30'                          // 発信タイムアウト（秒）
+        callDuration                  // 通話継続時間（秒）
       ];
       
       logger.debug(`sipcmdコマンド実行: ${this.sipcmdPath} ${args.join(' ')}`);
@@ -291,50 +292,8 @@ class SipService extends EventEmitter {
       this.callToAccountMap.set(callId, sipAccount);
       
       // sipcmdプロセスを起動
-    const sipcmdProcess = spawn(this.sipcmdPath, args);
-
-// ここから新しいコードを追加
-    // アクティブコールマップに追加
-    this.activeCallsMap.set(callId, {
-      process: sipcmdProcess,
-      startTime: Date.now(),
-      status: 'calling',
-      phoneNumber: formattedNumber,
-      callerID: sipAccount.callerID,
-      mainCallerId: sipAccount.mainCallerId
-    });
-
-    // 発信状態監視のタイムアウト設定
-    const callTimeout = setTimeout(() => {
-      if (this.activeCallsMap.has(callId)) {
-        const callData = this.activeCallsMap.get(callId);
-        if (callData.status === 'calling') {
-          logger.warn(`発信タイムアウト: callId=${callId}, number=${formattedNumber}`);
-          
-          // プロセスを強制終了
-          if (callData.process) {
-            try {
-              callData.process.kill();
-            } catch (killError) {
-              logger.error(`プロセス終了エラー: ${killError.message}`);
-            }
-          }
-          
-          // 通話終了イベントをエミット
-          this.emit('callEnded', {
-            callId,
-            status: 'NO ANSWER',
-            duration: 0,
-            mainCallerId: callData.mainCallerId
-          });
-          
-          // マップから削除
-          this.activeCallsMap.delete(callId);
-          this.releaseCallResource(callId);
-        }
-      }
-    }, 60000); // 60秒タイムアウト
-      
+      const sipcmdProcess = spawn(this.sipcmdPath, args);
+  
       // アクティブコールマップに追加
       this.activeCallsMap.set(callId, {
         process: sipcmdProcess,
@@ -344,13 +303,44 @@ class SipService extends EventEmitter {
         callerID: sipAccount.callerID,
         mainCallerId: sipAccount.mainCallerId
       });
+  
+      // 発信状態監視のタイムアウト設定
+      const callTimeout = setTimeout(() => {
+        if (this.activeCallsMap.has(callId)) {
+          const callData = this.activeCallsMap.get(callId);
+          if (callData.status === 'calling') {
+            logger.warn(`発信タイムアウト: callId=${callId}, number=${formattedNumber}`);
+            
+            // プロセスを強制終了
+            if (callData.process) {
+              try {
+                callData.process.kill();
+              } catch (killError) {
+                logger.error(`プロセス終了エラー: ${killError.message}`);
+              }
+            }
+            
+            // 通話終了イベントをエミット
+            this.emit('callEnded', {
+              callId,
+              status: 'NO ANSWER',
+              duration: 0,
+              mainCallerId: callData.mainCallerId
+            });
+            
+            // マップから削除
+            this.activeCallsMap.delete(callId);
+            this.releaseCallResource(callId);
+          }
+        }
+      }, 60000); // 60秒タイムアウト
       
-      // プロセス出力の処理
+      // プロセス出力の処理（stdout）
       sipcmdProcess.stdout.on('data', (data) => {
         const output = data.toString();
         logger.debug(`sipcmd出力: ${output}`);
         
-        // 発信状況の処理（pjsuaの出力パターンに合わせて修正）
+        // 発信状況の処理
         if (output.includes('Call established') || 
             output.includes('Connected') || 
             output.includes('confirmed dialog') || 
@@ -364,9 +354,17 @@ class SipService extends EventEmitter {
         }
       });
       
-      // エラー出力の処理
+      // エラー出力の処理（stderr）
       sipcmdProcess.stderr.on('data', (data) => {
-        logger.error(`sipcmd エラー: ${data.toString()}`);
+        const errorOutput = data.toString();
+        logger.error(`sipcmd エラー: ${errorOutput}`);
+        
+        // SIP関連のエラーを詳細分析
+        if (errorOutput.includes('408') || errorOutput.includes('Timeout')) {
+          logger.error('SIPタイムアウトエラーが発生しました - ネットワーク設定を確認してください');
+        } else if (errorOutput.includes('403')) {
+          logger.error('SIP認証エラー: ユーザー名またはパスワードが正しくない可能性があります');
+        }
       });
       
       // プロセス終了時の処理
@@ -777,7 +775,7 @@ class SipService extends EventEmitter {
   }
   
   setMockMode(mode) {
-    this.mockMode = mode === true;
+    this.mockMode = mode === false;
     logger.info(`SIPサービスのモックモードを${this.mockMode ? '有効' : '無効'}に設定`);
     return this.mockMode;
   }

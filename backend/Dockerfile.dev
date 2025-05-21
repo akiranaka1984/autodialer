@@ -46,22 +46,19 @@ RUN echo '#!/bin/sh' > /usr/local/bin/sipcmd && \
       sip:$4@$3' >> /usr/local/bin/sipcmd && \
     chmod +x /usr/local/bin/sipcmd
 
-# デバッグ用の簡易シェルスクリプトを作成
-RUN echo '#!/bin/sh' > /usr/local/bin/test-sip && \
-    echo 'echo "Testing SIP connection to $1 with account $2..."' >> /usr/local/bin/test-sip && \
+    RUN echo '#!/bin/sh' > /usr/local/bin/sipcmd && \
+    echo 'echo "Executing SIP call: $1@$3 -> $4"' >> /usr/local/bin/sipcmd && \
     echo 'pjsua \
-      --id="sip:$2@ito258258.site" \
-      --registrar="sip:ito258258.site" \
+      --id="sip:$1@$3" \
+      --registrar="sip:$3" \
       --realm="*" \
-      --username="$2" \
-      --password="$3" \
+      --username="$1" \
+      --password="$2" \
       --null-audio \
       --no-vad \
-      --auto-play \
-      --duration=30 \
-      --log-level=5 \
-      sip:$1@ito258258.site' >> /usr/local/bin/test-sip && \
-    chmod +x /usr/local/bin/test-sip
+      --duration=$5 \
+      sip:$4@$3' >> /usr/local/bin/sipcmd && \
+    chmod +x /usr/local/bin/sipcmd
 
 # アプリケーションのポートを公開
 EXPOSE 5000
