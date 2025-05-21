@@ -10,40 +10,36 @@ require('dotenv').config();
 
 // Express アプリケーションの初期化
 const app = express();
-// ポート設定 - docker-compose.devのポートマッピングと合わせる
-const PORT = parseInt(process.env.PORT || '5000', 10); // コンテナ内のポートは5000、外部からは5001でアクセス
+// ポート設定
+const PORT = parseInt(process.env.PORT || '5000', 10);
 
 // HTTPサーバーの作成
 const server = http.createServer(app);
 
-// ★★★ 重要: CORSの設定をルーター登録よりも前に移動 ★★★
-// CORSの設定を修正
+// ★★★ 最優先: 統一されたCORS設定 (すべてのルーター登録前に配置) ★★★
 app.use(cors({
   origin: ['http://152.42.200.112:3003', 'http://localhost:3003'],
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization', 'Cache-Control'],
-  credentials: true
+  credentials: true,
+  maxAge: 86400 // キャッシュ期間を設定 (1日)
 }));
 
-// 以下のミドルウェアを追加して全レスポンスに文字セットを設定
-app.use((req, res, next) => {
-  // すべてのレスポンスに対してUTF-8文字セットを明示
-  res.header('Content-Type', 'application/json; charset=utf-8');
-  
-  // 追加のCORSヘッダー
+// OPTIONS リクエスト処理 (プリフライト)
+app.options('*', (req, res) => {
   res.header('Access-Control-Allow-Origin', req.headers.origin || '*');
   res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS, PATCH');
   res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, Cache-Control');
-  
-  // プリフライトリクエスト対応
-  if (req.method === 'OPTIONS') {
-    return res.sendStatus(200);
-  }
-  
-  next();
+  res.header('Access-Control-Allow-Credentials', 'true');
+  res.header('Access-Control-Max-Age', '86400');
+  res.sendStatus(200);
 });
 
-// リクエストログにリクエストボディも表示
+// リクエスト処理のミドルウェア
+app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
+
+// リクエストログ
 app.use((req, res, next) => {
   logger.debug(`${req.method} ${req.url} - Origin: ${req.headers.origin || 'none'}`);
   if (['POST', 'PUT', 'PATCH'].includes(req.method)) {
@@ -52,43 +48,21 @@ app.use((req, res, next) => {
   next();
 });
 
-// プリフライトリクエストの処理を追加
-app.options('*', cors());
-
-// ★★★ 追加: 個別のCORSヘッダーも設定 ★★★
-app.use((req, res, next) => {
-  res.header('Access-Control-Allow-Origin', '*');
-  res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS, PATCH');
-  res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, Cache-Control');
-  // プリフライトリクエスト対応
-  if (req.method === 'OPTIONS') {
-    return res.sendStatus(200);
-  }
-  next();
-});
-
-// リクエストログ
-app.use((req, res, next) => {
-  logger.debug(`${req.method} ${req.url} - Origin: ${req.headers.origin || 'none'}`);
-  next();
-});
-
-app.use(express.json({ charset: 'utf-8' }));
-app.use(express.urlencoded({ extended: true, charset: 'utf-8' }));
-
-// ★★★ ここに移動：ルーターの登録 ★★★
-const callerIdsRouter = require('./routes/callerIds');
-app.use('/api/caller-ids', callerIdsRouter);
-
-// ★★★ 追加: キャンペーンルーターの登録 ★★★
+// ★★★ この位置にルーターを登録 ★★★
 const campaignsRouter = require('./routes/campaigns');
 app.use('/api/campaigns', campaignsRouter);
 
-// ★★★ 追加: callsルーターを登録 ★★★
+const callerIdsRouter = require('./routes/callerIds');
+app.use('/api/caller-ids', callerIdsRouter);
+
 const callsRouter = require('./routes/calls');
 app.use('/api/calls', callsRouter);
 
-// ヘルスチェックエンドポイント - 最優先で定義
+// contacts ルーターは routes/contacts.js 内で mergeParams: true と設定
+const contactsRouter = require('./routes/contacts');
+app.use('/api/campaigns/:campaignId/contacts', contactsRouter);
+
+// ヘルスチェックエンドポイント
 app.get('/health', (req, res) => {
   res.json({ 
     status: 'ok', 
@@ -101,16 +75,21 @@ app.get('/health', (req, res) => {
   });
 });
 
-// ★★★ 追加: テスト用のエンドポイント ★★★
+// CORS テスト用エンドポイント
 app.get('/api/test-cors', (req, res) => {
   res.json({ 
     message: 'CORS設定テスト成功',
     origin: req.headers.origin || 'unknown',
-    time: new Date().toISOString()
+    time: new Date().toISOString(),
+    headers: {
+      'access-control-allow-origin': res.getHeader('Access-Control-Allow-Origin'),
+      'access-control-allow-methods': res.getHeader('Access-Control-Allow-Methods'),
+      'access-control-allow-headers': res.getHeader('Access-Control-Allow-Headers')
+    }
   });
 });
 
-// ★★★ 追加: テスト用ルートの追加 ★★★
+// テスト用ルート
 app.get('/api/test-caller-ids', (req, res) => {
   // 既存の発信者番号APIの結果と同じ形式で返す
   db.query('SELECT * FROM caller_ids ORDER BY created_at DESC')
@@ -124,15 +103,6 @@ app.get('/api/test-caller-ids', (req, res) => {
     });
 });
 
-// ★★★ 追加: チャンネル用のテストエンドポイント ★★★
-/*app.get('/api/test-channels/:id', (req, res) => {
-  res.json([
-    { id: 1, username: '03080001', channel_type: 'outbound', status: 'available', last_used: null },
-    { id: 2, username: '03080002', channel_type: 'transfer', status: 'available', last_used: null },
-    { id: 3, username: '03080003', channel_type: 'both', status: 'available', last_used: null }
-  ]);
-});
-*/
 // ルートエンドポイント
 app.get('/', (req, res) => {
   res.json({ 

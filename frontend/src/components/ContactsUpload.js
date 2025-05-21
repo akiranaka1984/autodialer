@@ -1,39 +1,69 @@
+// frontend/src/components/ContactsUpload.js
 import React, { useState, useEffect } from 'react';
-import { Upload, AlertCircle, Check, X, File } from 'lucide-react';
 import { useParams, useNavigate } from 'react-router-dom';
+import { Upload, AlertCircle, Check, Info, X, FileText, Download } from 'lucide-react';
+import Papa from 'papaparse';
 
 const ContactsUpload = () => {
   const { campaignId } = useParams();
   const navigate = useNavigate();
   
-  const [campaignName, setCampaignName] = useState('');
+  // 状態変数を定義
   const [file, setFile] = useState(null);
-  const [preview, setPreview] = useState([]);
-  const [uploadStatus, setUploadStatus] = useState('idle');
-  const [message, setMessage] = useState('');
-  const [mappings, setMappings] = useState({
-    phone: '',
-    name: '',
-    company: ''
+  const [uploading, setUploading] = useState(false);
+  const [error, setError] = useState(null);
+  const [successMessage, setSuccessMessage] = useState(null);
+  const [campaign, setCampaign] = useState(null);
+  const [previewData, setPreviewData] = useState(null);
+  const [uploadResults, setUploadResults] = useState(null);
+  const [contacts, setContacts] = useState([]);
+  
+  // アップロードオプション
+  const [skipFirstRow, setSkipFirstRow] = useState(true);
+  const [updateExisting, setUpdateExisting] = useState(false);
+  const [skipDnc, setSkipDnc] = useState(true);
+  
+  // フィールドマッピング
+  const [fieldMappings, setFieldMappings] = useState({
+    phone: 0,
+    name: 1,
+    company: 2,
+    email: 3
   });
-  const [headers, setHeaders] = useState([]);
-  const [uploadProgress, setUploadProgress] = useState(0);
-  const [loading, setLoading] = useState(true);
-
+  
+  // 環境変数からAPIのベースURLを取得
+  const apiBaseUrl = process.env.REACT_APP_API_URL || '/api';
+  
+  // コンタクト情報を取得
+  const fetchContacts = async () => {
+    try {
+      const token = localStorage.getItem('token');
+      
+      const response = await fetch(`${apiBaseUrl}/campaigns/${campaignId}/contacts?limit=10`, {
+        headers: {
+          'Authorization': `Bearer ${token}`
+        }
+      });
+      
+      if (!response.ok) {
+        throw new Error('連絡先情報の取得に失敗しました');
+      }
+      
+      const data = await response.json();
+      setContacts(data.contacts || data || []);
+    } catch (err) {
+      console.error('連絡先取得エラー:', err);
+      setError('連絡先情報の取得に失敗しました: ' + err.message);
+    }
+  };
+  
+  // キャンペーン情報を取得
   useEffect(() => {
-    const fetchCampaignData = async () => {
+    const fetchCampaign = async () => {
       try {
         const token = localStorage.getItem('token');
         
-        if (process.env.NODE_ENV === 'development') {
-          setTimeout(() => {
-            setCampaignName('サンプルキャンペーン');
-            setLoading(false);
-          }, 500);
-          return;
-        }
-        
-        const response = await fetch(`/api/campaigns/${campaignId}`, {
+        const response = await fetch(`${apiBaseUrl}/campaigns/${campaignId}`, {
           headers: {
             'Authorization': `Bearer ${token}`
           }
@@ -43,332 +73,201 @@ const ContactsUpload = () => {
           throw new Error('キャンペーン情報の取得に失敗しました');
         }
         
-        const campaignData = await response.json();
-        setCampaignName(campaignData.name);
-      } catch (error) {
-        setMessage(`エラー: ${error.message}`);
-        setUploadStatus('error');
-      } finally {
-        setLoading(false);
+        const data = await response.json();
+        setCampaign(data);
+      } catch (err) {
+        console.error('キャンペーン取得エラー:', err);
+        setError('キャンペーン情報の取得に失敗しました: ' + err.message);
       }
     };
     
-    if (campaignId) {
-      fetchCampaignData();
-    }
-  }, [campaignId]);
-
-  // ファイル選択ハンドラ
-  const handleFileChange = async (e) => {
-    const selectedFile = e.target.files[0];
-    if (!selectedFile) return;
+    fetchCampaign();
+    fetchContacts();
+  }, [campaignId, apiBaseUrl]);
+  
+  // ファイル選択時の処理
+  const handleFileChange = (event) => {
+    const selectedFile = event.target.files[0];
+    setFile(selectedFile);
+    setError(null);
     
-    if (selectedFile.type !== 'text/csv' && !selectedFile.name.endsWith('.csv')) {
-      setMessage('CSVファイル形式のみアップロード可能です。');
-      setUploadStatus('error');
+    // ファイルプレビューを表示
+    if (selectedFile) {
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        const content = e.target.result;
+        Papa.parse(content, {
+          complete: (results) => {
+            // 最初の10行だけプレビュー表示
+            setPreviewData(results.data.slice(0, 10));
+          },
+          error: (error) => {
+            setError('CSVファイルの解析に失敗しました: ' + error.message);
+          }
+        });
+      };
+      reader.readAsText(selectedFile);
+    }
+  };
+  
+  // アップロード処理
+  const handleUpload = async () => {
+    if (!file) {
+      setError('ファイルを選択してください');
       return;
     }
     
-    setFile(selectedFile);
-    setUploadStatus('idle');
-    setMessage('');
-    
-    // CSVのプレビューを表示
-    try {
-      const reader = new FileReader();
-      reader.onload = (event) => {
-        const text = event.target.result;
-        const rows = text.split('\n');
-        const headers = rows[0].split(',').map(header => header.trim());
-        
-        setHeaders(headers);
-        
-        // 自動マッピング
-        const newMappings = { ...mappings };
-        headers.forEach((header, index) => {
-          const lowerHeader = header.toLowerCase();
-          if (lowerHeader.includes('電話') || lowerHeader.includes('phone') || lowerHeader.includes('tel')) {
-            newMappings.phone = index.toString();
-          }
-          if (lowerHeader.includes('名前') || lowerHeader.includes('name')) {
-            newMappings.name = index.toString();
-          }
-          if (lowerHeader.includes('会社') || lowerHeader.includes('company')) {
-            newMappings.company = index.toString();
-          }
-        });
-        
-        setMappings(newMappings);
-        
-        // プレビューデータを設定
-        const previewRows = rows.slice(1, 6)
-          .map(row => row.split(',').map(cell => cell.trim()))
-          .filter(row => row.length === headers.length && row.some(cell => cell));
-        
-        setPreview(previewRows);
-      };
-      reader.readAsText(selectedFile);
-    } catch (error) {
-      setMessage(`ファイル読み込みエラー: ${error.message}`);
-      setUploadStatus('error');
-    }
-  };
-
-  // マッピング変更ハンドラ
-  const handleMappingChange = (field, value) => {
-    setMappings({
-      ...mappings,
-      [field]: value
-    });
-  };
-
-  // CSVアップロード処理
-const handleUpload = async (file) => {
-  try {
     setUploading(true);
     setError(null);
     
-    // FormDataの作成
-    const formData = new FormData();
-    formData.append('file', file);
-    formData.append('campaignId', campaignId);
-    formData.append('skipFirstRow', skipFirstRow);
-    formData.append('updateExisting', updateExisting);
-    formData.append('skipDnc', skipDnc);
-    formData.append('mappings', JSON.stringify(fieldMappings));
-    
-    console.log('アップロード情報:', {
-      fileName: file.name,
-      fileSize: file.size,
-      campaignId,
-      skipFirstRow,
-      updateExisting,
-      skipDnc,
-      mappings: fieldMappings
-    });
-    
-    // APIリクエスト
-    const response = await fetch(`${apiBaseUrl}/contacts/upload`, {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${localStorage.getItem('token')}`
-      },
-      body: formData
-    });
-    
-    // レスポンスの検証
-    console.log('アップロードレスポンスステータス:', response.status);
-    
-    if (!response.ok) {
-      const errorText = await response.text();
-      console.error('アップロードエラーレスポンス:', errorText);
+    try {
+      const formData = new FormData();
+      formData.append('file', file);
+      formData.append('skipFirstRow', skipFirstRow);
+      formData.append('updateExisting', updateExisting);
+      formData.append('skipDnc', skipDnc);
+      formData.append('mappings', JSON.stringify(fieldMappings));
       
-      let errorMessage = '連絡先のアップロードに失敗しました';
-      try {
-        const errorData = JSON.parse(errorText);
-        errorMessage = errorData.message || errorMessage;
-      } catch (e) {
-        // JSONパースエラー、テキストをそのまま使用
+      const token = localStorage.getItem('token');
+      
+      // CSVデータをアップロード
+      const response = await fetch(`${apiBaseUrl}/campaigns/${campaignId}/contacts/upload`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`
+        },
+        body: formData
+      });
+      
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.message || 'アップロードに失敗しました');
       }
       
-      throw new Error(errorMessage);
-    }
-    
-    const result = await response.json();
-    console.log('アップロード結果:', result);
-    
-    setUploadResults(result);
-    setSuccessMessage(`${result.success}件の連絡先をアップロードしました`);
-    
-    // 再読み込み
-    fetchContacts();
-    
-  } catch (error) {
-    console.error('アップロード処理エラー:', error);
-    setError(`エラー: ${error.message}`);
-  } finally {
-    setUploading(false);
-  }
-};
-
-  if (loading) {
-    return (
-      <div className="flex items-center justify-center h-64">
-        <div className="text-center">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-500 mx-auto"></div>
-          <p className="mt-2 text-gray-600">読み込み中...</p>
-        </div>
-      </div>
-    );
-  }
-
-  return (
-    <div className="p-4 max-w-4xl mx-auto">
-      <h1 className="text-2xl font-bold mb-2">連絡先のアップロード</h1>
-      <h2 className="text-lg text-gray-600 mb-6">キャンペーン: {campaignName}</h2>
+      const data = await response.json();
       
-      {/* ステータスメッセージ */}
-      {message && (
-        <div className={`p-4 mb-6 rounded-md ${
-          uploadStatus === 'error' ? 'bg-red-100 text-red-700 border-l-4 border-red-500' : 
-          uploadStatus === 'success' ? 'bg-green-100 text-green-700 border-l-4 border-green-500' : 
-          'bg-blue-100 text-blue-700 border-l-4 border-blue-500'
-        }`}>
-          <div className="flex items-center">
-            {uploadStatus === 'error' && <AlertCircle className="h-5 w-5 mr-2" />}
-            {uploadStatus === 'success' && <Check className="h-5 w-5 mr-2" />}
-            <p>{message}</p>
+      setUploadResults(data);
+      setSuccessMessage(`${data.imported_count}件の連絡先をインポートしました`);
+      
+      // 連絡先リストを更新
+      fetchContacts();
+    } catch (err) {
+      console.error('アップロードエラー:', err);
+      setError('連絡先のアップロードに失敗しました: ' + err.message);
+    } finally {
+      setUploading(false);
+    }
+  };
+  
+  // フィールドマッピングの更新
+  const updateMapping = (field, columnIndex) => {
+    setFieldMappings({
+      ...fieldMappings,
+      [field]: parseInt(columnIndex)
+    });
+  };
+  
+  // テンプレートのダウンロード処理
+  const downloadTemplate = () => {
+    const csvContent = "電話番号,名前,会社名,メールアドレス\n09012345678,山田太郎,サンプル株式会社,sample@example.com";
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.setAttribute('download', 'contacts_template.csv');
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+  
+  return (
+    <div className="p-4">
+      <h1 className="text-2xl font-bold mb-6">連絡先アップロード</h1>
+      
+      {campaign && (
+        <div className="bg-blue-50 border-l-4 border-blue-500 p-4 mb-6">
+          <div className="flex">
+            <Info className="h-6 w-6 text-blue-500 mr-2" />
+            <div>
+              <h2 className="text-lg font-semibold text-blue-800">{campaign.name}</h2>
+              <p className="text-blue-700">このキャンペーンに連絡先をアップロードします。</p>
+            </div>
           </div>
         </div>
       )}
       
-      {/* ファイルアップロードセクション */}
-      <div className="bg-white rounded-lg shadow-md p-6 mb-6">
-        <div className="mb-4">
-          <h3 className="text-lg font-semibold mb-2">CSVファイルを選択</h3>
-          <p className="text-gray-600 mb-4">
-            連絡先リストをCSV形式でアップロードしてください。<br />
-            必須フィールド: 電話番号<br />
-            オプションフィールド: 名前、会社名
-          </p>
-          
-          <div className="flex items-center justify-center w-full">
-            <label className="flex flex-col w-full h-32 border-2 border-dashed border-gray-300 rounded-lg hover:bg-gray-50 hover:border-gray-400 cursor-pointer">
-              <div className="flex flex-col items-center justify-center pt-7">
-                <Upload className="w-10 h-10 text-gray-400" />
-                <p className="pt-1 text-sm text-gray-600">
-                  {file ? file.name : 'ファイルをドラッグするか、クリックして選択してください'}
-                </p>
-              </div>
-              <input
-                type="file"
-                className="hidden"
-                accept=".csv"
-                onChange={handleFileChange}
-                disabled={uploadStatus === 'loading'}
-              />
-            </label>
+      {error && (
+        <div className="bg-red-100 border-l-4 border-red-500 text-red-700 p-4 mb-6">
+          <div className="flex">
+            <AlertCircle className="h-5 w-5 mr-2" />
+            <p>{error}</p>
           </div>
         </div>
-        
-        {/* プログレスバー */}
-        {uploadStatus === 'loading' && (
-          <div className="mb-4">
-            <div className="flex justify-between mb-1">
-              <span className="text-sm font-medium text-blue-700">アップロード中...</span>
-              <span className="text-sm font-medium text-blue-700">{uploadProgress}%</span>
-            </div>
-            <div className="w-full bg-gray-200 rounded-full h-2.5">
-              <div 
-                className="bg-blue-600 h-2.5 rounded-full transition-all duration-300" 
-                style={{ width: `${uploadProgress}%` }}
-              ></div>
-            </div>
-          </div>
-        )}
-      </div>
+      )}
       
-      {/* プレビューとマッピング */}
-      {file && headers.length > 0 && (
-        <div className="bg-white rounded-lg shadow-md p-6 mb-6">
-          <h3 className="text-lg font-semibold mb-4">CSVマッピング</h3>
-          
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                電話番号 *
-              </label>
-              <select
-                value={mappings.phone}
-                onChange={(e) => handleMappingChange('phone', e.target.value)}
-                className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-300 focus:ring focus:ring-blue-200 focus:ring-opacity-50"
-                required
-              >
-                <option value="">選択してください</option>
-                {headers.map((header, index) => (
-                  <option key={index} value={index}>
-                    {header}
-                  </option>
-                ))}
-              </select>
-            </div>
-            
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                名前
-              </label>
-              <select
-                value={mappings.name}
-                onChange={(e) => handleMappingChange('name', e.target.value)}
-                className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-300 focus:ring focus:ring-blue-200 focus:ring-opacity-50"
-              >
-                <option value="">未選択</option>
-                {headers.map((header, index) => (
-                  <option key={index} value={index}>
-                    {header}
-                  </option>
-                ))}
-              </select>
-            </div>
-            
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                会社名
-              </label>
-              <select
-                value={mappings.company}
-                onChange={(e) => handleMappingChange('company', e.target.value)}
-                className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-300 focus:ring focus:ring-blue-200 focus:ring-opacity-50"
-              >
-                <option value="">未選択</option>
-                {headers.map((header, index) => (
-                  <option key={index} value={index}>
-                    {header}
-                  </option>
-                ))}
-              </select>
-            </div>
+      {successMessage && (
+        <div className="bg-green-100 border-l-4 border-green-500 text-green-700 p-4 mb-6">
+          <div className="flex">
+            <Check className="h-5 w-5 mr-2" />
+            <p>{successMessage}</p>
           </div>
-          
-          <h4 className="text-md font-semibold mb-2">プレビュー</h4>
-          {preview.length > 0 ? (
+        </div>
+      )}
+      
+      <div className="bg-white rounded-lg shadow-md p-6 mb-6">
+        <h2 className="text-lg font-semibold mb-4">CSVファイルをアップロード</h2>
+        
+        <div className="flex justify-between items-center mb-4">
+          <p className="text-gray-600">
+            CSVファイル形式で連絡先リストをアップロードしてください。
+          </p>
+          <button
+            onClick={downloadTemplate}
+            className="flex items-center px-3 py-1 text-sm bg-blue-600 text-white rounded hover:bg-blue-700"
+          >
+            <Download className="h-4 w-4 mr-1" />
+            テンプレート
+          </button>
+        </div>
+        
+        <div className="border-2 border-dashed border-gray-300 rounded-lg p-6 mb-4 text-center">
+          <input
+            type="file"
+            id="fileUpload"
+            className="hidden"
+            accept=".csv"
+            onChange={handleFileChange}
+          />
+          <label
+            htmlFor="fileUpload"
+            className="flex flex-col items-center justify-center cursor-pointer"
+          >
+            <Upload className="h-10 w-10 text-blue-500 mb-2" />
+            <span className="text-gray-700 mb-1">CSVファイルをドラッグ＆ドロップまたはクリックして選択</span>
+            <span className="text-gray-500 text-sm">{file ? file.name : 'CSVファイル形式（UTF-8推奨）'}</span>
+          </label>
+        </div>
+        
+        {previewData && previewData.length > 0 && (
+          <div className="mt-4 mb-4">
+            <h3 className="text-md font-semibold mb-2">ファイルプレビュー（最初の10行）</h3>
             <div className="overflow-x-auto">
               <table className="min-w-full divide-y divide-gray-200">
                 <thead className="bg-gray-50">
                   <tr>
-                    {headers.map((header, index) => (
-                      <th 
-                        key={index}
-                        scope="col"
-                        className={`px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider ${
-                          index.toString() === mappings.phone ? 'bg-blue-50' :
-                          index.toString() === mappings.name ? 'bg-green-50' :
-                          index.toString() === mappings.company ? 'bg-yellow-50' : ''
-                        }`}
-                      >
-                        {header}
-                        <div className="text-xs font-normal mt-1">
-                          {index.toString() === mappings.phone && '電話番号'}
-                          {index.toString() === mappings.name && '名前'}
-                          {index.toString() === mappings.company && '会社名'}
-                        </div>
+                    {previewData[0].map((header, index) => (
+                      <th key={index} className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                        列 {index + 1}
                       </th>
                     ))}
                   </tr>
                 </thead>
                 <tbody className="bg-white divide-y divide-gray-200">
-                  {preview.map((row, rowIndex) => (
-                    <tr key={rowIndex}>
+                  {previewData.map((row, rowIndex) => (
+                    <tr key={rowIndex} className={rowIndex === 0 && skipFirstRow ? 'bg-gray-100' : ''}>
                       {row.map((cell, cellIndex) => (
-                        <td 
-                          key={cellIndex}
-                          className={`px-6 py-4 whitespace-nowrap text-sm ${
-                            cellIndex.toString() === mappings.phone ? 'bg-blue-50' :
-                            cellIndex.toString() === mappings.name ? 'bg-green-50' :
-                            cellIndex.toString() === mappings.company ? 'bg-yellow-50' : ''
-                          }`}
-                        >
-                          {cell}
+                        <td key={cellIndex} className="px-3 py-2 whitespace-nowrap text-sm text-gray-500">
+                          {cell || <span className="text-gray-300">空</span>}
                         </td>
                       ))}
                     </tr>
@@ -376,32 +275,234 @@ const handleUpload = async (file) => {
                 </tbody>
               </table>
             </div>
-          ) : (
-            <p className="text-gray-500">プレビューデータがありません</p>
-          )}
+            {previewData.length > 0 && (
+              <div className="mt-2 text-sm text-gray-500">
+                {skipFirstRow && <span>※ 1行目（グレー部分）はヘッダーとしてスキップされます</span>}
+              </div>
+            )}
+          </div>
+        )}
+        
+        <div className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div>
+            <h3 className="text-md font-semibold mb-2">フィールドマッピング</h3>
+            <div className="space-y-2">
+              <div className="flex items-center">
+                <label className="w-32 text-sm text-gray-700">電話番号:</label>
+                <select
+                  value={fieldMappings.phone}
+                  onChange={(e) => updateMapping('phone', e.target.value)}
+                  className="border rounded px-2 py-1 text-sm"
+                >
+                  {previewData && previewData[0] && previewData[0].map((_, index) => (
+                    <option key={index} value={index}>列 {index + 1}</option>
+                  ))}
+                </select>
+              </div>
+              <div className="flex items-center">
+                <label className="w-32 text-sm text-gray-700">名前:</label>
+                <select
+                  value={fieldMappings.name}
+                  onChange={(e) => updateMapping('name', e.target.value)}
+                  className="border rounded px-2 py-1 text-sm"
+                >
+                  <option value={-1}>なし</option>
+                  {previewData && previewData[0] && previewData[0].map((_, index) => (
+                    <option key={index} value={index}>列 {index + 1}</option>
+                  ))}
+                </select>
+              </div>
+              <div className="flex items-center">
+                <label className="w-32 text-sm text-gray-700">会社名:</label>
+                <select
+                  value={fieldMappings.company}
+                  onChange={(e) => updateMapping('company', e.target.value)}
+                  className="border rounded px-2 py-1 text-sm"
+                >
+                  <option value={-1}>なし</option>
+                  {previewData && previewData[0] && previewData[0].map((_, index) => (
+                    <option key={index} value={index}>列 {index + 1}</option>
+                  ))}
+                </select>
+              </div>
+              <div className="flex items-center">
+                <label className="w-32 text-sm text-gray-700">メール:</label>
+                <select
+                  value={fieldMappings.email}
+                  onChange={(e) => updateMapping('email', e.target.value)}
+                  className="border rounded px-2 py-1 text-sm"
+                >
+                  <option value={-1}>なし</option>
+                  {previewData && previewData[0] && previewData[0].map((_, index) => (
+                    <option key={index} value={index}>列 {index + 1}</option>
+                  ))}
+                </select>
+              </div>
+            </div>
+          </div>
+          <div>
+            <h3 className="text-md font-semibold mb-2">アップロードオプション</h3>
+            <div className="space-y-2">
+              <label className="flex items-center">
+                <input
+                  type="checkbox"
+                  checked={skipFirstRow}
+                  onChange={(e) => setSkipFirstRow(e.target.checked)}
+                  className="mr-2"
+                />
+                <span className="text-sm text-gray-700">1行目をヘッダーとしてスキップ</span>
+              </label>
+              <label className="flex items-center">
+                <input
+                  type="checkbox"
+                  checked={updateExisting}
+                  onChange={(e) => setUpdateExisting(e.target.checked)}
+                  className="mr-2"
+                />
+                <span className="text-sm text-gray-700">既存の連絡先を更新する</span>
+              </label>
+              <label className="flex items-center">
+                <input
+                  type="checkbox"
+                  checked={skipDnc}
+                  onChange={(e) => setSkipDnc(e.target.checked)}
+                  className="mr-2"
+                />
+                <span className="text-sm text-gray-700">発信拒否リスト(DNC)のチェックを行う</span>
+              </label>
+            </div>
+          </div>
+        </div>
+        
+        <div className="mt-6 flex justify-end space-x-3">
+          <button
+            type="button"
+            onClick={() => navigate(`/campaigns/${campaignId}`)}
+            className="px-4 py-2 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50"
+          >
+            キャンセル
+          </button>
+          <button
+            type="button"
+            onClick={handleUpload}
+            disabled={!file || uploading}
+            className={`px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700 ${
+              !file || uploading ? 'opacity-50 cursor-not-allowed' : ''
+            }`}
+          >
+            {uploading ? '処理中...' : 'アップロード'}
+          </button>
+        </div>
+      </div>
+      
+      {uploadResults && (
+        <div className="bg-white rounded-lg shadow-md p-6 mb-6">
+          <h2 className="text-lg font-semibold mb-4">アップロード結果</h2>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <div>
+              <h3 className="text-md font-semibold mb-2">サマリー</h3>
+              <ul className="space-y-2">
+                <li className="flex justify-between">
+                  <span className="text-gray-600">処理された行数:</span>
+                  <span className="font-medium">{uploadResults.total_count || 0}</span>
+                </li>
+                <li className="flex justify-between">
+                  <span className="text-gray-600">インポートされた連絡先:</span>
+                  <span className="font-medium text-green-600">{uploadResults.imported_count || 0}</span>
+                </li>
+                <li className="flex justify-between">
+                  <span className="text-gray-600">更新された連絡先:</span>
+                  <span className="font-medium text-blue-600">{uploadResults.updated_count || 0}</span>
+                </li>
+                <li className="flex justify-between">
+                  <span className="text-gray-600">スキップされた連絡先:</span>
+                  <span className="font-medium text-yellow-600">{uploadResults.skipped_count || 0}</span>
+                </li>
+                <li className="flex justify-between">
+                  <span className="text-gray-600">エラー発生:</span>
+                  <span className="font-medium text-red-600">{uploadResults.error_count || 0}</span>
+                </li>
+              </ul>
+            </div>
+            
+            {uploadResults.errors && uploadResults.errors.length > 0 && (
+              <div>
+                <h3 className="text-md font-semibold mb-2">エラー</h3>
+                <div className="max-h-60 overflow-y-auto border rounded p-2 bg-red-50">
+                  <ul className="space-y-1">
+                    {uploadResults.errors.map((error, index) => (
+                      <li key={index} className="text-sm text-red-600 flex items-start">
+                        <X className="h-4 w-4 mr-1 flex-shrink-0 mt-0.5" />
+                        <span>{error}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              </div>
+            )}
+          </div>
+          
+          <div className="mt-6 flex justify-end">
+            <button
+              type="button"
+              onClick={() => navigate(`/campaigns/${campaignId}`)}
+              className="px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700"
+            >
+              キャンペーンに戻る
+            </button>
+          </div>
         </div>
       )}
       
-      <div className="flex justify-between">
-        <button
-          type="button"
-          onClick={() => navigate(`/campaigns/${campaignId}`)}
-          className="px-4 py-2 bg-gray-500 text-white rounded-md hover:bg-gray-600 focus:outline-none focus:ring-2 focus:ring-gray-500 focus:ring-opacity-50"
-        >
-          キャンセル
-        </button>
-        
-        <button
-          type="button"
-          onClick={handleUpload}
-          disabled={!file || uploadStatus === 'loading' || !mappings.phone}
-          className={`px-4 py-2 bg-blue-500 text-white rounded-md hover:bg-blue-600 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-opacity-50 ${
-            (!file || uploadStatus === 'loading' || !mappings.phone) ? 'opacity-50 cursor-not-allowed' : ''
-          }`}
-        >
-          {uploadStatus === 'loading' ? 'アップロード中...' : 'アップロード'}
-        </button>
-      </div>
+      {contacts.length > 0 && (
+        <div className="bg-white rounded-lg shadow-md p-6">
+          <div className="flex justify-between items-center mb-4">
+            <h2 className="text-lg font-semibold">現在の連絡先リスト（プレビュー）</h2>
+            <div className="text-sm text-gray-500">
+              {contacts.length}件の連絡先が表示されています
+            </div>
+          </div>
+          
+          <div className="overflow-x-auto">
+            <table className="min-w-full divide-y divide-gray-200">
+              <thead className="bg-gray-50">
+                <tr>
+                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">電話番号</th>
+                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">名前</th>
+                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">会社名</th>
+                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">ステータス</th>
+                </tr>
+              </thead>
+              <tbody className="bg-white divide-y divide-gray-200">
+                {contacts.map((contact, index) => (
+                  <tr key={contact.id || index}>
+                    <td className="px-4 py-3 whitespace-nowrap">{contact.phone}</td>
+                    <td className="px-4 py-3 whitespace-nowrap">{contact.name || '-'}</td>
+                    <td className="px-4 py-3 whitespace-nowrap">{contact.company || '-'}</td>
+                    <td className="px-4 py-3 whitespace-nowrap">
+                      <span className={`px-2 py-1 inline-flex text-xs leading-5 font-semibold rounded-full ${
+                        contact.status === 'pending' ? 'bg-yellow-100 text-yellow-800' :
+                        contact.status === 'completed' ? 'bg-green-100 text-green-800' :
+                        contact.status === 'called' ? 'bg-blue-100 text-blue-800' :
+                        contact.status === 'failed' ? 'bg-red-100 text-red-800' :
+                        contact.status === 'dnc' ? 'bg-purple-100 text-purple-800' :
+                        'bg-gray-100 text-gray-800'
+                      }`}>
+                        {contact.status === 'pending' ? '待機中' :
+                         contact.status === 'completed' ? '完了' :
+                         contact.status === 'called' ? '発信済' :
+                         contact.status === 'failed' ? '失敗' :
+                         contact.status === 'dnc' ? '発信拒否' :
+                         contact.status || '不明'}
+                      </span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
