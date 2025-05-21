@@ -45,7 +45,6 @@ class DialerService {
     }
   }
 
-  // キャンペーンの開始
   async startCampaign(campaignId) {
     try {
       // キャンペーン情報を取得
@@ -82,6 +81,10 @@ class DialerService {
       });
       
       logger.info(`キャンペーン開始: ID=${campaignId}, Name=${campaign.name}`);
+      
+      // ここが重要な追加部分：発信処理を即時に開始
+      await this.processDialerQueue();
+      
       return true;
     } catch (error) {
       logger.error(`キャンペーン開始エラー: ID=${campaignId}`, error);

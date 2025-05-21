@@ -80,19 +80,9 @@ app.use(express.urlencoded({ extended: true, charset: 'utf-8' }));
 const callerIdsRouter = require('./routes/callerIds');
 app.use('/api/caller-ids', callerIdsRouter);
 
-// ★★★ 追加: テスト用ルートの追加 ★★★
-app.get('/api/test-caller-ids', (req, res) => {
-  // 既存の発信者番号APIの結果と同じ形式で返す
-  db.query('SELECT * FROM caller_ids ORDER BY created_at DESC')
-    .then(result => {
-      const callerIds = Array.isArray(result) && result.length === 2 ? result[0] : result;
-      res.json(callerIds);
-    })
-    .catch(err => {
-      console.error('発信者番号取得エラー:', err);
-      res.status(500).json({ message: '発信者番号の取得に失敗しました' });
-    });
-});
+// ★★★ 追加: キャンペーンルーターの登録 ★★★
+const campaignsRouter = require('./routes/campaigns');
+app.use('/api/campaigns', campaignsRouter);
 
 // ★★★ 追加: callsルーターを登録 ★★★
 const callsRouter = require('./routes/calls');
@@ -120,6 +110,20 @@ app.get('/api/test-cors', (req, res) => {
   });
 });
 
+// ★★★ 追加: テスト用ルートの追加 ★★★
+app.get('/api/test-caller-ids', (req, res) => {
+  // 既存の発信者番号APIの結果と同じ形式で返す
+  db.query('SELECT * FROM caller_ids ORDER BY created_at DESC')
+    .then(result => {
+      const callerIds = Array.isArray(result) && result.length === 2 ? result[0] : result;
+      res.json(callerIds);
+    })
+    .catch(err => {
+      console.error('発信者番号取得エラー:', err);
+      res.status(500).json({ message: '発信者番号の取得に失敗しました' });
+    });
+});
+
 // ★★★ 追加: チャンネル用のテストエンドポイント ★★★
 /*app.get('/api/test-channels/:id', (req, res) => {
   res.json([
@@ -139,13 +143,78 @@ app.get('/', (req, res) => {
   });
 });
 
-// ルートエンドポイント
-app.get('/', (req, res) => {
-  res.json({ 
-    message: 'オートコールシステムAPI稼働中',
-    version: '1.1.0',
-    mode: process.env.MOCK_ASTERISK === 'true' ? 'モックモード' : '本番モード',
-    defaultProvider: process.env.DEFAULT_CALL_PROVIDER || 'asterisk'
+// すべてのルートをコンソールに出力（デバッグ用）
+console.log('登録されたルートの一覧:');
+app._router.stack.forEach(function(middleware){
+  if(middleware.route){ // routes registered directly on the app
+    console.log(`直接登録されたルート: ${middleware.route.path}, メソッド: ${Object.keys(middleware.route.methods)}`);
+  } else if(middleware.name === 'router'){ // router middleware
+    middleware.handle.stack.forEach(function(handler){
+      if(handler.route){
+        const path = handler.route.path;
+        const methods = Object.keys(handler.route.methods);
+        console.log(`ルーター内のルート: ${path}, メソッド: ${methods}`);
+      }
+    });
+  }
+});
+
+// デバッグ用：すべてのリクエストをキャッチ
+app.all('*', (req, res, next) => {
+  console.log(`デバッグ: ${req.method} ${req.originalUrl}`, {
+    headers: req.headers,
+    body: req.body,
+    query: req.query,
+    params: req.params
+  });
+  next();
+});
+
+// 直接削除エンドポイントを登録（一時的な対応）
+app.delete('/api/campaigns/:id', async (req, res) => {
+  console.log(`直接登録されたDELETEエンドポイント呼び出し: ${req.params.id}`);
+  
+  try {
+    // データベース接続
+    const db = require('./services/database');
+    
+    // キャンペーン存在確認
+    const [campaigns] = await db.query(
+      'SELECT id FROM campaigns WHERE id = ?',
+      [req.params.id]
+    );
+    
+    if (campaigns.length === 0) {
+      return res.status(404).json({ message: 'キャンペーンが見つかりません' });
+    }
+    
+    // キャンペーン削除
+    await db.query('DELETE FROM campaigns WHERE id = ?', [req.params.id]);
+    
+    res.json({ message: 'キャンペーンが削除されました', success: true });
+  } catch (error) {
+    console.error('キャンペーン削除エラー:', error);
+    res.status(500).json({ message: 'キャンペーンの削除に失敗しました' });
+  }
+});
+
+// 全てのルート登録後、404エラーハンドラーをここに配置
+app.use((req, res, next) => {
+  logger.warn(`404エラー: ${req.method} ${req.originalUrl} - 要求されたリソースが見つかりません`);
+  // 常にJSONレスポンスを返すように設定
+  res.status(404).json({ 
+    message: '要求されたリソースが見つかりません',
+    path: req.originalUrl,
+    method: req.method
+  });
+});
+
+// エラーハンドリングミドルウェア
+app.use((err, req, res, next) => {
+  logger.error('アプリケーションエラー:', err);
+  res.status(500).json({ 
+    message: '内部サーバーエラー', 
+    error: err.message 
   });
 });
 
@@ -211,28 +280,6 @@ module.exports = auth;`;
       throw new Error('データベース接続に失敗しました: ' + dbError.message);
     }
 
-    // ルートの初期化 (省略、既存のコードを使用)...
-
-    // 全てのルート登録後、404エラーハンドラーをここに配置
-    app.use((req, res, next) => {
-      logger.warn(`404エラー: ${req.method} ${req.originalUrl} - 要求されたリソースが見つかりません`);
-      // 常にJSONレスポンスを返すように設定
-      res.status(404).json({ 
-        message: '要求されたリソースが見つかりません',
-        path: req.originalUrl,
-        method: req.method
-      });
-    });
-
-    // エラーハンドリングミドルウェア
-    app.use((err, req, res, next) => {
-      logger.error('アプリケーションエラー:', err);
-      res.status(500).json({ 
-        message: '内部サーバーエラー', 
-        error: err.message 
-      });
-    });
-    
     // サーバー起動（HTTPサーバーインスタンスを使用）
     console.log(`サーバーをポート${PORT}で起動しています...`);
     

@@ -154,62 +154,34 @@ const CampaignList = () => {
  };
  
  // キャンペーンの削除
- const handleDelete = async (campaignId) => {
-   if (!window.confirm('本当にこのキャンペーンを削除しますか？この操作は元に戻せません。')) {
-     return;
-   }
-   
-   setActionInProgress(campaignId);
-   setMessage(null);
-   
-   try {
-     const token = localStorage.getItem('token');
-     
-     // 開発環境ではモックデータを使用
-     if (process.env.NODE_ENV === 'development') {
-       // 処理中のシミュレーション
-       await new Promise(resolve => setTimeout(resolve, 1000));
-       
-       // キャンペーンを削除
-       setCampaigns(campaigns.filter(campaign => campaign.id !== campaignId));
-       
-       setMessage({
-         type: 'success',
-         text: 'キャンペーンを削除しました'
-       });
-       
-       return;
-     }
-     
-     // 本番環境では実際のAPIを呼び出す
-     const response = await fetch(`${process.env.REACT_APP_API_URL}/campaigns/${campaignId}`, {
-       method: 'DELETE',
-       headers: {
-         'Authorization': `Bearer ${token}`
-       }
-     });
-     
-     if (!response.ok) {
-       const errorData = await response.json();
-       throw new Error(errorData.message || 'キャンペーンの削除に失敗しました');
-     }
-     
-     // キャンペーン一覧を更新
-     setCampaigns(campaigns.filter(campaign => campaign.id !== campaignId));
-     
-     setMessage({
-       type: 'success',
-       text: 'キャンペーンを削除しました'
-     });
-   } catch (error) {
-     setMessage({
-       type: 'error',
-       text: error.message
-     });
-   } finally {
-     setActionInProgress(null);
-   }
- };
+  const handleDeleteCampaign = async (id) => {
+    if (!window.confirm('このキャンペーンを削除してもよろしいですか？')) {
+      return;
+    }
+
+    try {
+      const token = localStorage.getItem('token');
+      const response = await fetch(`${process.env.REACT_APP_API_URL}/campaigns/${id}`, {
+        method: 'DELETE',
+        headers: {
+          'Authorization': `Bearer ${token}`
+        }
+      });
+
+      if (!response.ok) {
+        throw new Error('削除に失敗しました');
+      }
+
+      // ここで状態更新を確実に行う
+      setCampaigns(prevCampaigns =>
+        prevCampaigns.filter(campaign => campaign.id !== id)
+      );
+      setMessage({ type: 'success', text: 'キャンペーンが削除されました' });
+    } catch (error) {
+      setMessage({ type: 'error', text: error.message });
+    }
+  };
+
  
  // キャンペーンのステータスに基づいたバッジを表示
  const CampaignStatusBadge = ({ status }) => {
@@ -438,7 +410,7 @@ const CampaignList = () => {
                      </Link>
                      
                      <button
-                       onClick={() => handleDelete(campaign.id)}
+                       onClick={() => handleDeleteCampaign(campaign.id)}
                        disabled={actionInProgress === campaign.id || campaign.status === 'active'}
                        title={campaign.status === 'active' ? '実行中のキャンペーンは削除できません' : '削除'}
                        className={`${

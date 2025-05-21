@@ -362,4 +362,61 @@ router.post('/:id/resume', auth, async (req, res) => {
   }
 });
 
+// キャンペーン削除
+router.delete('/:id', auth, async (req, res) => {
+  try {
+    // リクエストパラメータのログ出力（デバッグ用）
+    console.log(`キャンペーン削除リクエスト: ID=${req.params.id}`);
+    
+    // キャンペーン存在確認
+    const [campaigns] = await db.query(
+      'SELECT id FROM campaigns WHERE id = ?',
+      [req.params.id]
+    );
+    
+    if (campaigns.length === 0) {
+      console.log(`キャンペーンが見つかりません: ID=${req.params.id}`);
+      return res.status(404).json({ message: 'キャンペーンが見つかりません' });
+    }
+    
+    // 関連データの削除（キャンペーンに関連するデータがある場合）
+    try {
+      // 関連する連絡先を削除
+      await db.query('DELETE FROM contacts WHERE campaign_id = ?', [req.params.id]);
+      console.log(`キャンペーン連絡先削除: ID=${req.params.id}`);
+      
+      // 関連する通話ログを削除
+      await db.query('DELETE FROM call_logs WHERE campaign_id = ?', [req.params.id]);
+      console.log(`キャンペーン通話ログ削除: ID=${req.params.id}`);
+      
+      // キャンペーン音声設定を削除（campaign_audioテーブルがある場合）
+      try {
+        await db.query('DELETE FROM campaign_audio WHERE campaign_id = ?', [req.params.id]);
+        console.log(`キャンペーン音声設定削除: ID=${req.params.id}`);
+      } catch (audioError) {
+        console.log('campaign_audioテーブルがないか、削除に失敗しました:', audioError);
+        // テーブルがない場合はエラーを無視して続行
+      }
+      
+    } catch (relatedError) {
+      console.error('関連データの削除中にエラーが発生しました:', relatedError);
+      // エラーを無視して続行
+    }
+    
+    // キャンペーン削除
+    const [result] = await db.query('DELETE FROM campaigns WHERE id = ?', [req.params.id]);
+    
+    if (result.affectedRows === 0) {
+      console.log(`削除対象キャンペーンがありません: ID=${req.params.id}`);
+      return res.status(404).json({ message: 'キャンペーンが見つかりません' });
+    }
+    
+    console.log(`キャンペーン削除完了: ID=${req.params.id}`);
+    res.json({ message: 'キャンペーンが削除されました', success: true });
+  } catch (error) {
+    console.error('キャンペーン削除エラー:', error);
+    res.status(500).json({ message: 'キャンペーンの削除に失敗しました' });
+  }
+});
+
 module.exports = router;

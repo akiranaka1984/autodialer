@@ -124,3 +124,27 @@ exports.resumeCampaign = async (req, res) => {
     res.status(500).json({ message: 'エラーが発生しました' });
   }
 };
+
+exports.deleteCampaign = async (req, res) => {
+  try {
+    const campaignId = req.params.id;
+    
+    // 既存のキャンペーンを確認
+    const [campaigns] = await db.query(
+      'SELECT id FROM campaigns WHERE id = ?',
+      [campaignId]
+    );
+    
+    if (campaigns.length === 0) {
+      return res.status(404).json({ message: 'キャンペーンが見つかりません' });
+    }
+    
+    // 関連するデータの削除（参照整合性に基づいて）
+    await db.query('DELETE FROM campaigns WHERE id = ?', [campaignId]);
+    
+    res.json({ success: true, message: 'キャンペーンが削除されました' });
+  } catch (error) {
+    logger.error('キャンペーン削除エラー:', error);
+    res.status(500).json({ message: 'サーバーエラーが発生しました' });
+  }
+};
