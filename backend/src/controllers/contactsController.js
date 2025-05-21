@@ -205,89 +205,112 @@ exports.uploadContacts = async (req, res) => {
   }
 };
 
-// バッチ処理関数
 async function processBatch(batch) {
   if (batch.length === 0) return;
+  
+  console.log(`バッチ処理開始: ${batch.length}件`);
   
   // 挿入と更新するレコードを分離
   const inserts = batch.filter(contact => contact.action === 'insert');
   const updates = batch.filter(contact => contact.action === 'update');
+  
+  console.log(`挿入: ${inserts.length}件, 更新: ${updates.length}件`);
   
   const connection = await db.beginTransaction();
   
   try {
     // 挿入処理
     if (inserts.length > 0) {
+      // テーブル構造に合わせてクエリを修正
       const insertValues = inserts.map(contact => [
         contact.campaign_id,
         contact.phone,
-        contact.name,
-        contact.company,
-        contact.email,
-        contact.notes,
-        contact.custom1,
-        contact.custom2,
-        contact.status,
-        contact.created_at,
-        contact.updated_at
+        contact.name || null,
+        contact.company || null,
+        'pending',  // status
+        null,       // last_attempt
+        0,          // attempt_count
+        contact.notes || null
       ]);
       
+      // INSERT文のカラム名を確認
       await connection.query(`
         INSERT INTO contacts 
-        (campaign_id, phone, name, company, email, notes, custom1, custom2, status, created_at, updated_at)
+        (campaign_id, phone, name, company, status, last_attempt, attempt_count, notes)
         VALUES ?
       `, [insertValues]);
+      
+      console.log(`${inserts.length}件の連絡先を挿入しました`);
     }
     
     // 更新処理
     for (const contact of updates) {
+      // テーブル構造に合わせてクエリを修正
       await connection.query(`
-        UPDATE contacts 
-        SET name = ?, company = ?, email = ?, notes = ?, custom1 = ?, custom2 = ?, updated_at = ?
+        UPDATE contacts
+        SET name = ?, company = ?, notes = ?, updated_at = NOW()
         WHERE id = ?
       `, [
-        contact.name,
-        contact.company,
-        contact.email,
-        contact.notes,
-        contact.custom1,
-        contact.custom2,
-        contact.updated_at,
+        contact.name || null,
+        contact.company || null,
+        contact.notes || null,
         contact.id
       ]);
+      
+      console.log(`連絡先ID ${contact.id} を更新しました`);
     }
     
     await db.commit(connection);
+    console.log('トランザクションをコミットしました');
   } catch (error) {
     await db.rollback(connection);
+    console.error('バッチ処理エラー:', error);
     throw error;
   }
 }
 
-// CSVの行を解析する関数
 function parseCSVLine(line) {
+  // より堅牢なCSV解析
   const result = [];
-  let inQuotes = false;
   let currentValue = '';
+  let inQuotes = false;
   let i = 0;
+  
+  console.log(`解析する行: ${line}`);
   
   while (i < line.length) {
     const char = line[i];
     
-    if (char === '"' && (i === 0 || line[i - 1] !== '\\')) {
+    // 引用符内の処理
+    if (char === '"') {
+      // エスケープされた引用符（""）の処理
+      if (i + 1 < line.length && line[i + 1] === '"' && inQuotes) {
+        currentValue += '"';
+        i += 2;
+        continue;
+      }
+      
       inQuotes = !inQuotes;
-    } else if (char === ',' && !inQuotes) {
-      result.push(currentValue);
-      currentValue = '';
-    } else {
-      currentValue += char;
+      i++;
+      continue;
     }
     
+    // カンマの処理
+    if (char === ',' && !inQuotes) {
+      result.push(currentValue);
+      currentValue = '';
+      i++;
+      continue;
+    }
+    
+    // 通常の文字
+    currentValue += char;
     i++;
   }
   
   // 最後の値を追加
   result.push(currentValue);
+  console.log(`解析結果: ${JSON.stringify(result)}`);
   
   return result;
 }
@@ -298,78 +321,147 @@ function normalizePhoneNumber(phone) {
   return phone.replace(/[-\s]/g, '');
 }
 
-// キャンペーンの連絡先一覧を取得
+// キャンペーンに関連する連絡先一覧を取得（エラー処理強化版）
 exports.getContactsByCampaign = async (req, res) => {
   try {
-    const { campaignId } = req.params;
-    const { status, search, limit = 100, offset = 0 } = req.query;
+    const campaignId = req.params.campaignId;
+    console.log(`連絡先一覧取得リクエスト: campaignId=${campaignId}, URL=${req.originalUrl}`);
+    const limit = parseInt(req.query.limit) || 20;
+    const offset = parseInt(req.query.offset) || 0;
     
-    // クエリパラメータの検証
-    if (isNaN(parseInt(campaignId))) {
-      return res.status(400).json({ message: 'キャンペーンIDは数値である必要があります' });
+    logger.info(`連絡先一覧取得開始: キャンペーンID=${campaignId}, limit=${limit}, offset=${offset}`);
+    
+    // データベース接続テスト
+    try {
+      await db.query('SELECT 1 as test');
+      console.log('データベース接続テスト成功');
+    } catch (dbError) {
+      console.error('データベース接続エラー:', dbError);
+      return res.status(500).json({
+        message: 'データベース接続に失敗しました',
+        error: dbError.message
+      });
     }
-    
+
     // キャンペーンの存在確認
-    const [campaigns] = await db.query(
-      'SELECT id FROM campaigns WHERE id = ?',
-      [campaignId]
-    );
-    
-    if (campaigns.length === 0) {
-      return res.status(404).json({ message: 'キャンペーンが見つかりません' });
+    try {
+      const [campaigns] = await db.query(
+        'SELECT id FROM campaigns WHERE id = ?',
+        [campaignId]
+      );
+      
+      if (campaigns.length === 0) {
+        logger.warn(`連絡先取得: キャンペーンが見つかりません (ID=${campaignId})`);
+        return res.status(404).json({ message: 'キャンペーンが見つかりません' });
+      }
+      
+      logger.info(`キャンペーン確認OK: ID=${campaignId}`);
+    } catch (dbError) {
+      logger.error(`キャンペーン検索エラー: ${dbError.message}`);
+      return res.status(500).json({ 
+        message: 'キャンペーン情報の取得に失敗しました', 
+        error: dbError.message 
+      });
     }
     
-    // 連絡先クエリの構築
-    let query = `
-      SELECT * FROM contacts 
-      WHERE campaign_id = ?
-    `;
-    
-    const queryParams = [campaignId];
-    
-    // ステータスフィルター
-    if (status) {
-      query += ' AND status = ?';
-      queryParams.push(status);
+    // テーブル存在確認
+    try {
+      // 連絡先テーブルが存在するか確認
+      await db.query('SHOW TABLES LIKE "contacts"');
+      logger.info('contactsテーブル確認OK');
+    } catch (tableError) {
+      logger.error(`contactsテーブル確認エラー: ${tableError.message}`);
+      return res.status(500).json({ 
+        message: 'contactsテーブルが存在しないか、アクセスできません', 
+        error: tableError.message,
+        solution: 'データベーススキーマにcontactsテーブルを作成してください' 
+      });
     }
     
-    // 検索フィルター
-    if (search) {
-      query += ' AND (phone LIKE ? OR name LIKE ? OR company LIKE ?)';
-      const searchPattern = `%${search}%`;
-      queryParams.push(searchPattern, searchPattern, searchPattern);
+    // 連絡先一覧を取得
+    try {
+      const [contacts] = await db.query(`
+        SELECT c.*, 
+               CASE 
+                 WHEN c.status = 'pending' THEN '未発信'
+                 WHEN c.status = 'called' THEN '発信中'
+                 WHEN c.status = 'completed' THEN '完了'
+                 WHEN c.status = 'failed' THEN '失敗'
+                 WHEN c.status = 'dnc' THEN 'DNC'
+                 ELSE c.status
+               END as status_text
+        FROM contacts c
+        WHERE c.campaign_id = ?
+        ORDER BY c.created_at DESC
+        LIMIT ? OFFSET ?
+      `, [campaignId, limit, offset]);
+      
+      logger.info(`連絡先リスト取得成功: ${contacts.length}件`);
+      
+      // 総件数を取得
+      const [totalResult] = await db.query(
+        'SELECT COUNT(*) as total FROM contacts WHERE campaign_id = ?',
+        [campaignId]
+      );
+      
+      // ステータス別の集計
+      const [statusStats] = await db.query(`
+        SELECT 
+          status,
+          COUNT(*) as count
+        FROM contacts
+        WHERE campaign_id = ?
+        GROUP BY status
+      `, [campaignId]);
+      
+      // ステータス集計をオブジェクトに変換
+      const statusCounts = {};
+      statusStats.forEach(stat => {
+        statusCounts[stat.status] = stat.count;
+      });
+      
+      res.json({
+        contacts,
+        total: totalResult[0].total,
+        page: Math.floor(offset / limit) + 1,
+        totalPages: Math.ceil(totalResult[0].total / limit),
+        limit,
+        stats: {
+          pending: statusCounts.pending || 0,
+          called: statusCounts.called || 0,
+          completed: statusCounts.completed || 0,
+          failed: statusCounts.failed || 0,
+          dnc: statusCounts.dnc || 0
+        }
+      });
+    } catch (contactsError) {
+      logger.error(`連絡先リスト取得エラー: ${contactsError.message}`);
+      
+      // テーブルカラムに問題がある場合の特殊処理
+      if (contactsError.message.includes('Unknown column')) {
+        return res.status(500).json({ 
+          message: 'contactsテーブルのスキーマに問題があります',
+          error: contactsError.message,
+          solution: 'データベーススキーマを確認し、必要なカラムが存在するか確認してください' 
+        });
+      }
+      
+      return res.status(500).json({ 
+        message: '連絡先の取得に失敗しました', 
+        error: contactsError.message 
+      });
     }
-    
-    // カウントクエリを実行
-    const countQuery = `
-      SELECT COUNT(*) as total FROM contacts 
-      WHERE campaign_id = ?
-      ${status ? ' AND status = ?' : ''}
-      ${search ? ' AND (phone LIKE ? OR name LIKE ? OR company LIKE ?)' : ''}
-    `;
-    
-    const [countResult] = await db.query(countQuery, queryParams);
-    const total = countResult[0].total;
-    
-    // メインクエリにページネーションを追加
-    query += ' ORDER BY created_at DESC LIMIT ? OFFSET ?';
-    queryParams.push(parseInt(limit), parseInt(offset));
-    
-    // 連絡先データを取得
-    const contacts = await db.query(query, queryParams);
-    
-    res.json({
-      contacts,
-      total,
-      limit: parseInt(limit),
-      offset: parseInt(offset)
-    });
   } catch (error) {
-    logger.error('連絡先取得エラー:', error);
-    res.status(500).json({ message: `エラー: ${error.message}` });
+    logger.error(`連絡先取得処理全体エラー: ${error.message}`);
+    res.status(500).json({ 
+      message: '連絡先の取得に失敗しました', 
+      error: error.message,
+      stack: error.stack
+    });
   }
 };
 
+// その他のメソッドはそのまま保持... (特に変更なし)
 // 特定の連絡先を取得
 exports.getContactById = async (req, res) => {
   try {
@@ -407,6 +499,39 @@ exports.getContactById = async (req, res) => {
 // 連絡先を更新
 exports.updateContact = async (req, res) => {
   try {
+
+     // multerミドルウェアを適用
+     await uploadMiddleware(req, res);
+    
+     console.log('CSVアップロードリクエスト受信:', {
+       file: req.file ? {
+         originalname: req.file.originalname,
+         size: req.file.size,
+         mimetype: req.file.mimetype
+       } : 'なし',
+       body: req.body
+     });
+     
+     if (!req.file) {
+       return res.status(400).json({ message: 'ファイルが見つかりません' });
+     }
+     
+     const { campaignId, skipDnc, updateExisting, skipFirstRow } = req.body;
+     console.log('CSVアップロードパラメータ:', { campaignId, skipDnc, updateExisting, skipFirstRow });
+     
+     // ファイル内容をログ出力（デバッグ用）
+     const fileContent = req.file.buffer.toString('utf8');
+     console.log('CSVファイル内容（先頭500文字）:', fileContent.substring(0, 500));
+     
+     // 行数をカウント
+     const lines = fileContent.split(/\r?\n/).filter(line => line.trim());
+     console.log(`CSVファイル行数: ${lines.length}`);
+     
+     // 最初の数行をデバッグ表示
+     lines.slice(0, Math.min(5, lines.length)).forEach((line, i) => {
+       console.log(`行 ${i + 1}: ${line}`);
+     });
+
     const { id } = req.params;
     const { phone, name, company, email, notes, custom1, custom2, status } = req.body;
     

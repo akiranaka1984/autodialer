@@ -122,91 +122,74 @@ const ContactsUpload = () => {
     });
   };
 
-  // アップロード処理
-  const handleUpload = async () => {
-    if (!file) {
-      setMessage('アップロードするファイルを選択してください。');
-      setUploadStatus('error');
-      return;
-    }
+  // CSVアップロード処理
+const handleUpload = async (file) => {
+  try {
+    setUploading(true);
+    setError(null);
     
-    if (!mappings.phone) {
-      setMessage('電話番号フィールドのマッピングは必須です。');
-      setUploadStatus('error');
-      return;
-    }
+    // FormDataの作成
+    const formData = new FormData();
+    formData.append('file', file);
+    formData.append('campaignId', campaignId);
+    formData.append('skipFirstRow', skipFirstRow);
+    formData.append('updateExisting', updateExisting);
+    formData.append('skipDnc', skipDnc);
+    formData.append('mappings', JSON.stringify(fieldMappings));
     
-    setUploadStatus('loading');
-    setUploadProgress(0);
+    console.log('アップロード情報:', {
+      fileName: file.name,
+      fileSize: file.size,
+      campaignId,
+      skipFirstRow,
+      updateExisting,
+      skipDnc,
+      mappings: fieldMappings
+    });
     
-    try {
-      const formData = new FormData();
-      formData.append('file', file);
-      formData.append('campaign_id', campaignId);
-      formData.append('mappings', JSON.stringify(mappings));
+    // APIリクエスト
+    const response = await fetch(`${apiBaseUrl}/contacts/upload`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${localStorage.getItem('token')}`
+      },
+      body: formData
+    });
+    
+    // レスポンスの検証
+    console.log('アップロードレスポンスステータス:', response.status);
+    
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error('アップロードエラーレスポンス:', errorText);
       
-      const token = localStorage.getItem('token');
-      
-      if (process.env.NODE_ENV === 'development') {
-        // モックアップロード進捗
-        for (let i = 0; i <= 100; i += 10) {
-          await new Promise(resolve => setTimeout(resolve, 100));
-          setUploadProgress(i);
-        }
-        
-        setMessage('50件の連絡先をインポートしました。');
-        setUploadStatus('success');
-        
-        setTimeout(() => {
-          navigate(`/campaigns/${campaignId}`);
-        }, 2000);
-        return;
+      let errorMessage = '連絡先のアップロードに失敗しました';
+      try {
+        const errorData = JSON.parse(errorText);
+        errorMessage = errorData.message || errorMessage;
+      } catch (e) {
+        // JSONパースエラー、テキストをそのまま使用
       }
       
-      const xhr = new XMLHttpRequest();
-      
-      xhr.upload.addEventListener('progress', (event) => {
-        if (event.lengthComputable) {
-          const progress = Math.round((event.loaded / event.total) * 100);
-          setUploadProgress(progress);
-        }
-      });
-      
-      xhr.addEventListener('load', () => {
-        if (xhr.status >= 200 && xhr.status < 300) {
-          const response = JSON.parse(xhr.responseText);
-          setMessage(`${response.imported_count}件の連絡先をインポートしました。`);
-          setUploadStatus('success');
-          
-          setTimeout(() => {
-            navigate(`/campaigns/${campaignId}`);
-          }, 3000);
-        } else {
-          let errorMessage = '連絡先のアップロードに失敗しました';
-          try {
-            const response = JSON.parse(xhr.responseText);
-            errorMessage = response.message || errorMessage;
-          } catch (e) {
-            // レスポンスがJSONでない場合
-          }
-          setMessage(errorMessage);
-          setUploadStatus('error');
-        }
-      });
-      
-      xhr.addEventListener('error', () => {
-        setMessage('ネットワークエラーが発生しました');
-        setUploadStatus('error');
-      });
-      
-      xhr.open('POST', '/api/contacts/upload');
-      xhr.setRequestHeader('Authorization', `Bearer ${token}`);
-      xhr.send(formData);
-    } catch (error) {
-      setMessage(`アップロードエラー: ${error.message}`);
-      setUploadStatus('error');
+      throw new Error(errorMessage);
     }
-  };
+    
+    const result = await response.json();
+    console.log('アップロード結果:', result);
+    
+    setUploadResults(result);
+    setSuccessMessage(`${result.success}件の連絡先をアップロードしました`);
+    
+    // 再読み込み
+    fetchContacts();
+    
+  } catch (error) {
+    console.error('アップロード処理エラー:', error);
+    setError(`エラー: ${error.message}`);
+  } finally {
+    setUploading(false);
+  }
+};
 
   if (loading) {
     return (
