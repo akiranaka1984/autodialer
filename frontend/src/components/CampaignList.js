@@ -3,6 +3,37 @@ import React, { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { Phone, Edit, Trash2, Play, Pause, Check, X, Plus, AlertCircle, Loader, Eye } from 'lucide-react';
 
+// 削除ボタンコンポーネント
+const DeleteButton = ({ campaign, onDelete, isDisabled, isLoading }) => {
+  const handleClick = async () => {
+    if (isDisabled || isLoading) return;
+    onDelete(campaign.id);
+  };
+
+  const isActive = campaign.status === 'active';
+  const buttonDisabled = isDisabled || isLoading || isActive;
+  
+  return (
+    <button
+      onClick={handleClick}
+      disabled={buttonDisabled}
+      title={isActive ? '実行中のキャンペーンは削除できません' : '削除'}
+      className={`${
+        buttonDisabled
+          ? 'text-gray-400 cursor-not-allowed'
+          : 'text-red-600 hover:text-red-900'
+      }`}
+      data-campaign-id={campaign.id}
+    >
+      {isLoading ? (
+        <Loader className="h-5 w-5 animate-spin" />
+      ) : (
+        <Trash2 className="h-5 w-5" />
+      )}
+    </button>
+  );
+};
+
 const CampaignList = () => {
  const [campaigns, setCampaigns] = useState([]);
  const [loading, setLoading] = useState(true);
@@ -10,78 +41,44 @@ const CampaignList = () => {
  const [actionInProgress, setActionInProgress] = useState(null);
  const [message, setMessage] = useState(null);
 
- // キャンペーン一覧を取得
+
+// キャンペーン一覧を取得する関数を定義
+const fetchCampaigns = async () => {
+  try {
+    setLoading(true);
+    const token = localStorage.getItem('token');
+    
+    // 環境変数からAPIのベースURLを取得（デフォルトは'/api'）
+    const apiBaseUrl = process.env.REACT_APP_API_URL || '/api';
+    
+    console.log(`APIからキャンペーン一覧を取得: ${apiBaseUrl}/campaigns`);
+    
+    // 常にAPIを呼び出す
+    const response = await fetch(`${apiBaseUrl}/campaigns`, {
+      headers: {
+        'Authorization': `Bearer ${token}`,
+        'Cache-Control': 'no-cache, no-store, must-revalidate' // キャッシュを無効化
+      }
+    });
+    
+    if (!response.ok) {
+      throw new Error(`キャンペーン一覧の取得に失敗しました (${response.status})`);
+    }
+    
+    const data = await response.json();
+    console.log('キャンペーン一覧を取得しました:', data.length, '件');
+    
+    setCampaigns(data);
+  } catch (error) {
+    console.error('キャンペーン一覧取得エラー:', error);
+    setError(error.message);
+  } finally {
+    setLoading(false);
+  }
+};
+
+ // 初回マウント時にキャンペーン一覧を取得
  useEffect(() => {
-   const fetchCampaigns = async () => {
-     try {
-       const token = localStorage.getItem('token');
-       
-       // 開発環境ではモックデータを使用
-       if (process.env.NODE_ENV === 'development') {
-         const mockCampaigns = [
-           {
-             id: 1,
-             name: 'サンプルキャンペーン1',
-             description: 'テスト用キャンペーン',
-             status: 'active',
-             caller_id_number: '0312345678',
-             caller_id_description: '東京オフィス',
-             contact_count: 120,
-             completed_calls: 45,
-             progress: 37,
-             created_at: '2025-04-15T09:30:00Z'
-           },
-           {
-             id: 2,
-             name: 'サンプルキャンペーン2',
-             description: '新商品案内キャンペーン',
-             status: 'paused',
-             caller_id_number: '0312345679',
-             caller_id_description: '大阪オフィス',
-             contact_count: 80,
-             completed_calls: 20,
-             progress: 25,
-             created_at: '2025-04-20T14:15:00Z'
-           },
-           {
-             id: 3,
-             name: 'サンプルキャンペーン3',
-             description: '顧客満足度調査',
-             status: 'draft',
-             caller_id_number: '0501234567',
-             caller_id_description: 'マーケティング部',
-             contact_count: 0,
-             completed_calls: 0,
-             progress: 0,
-             created_at: '2025-04-25T11:45:00Z'
-           }
-         ];
-         
-         setCampaigns(mockCampaigns);
-         setLoading(false);
-         return;
-       }
-       
-       // 本番環境では実際のAPIを呼び出す
-       const response = await fetch(`${process.env.REACT_APP_API_URL}/campaigns`, {
-         headers: {
-           'Authorization': `Bearer ${token}`
-         }
-       });
-       
-       if (!response.ok) {
-         throw new Error('キャンペーン一覧の取得に失敗しました');
-       }
-       
-       const data = await response.json();
-       setCampaigns(data);
-     } catch (error) {
-       setError(error.message);
-     } finally {
-       setLoading(false);
-     }
-   };
-   
    fetchCampaigns();
  }, []);
  
@@ -94,7 +91,7 @@ const CampaignList = () => {
      const token = localStorage.getItem('token');
      
      // 開発環境ではモックデータを使用
-     if (process.env.NODE_ENV === 'development') {
+     if (process.env.NODE_ENV === 'development' && process.env.REACT_APP_USE_MOCK_DATA === 'true') {
        // 処理中のシミュレーション
        await new Promise(resolve => setTimeout(resolve, 1000));
        
@@ -115,8 +112,11 @@ const CampaignList = () => {
        return;
      }
      
+     // 環境変数からAPIのベースURLを取得
+     const apiBaseUrl = process.env.REACT_APP_API_URL || '/api';
+     
      // 本番環境では実際のAPIを呼び出す
-     const response = await fetch(`${process.env.REACT_APP_API_URL}/campaigns/${campaignId}/status`, {
+     const response = await fetch(`${apiBaseUrl}/campaigns/${campaignId}/status`, {
        method: 'PATCH',
        headers: {
          'Content-Type': 'application/json',
@@ -154,34 +154,88 @@ const CampaignList = () => {
  };
  
  // キャンペーンの削除
-  const handleDeleteCampaign = async (id) => {
-    if (!window.confirm('このキャンペーンを削除してもよろしいですか？')) {
-      return;
-    }
-
-    try {
-      const token = localStorage.getItem('token');
-      const response = await fetch(`${process.env.REACT_APP_API_URL}/campaigns/${id}`, {
-        method: 'DELETE',
-        headers: {
-          'Authorization': `Bearer ${token}`
-        }
-      });
-
-      if (!response.ok) {
-        throw new Error('削除に失敗しました');
-      }
-
-      // ここで状態更新を確実に行う
-      setCampaigns(prevCampaigns =>
-        prevCampaigns.filter(campaign => campaign.id !== id)
-      );
-      setMessage({ type: 'success', text: 'キャンペーンが削除されました' });
-    } catch (error) {
-      setMessage({ type: 'error', text: error.message });
-    }
-  };
-
+ const handleDeleteCampaign = async (id) => {
+   // 削除前に確認
+   if (!window.confirm('このキャンペーンを削除してもよろしいですか？')) {
+     return;
+   }
+   
+   // 削除中のUIを表示
+   setActionInProgress(id);
+   setMessage(null);
+   
+   try {
+     // 環境変数からAPIのベースURLを取得
+     const apiBaseUrl = process.env.REACT_APP_API_URL || '/api';
+     console.log(`削除リクエストURL: ${apiBaseUrl}/campaigns/${id}`);
+     
+     const token = localStorage.getItem('token');
+     
+     // 開発環境の場合はモック処理
+     if (process.env.NODE_ENV === 'development' && process.env.REACT_APP_USE_MOCK_DATA === 'true') {
+       // 処理中のシミュレーション
+       await new Promise(resolve => setTimeout(resolve, 1000));
+       
+       // 現在のキャンペーン配列からターゲットIDを除外
+       setCampaigns(prevCampaigns => 
+         prevCampaigns.filter(campaign => campaign.id !== id)
+       );
+       
+       setMessage({ type: 'success', text: 'キャンペーンが削除されました' });
+       setActionInProgress(null);
+       return;
+     }
+     
+     // 本番環境またはモックを使用しない開発環境では実際にAPIを呼び出す
+     const response = await fetch(`${apiBaseUrl}/campaigns/${id}`, {
+       method: 'DELETE',
+       headers: {
+         'Authorization': `Bearer ${token}`,
+         'Content-Type': 'application/json'
+       }
+     });
+     
+     // レスポンスの詳細をログ出力（デバッグ用）
+     console.log(`削除レスポンスステータス: ${response.status}`);
+     
+     // レスポンスJSONを取得（エラーメッセージなどの詳細情報を得るため）
+     let responseData;
+     try {
+       responseData = await response.json();
+       console.log('削除レスポンスデータ:', responseData);
+     } catch (jsonError) {
+       console.warn('JSONパースエラー:', jsonError);
+       // JSONパースエラーは致命的ではないので続行
+     }
+     
+     // 正常なステータスコードかどうかチェック
+     if (!response.ok) {
+       throw new Error(responseData?.message || `削除に失敗しました (${response.status})`);
+     }
+     
+     // キャンペーン一覧から削除されたキャンペーンを除外して状態を更新
+     setCampaigns(prevCampaigns => 
+       prevCampaigns.filter(campaign => campaign.id !== id)
+     );
+     
+     // 成功メッセージを設定
+     setMessage({ 
+       type: 'success', 
+       text: responseData?.message || 'キャンペーンが削除されました' 
+     });
+   } catch (error) {
+     console.error('削除エラー:', error);
+     
+     // エラーメッセージを設定
+     setMessage({ 
+       type: 'error', 
+       text: `削除に失敗しました: ${error.message}` 
+     });
+   } finally {
+     // 処理完了時に進行中フラグを解除
+     setActionInProgress(null);
+   }
+ };
  
  // キャンペーンのステータスに基づいたバッジを表示
  const CampaignStatusBadge = ({ status }) => {
@@ -409,22 +463,13 @@ const CampaignList = () => {
                        <Edit className="h-5 w-5" />
                      </Link>
                      
-                     <button
-                       onClick={() => handleDeleteCampaign(campaign.id)}
-                       disabled={actionInProgress === campaign.id || campaign.status === 'active'}
-                       title={campaign.status === 'active' ? '実行中のキャンペーンは削除できません' : '削除'}
-                       className={`${
-                         campaign.status === 'active' || actionInProgress === campaign.id
-                           ? 'text-gray-400 cursor-not-allowed'
-                           : 'text-red-600 hover:text-red-900'
-                       }`}
-                     >
-                       {actionInProgress === campaign.id ? (
-                         <Loader className="h-5 w-5 animate-spin" />
-                       ) : (
-                         <Trash2 className="h-5 w-5" />
-                       )}
-                     </button>
+                     {/* 削除ボタンをコンポーネントに置き換え */}
+                     <DeleteButton 
+                       campaign={campaign}
+                       onDelete={handleDeleteCampaign}
+                       isDisabled={false}
+                       isLoading={actionInProgress === campaign.id}
+                     />
                    </div>
                  </td>
                </tr>

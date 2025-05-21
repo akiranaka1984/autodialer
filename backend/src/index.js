@@ -170,14 +170,14 @@ app.all('*', (req, res, next) => {
   next();
 });
 
-// 直接削除エンドポイントを登録（一時的な対応）
+// DELETE エンドポイントを明示的にPreflight対応させる
+app.options('/api/campaigns/:id', cors());
+
+// より明確なエラーハンドリングと詳細なログを追加したDELETEエンドポイント
 app.delete('/api/campaigns/:id', async (req, res) => {
-  console.log(`直接登録されたDELETEエンドポイント呼び出し: ${req.params.id}`);
+  console.log(`キャンペーン削除リクエスト受信: ID=${req.params.id}, メソッド=${req.method}`);
   
   try {
-    // データベース接続
-    const db = require('./services/database');
-    
     // キャンペーン存在確認
     const [campaigns] = await db.query(
       'SELECT id FROM campaigns WHERE id = ?',
@@ -185,16 +185,23 @@ app.delete('/api/campaigns/:id', async (req, res) => {
     );
     
     if (campaigns.length === 0) {
+      console.log(`キャンペーンが見つかりません: ID=${req.params.id}`);
       return res.status(404).json({ message: 'キャンペーンが見つかりません' });
     }
     
     // キャンペーン削除
-    await db.query('DELETE FROM campaigns WHERE id = ?', [req.params.id]);
+    const [result] = await db.query('DELETE FROM campaigns WHERE id = ?', [req.params.id]);
     
+    if (result.affectedRows === 0) {
+      console.log(`削除操作が影響行なし: ID=${req.params.id}`);
+      return res.status(500).json({ message: 'キャンペーンの削除中にエラーが発生しました' });
+    }
+    
+    console.log(`キャンペーン削除成功: ID=${req.params.id}, 影響行数=${result.affectedRows}`);
     res.json({ message: 'キャンペーンが削除されました', success: true });
   } catch (error) {
-    console.error('キャンペーン削除エラー:', error);
-    res.status(500).json({ message: 'キャンペーンの削除に失敗しました' });
+    console.error('キャンペーン削除エラー詳細:', error);
+    res.status(500).json({ message: 'キャンペーンの削除に失敗しました', error: error.message });
   }
 });
 

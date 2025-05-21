@@ -196,29 +196,23 @@ const CampaignForm = () => {
   // フォーム送信ハンドラ
   const handleSubmit = async (e) => {
     e.preventDefault();
-    
-    // バリデーション
-    const errors = validateForm();
-    if (Object.keys(errors).length > 0) {
-      setValidationErrors(errors);
-      return;
-    }
+    setSubmitting(true);
+    setError(null);
     
     try {
-      setSaving(true);
-      setSubmitError(null);
       const token = localStorage.getItem('token');
+      const apiBaseUrl = process.env.REACT_APP_API_URL || '/api';
       
-      // 開発環境での処理
-      if (process.env.NODE_ENV === 'development') {
-        await new Promise(resolve => setTimeout(resolve, 1000));
-        navigate('/campaigns');
-        return;
-      }
+      // 作成または更新のURLを決定
+      const url = isEditMode
+        ? `${apiBaseUrl}/campaigns/${campaignId}`
+        : `${apiBaseUrl}/campaigns`;
       
-      const url = isEditing ? `/api/campaigns/${campaignId}` : '/api/campaigns';
-      const method = isEditing ? 'PUT' : 'POST';
+      const method = isEditMode ? 'PUT' : 'POST';
       
+      console.log(`キャンペーン${isEditMode ? '更新' : '作成'}リクエスト:`, formData);
+      
+      // API呼び出し
       const response = await fetch(url, {
         method,
         headers: {
@@ -228,18 +222,26 @@ const CampaignForm = () => {
         body: JSON.stringify(formData)
       });
       
+      // レスポンスのエラーチェック
       if (!response.ok) {
         const errorData = await response.json();
-        throw new Error(errorData.message || '保存に失敗しました');
+        throw new Error(errorData.message || `キャンペーンの${isEditMode ? '更新' : '作成'}に失敗しました`);
       }
       
-      // 成功したら一覧画面に戻る
-      navigate('/campaigns');
-    } catch (err) {
-      setSubmitError(err.message);
-      window.scrollTo(0, 0);
-    } finally {
-      setSaving(false);
+      const data = await response.json();
+      console.log(`キャンペーン${isEditMode ? '更新' : '作成'}成功:`, data);
+      
+      // 成功メッセージを設定
+      setSuccess(true);
+      
+      // キャンペーン一覧に戻る（遅延を入れてメッセージを表示）
+      setTimeout(() => {
+        navigate('/campaigns');
+      }, 1500);
+    } catch (error) {
+      console.error(`キャンペーン${isEditMode ? '更新' : '作成'}エラー:`, error);
+      setError(error.message);
+      setSubmitting(false);
     }
   };
   

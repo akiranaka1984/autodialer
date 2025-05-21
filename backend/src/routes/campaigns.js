@@ -362,60 +362,71 @@ router.post('/:id/resume', auth, async (req, res) => {
   }
 });
 
+// backend/src/routes/campaigns.js のDELETEエンドポイントを修正
+
 // キャンペーン削除
 router.delete('/:id', auth, async (req, res) => {
   try {
-    // リクエストパラメータのログ出力（デバッグ用）
     console.log(`キャンペーン削除リクエスト: ID=${req.params.id}`);
     
-    // キャンペーン存在確認
-    const [campaigns] = await db.query(
-      'SELECT id FROM campaigns WHERE id = ?',
-      [req.params.id]
-    );
-    
-    if (campaigns.length === 0) {
-      console.log(`キャンペーンが見つかりません: ID=${req.params.id}`);
-      return res.status(404).json({ message: 'キャンペーンが見つかりません' });
-    }
-    
-    // 関連データの削除（キャンペーンに関連するデータがある場合）
+    // データベース接続をトランザクションで開始
+    const connection = await db.beginTransaction();
     try {
-      // 関連する連絡先を削除
-      await db.query('DELETE FROM contacts WHERE campaign_id = ?', [req.params.id]);
-      console.log(`キャンペーン連絡先削除: ID=${req.params.id}`);
+      // 関連するデータを先に削除
+      console.log('関連データの削除処理を開始...');
       
-      // 関連する通話ログを削除
-      await db.query('DELETE FROM call_logs WHERE campaign_id = ?', [req.params.id]);
-      console.log(`キャンペーン通話ログ削除: ID=${req.params.id}`);
+      // 1. 関連する通話ログの削除
+      await connection.query('DELETE FROM call_logs WHERE campaign_id = ?', [req.params.id]);
+      console.log(`通話ログ削除完了: campaign_id=${req.params.id}`);
       
-      // キャンペーン音声設定を削除（campaign_audioテーブルがある場合）
+      // 2. 関連する連絡先の削除
+      await connection.query('DELETE FROM contacts WHERE campaign_id = ?', [req.params.id]);
+      console.log(`連絡先削除完了: campaign_id=${req.params.id}`);
+      
+      // 3. 関連する音声設定の削除（テーブルが存在する場合）
       try {
-        await db.query('DELETE FROM campaign_audio WHERE campaign_id = ?', [req.params.id]);
-        console.log(`キャンペーン音声設定削除: ID=${req.params.id}`);
+        await connection.query('DELETE FROM campaign_audio WHERE campaign_id = ?', [req.params.id]);
+        console.log(`音声設定削除完了: campaign_id=${req.params.id}`);
       } catch (audioError) {
-        console.log('campaign_audioテーブルがないか、削除に失敗しました:', audioError);
-        // テーブルがない場合はエラーを無視して続行
+        console.log('campaign_audioテーブルがないか削除エラー:', audioError.message);
+        // 続行する（重要ではない）
       }
       
-    } catch (relatedError) {
-      console.error('関連データの削除中にエラーが発生しました:', relatedError);
-      // エラーを無視して続行
+      // 4. 関連するIVR設定の削除（テーブルが存在する場合）
+      try {
+        await connection.query('DELETE FROM campaign_ivr_config WHERE campaign_id = ?', [req.params.id]);
+        console.log(`IVR設定削除完了: campaign_id=${req.params.id}`);
+      } catch (ivrError) {
+        console.log('campaign_ivr_configテーブルがないか削除エラー:', ivrError.message);
+        // 続行する（重要ではない）
+      }
+      
+      // 最後にキャンペーン自体を削除
+      const [result] = await connection.query('DELETE FROM campaigns WHERE id = ?', [req.params.id]);
+      
+      if (result.affectedRows === 0) {
+        await db.rollback(connection);
+        return res.status(404).json({ message: 'キャンペーンが見つかりません' });
+      }
+      
+      // トランザクションをコミット
+      await db.commit(connection);
+      
+      console.log(`キャンペーン削除成功: ID=${req.params.id}, 影響行数=${result.affectedRows}`);
+      res.json({ 
+        message: 'キャンペーンが削除されました', 
+        success: true,
+        id: req.params.id,
+        timestamp: new Date().toISOString()
+      });
+    } catch (error) {
+      // エラー発生時はロールバック
+      await db.rollback(connection);
+      throw error;
     }
-    
-    // キャンペーン削除
-    const [result] = await db.query('DELETE FROM campaigns WHERE id = ?', [req.params.id]);
-    
-    if (result.affectedRows === 0) {
-      console.log(`削除対象キャンペーンがありません: ID=${req.params.id}`);
-      return res.status(404).json({ message: 'キャンペーンが見つかりません' });
-    }
-    
-    console.log(`キャンペーン削除完了: ID=${req.params.id}`);
-    res.json({ message: 'キャンペーンが削除されました', success: true });
   } catch (error) {
     console.error('キャンペーン削除エラー:', error);
-    res.status(500).json({ message: 'キャンペーンの削除に失敗しました' });
+    res.status(500).json({ message: 'キャンペーンの削除に失敗しました', error: error.message });
   }
 });
 
