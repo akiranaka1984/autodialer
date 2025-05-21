@@ -291,7 +291,49 @@ class SipService extends EventEmitter {
       this.callToAccountMap.set(callId, sipAccount);
       
       // sipcmdプロセスを起動
-      const sipcmdProcess = spawn(this.sipcmdPath, args);
+    const sipcmdProcess = spawn(this.sipcmdPath, args);
+
+// ここから新しいコードを追加
+    // アクティブコールマップに追加
+    this.activeCallsMap.set(callId, {
+      process: sipcmdProcess,
+      startTime: Date.now(),
+      status: 'calling',
+      phoneNumber: formattedNumber,
+      callerID: sipAccount.callerID,
+      mainCallerId: sipAccount.mainCallerId
+    });
+
+    // 発信状態監視のタイムアウト設定
+    const callTimeout = setTimeout(() => {
+      if (this.activeCallsMap.has(callId)) {
+        const callData = this.activeCallsMap.get(callId);
+        if (callData.status === 'calling') {
+          logger.warn(`発信タイムアウト: callId=${callId}, number=${formattedNumber}`);
+          
+          // プロセスを強制終了
+          if (callData.process) {
+            try {
+              callData.process.kill();
+            } catch (killError) {
+              logger.error(`プロセス終了エラー: ${killError.message}`);
+            }
+          }
+          
+          // 通話終了イベントをエミット
+          this.emit('callEnded', {
+            callId,
+            status: 'NO ANSWER',
+            duration: 0,
+            mainCallerId: callData.mainCallerId
+          });
+          
+          // マップから削除
+          this.activeCallsMap.delete(callId);
+          this.releaseCallResource(callId);
+        }
+      }
+    }, 60000); // 60秒タイムアウト
       
       // アクティブコールマップに追加
       this.activeCallsMap.set(callId, {
@@ -329,6 +371,9 @@ class SipService extends EventEmitter {
       
       // プロセス終了時の処理
       sipcmdProcess.on('close', (code) => {
+        // タイムアウトをクリア
+        clearTimeout(callTimeout);
+        
         logger.info(`sipcmdプロセス終了: コード=${code}, callId=${callId}`);
         
         // 通話終了イベントをエミット
@@ -349,15 +394,18 @@ class SipService extends EventEmitter {
             } else {
               status = 'FAILED';
             }
-            
-            // エラー処理部分は変更なし
           } else if (callData.status === 'answered') {
             status = 'ANSWERED';
             // 成功した場合は失敗カウントをリセット
             sipAccount.failCount = 0;
           }
           
-          // イベント発行と後処理は変更なし
+          // 通話ステータスを更新
+          this.updateCallStatus(callId, status, duration).catch(err => {
+            logger.error(`通話ステータス更新エラー: ${err.message}`);
+          });
+          
+          // イベント発行
           this.emit('callEnded', {
             callId,
             status,
@@ -484,10 +532,15 @@ class SipService extends EventEmitter {
   }
   
   async handleCallEnded(eventData) {
-    const { callId } = eventData;
-    logger.info(`通話終了イベント処理: ${callId}`);
+    const { callId, status, duration } = eventData;
+    logger.info(`通話終了イベント処理: ${callId}, status=${status || 'unknown'}, duration=${duration || 0}`);
     
     try {
+      // 通話ステータスを更新
+      if (status) {
+        await this.updateCallStatus(callId, status, duration || 0);
+      }
+      
       // SIPアカウントを解放
       await this.releaseCallResource(callId);
     } catch (error) {
@@ -848,6 +901,51 @@ class SipService extends EventEmitter {
       return false;
     }
   }
+
+  // SipServiceクラス内に追加
+
+async updateCallStatus(callId, status, duration = 0) {
+  try {
+    logger.info(`通話ステータス更新: callId=${callId}, status=${status}, duration=${duration}`);
+    
+    // 通話ログを更新
+    try {
+      const [updateResult] = await db.query(`
+        UPDATE call_logs
+        SET status = ?, end_time = NOW(), duration = ?
+        WHERE call_id = ?
+      `, [status, duration, callId]);
+      
+      if (updateResult.affectedRows > 0) {
+        logger.info(`通話ログを更新しました: callId=${callId}`);
+      } else {
+        logger.warn(`通話ログの更新に失敗: callId=${callId} - 該当レコードなし`);
+      }
+    } catch (dbError) {
+      logger.error(`通話ログ更新エラー: ${dbError.message}`);
+    }
+    
+    // チャンネル状態も更新
+    if (this.callToAccountMap.has(callId)) {
+      const sipAccount = this.callToAccountMap.get(callId);
+      
+      try {
+        await db.query(`
+          UPDATE caller_channels 
+          SET status = ?, last_used = NOW()
+          WHERE username = ? AND caller_id_id = ?
+        `, ['available', sipAccount.username, sipAccount.mainCallerId]);
+      } catch (dbError) {
+        logger.warn(`チャンネル状態更新エラー: ${dbError.message}`);
+      }
+    }
+    
+    return true;
+  } catch (error) {
+    logger.error(`通話ステータス更新エラー: ${error.message}`);
+    return false;
+  }
+}
 
   // 特定の用途に対応した利用可能なSIPアカウントを取得する関数
   async getAvailableSipAccountByType(callerId, channelType = 'outbound') {

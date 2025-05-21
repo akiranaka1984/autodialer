@@ -7,6 +7,7 @@ const { promisify } = require('util');
 
 // 全ての発信者番号を取得
 // 元の動作していたバージョンに戻す
+// backend/src/controllers/callerIdController.js の getAllCallerIds を修正
 exports.getAllCallerIds = async (req, res) => {
   try {
     console.log('発信者番号一覧取得API開始');
@@ -14,28 +15,23 @@ exports.getAllCallerIds = async (req, res) => {
     // 文字セットヘッダーを明示的に設定
     res.setHeader('Content-Type', 'application/json; charset=utf-8');
     
-    // db.queryの結果をきちんと扱う
-    const resultArray = await db.query('SELECT * FROM caller_ids ORDER BY created_at DESC');
+    // チャンネル数を含めた発信者番号情報を取得するSQLクエリに変更
+    const [resultArray] = await db.query(`
+      SELECT c.*, 
+             COUNT(cc.id) as channelCount,
+             SUM(CASE WHEN cc.status = 'available' THEN 1 ELSE 0 END) as availableChannels
+      FROM caller_ids c
+      LEFT JOIN caller_channels cc ON c.id = cc.caller_id_id
+      GROUP BY c.id
+      ORDER BY c.created_at DESC
+    `);
     
-    // mysql2/promiseの結果構造を処理
-    let callerIds = [];
-    if (Array.isArray(resultArray)) {
-      if (resultArray.length === 2 && Array.isArray(resultArray[0])) {
-        // [rows, fields] 形式
-        callerIds = resultArray[0];
-      } else {
-        // 直接配列の場合
-        callerIds = resultArray;
-      }
+    console.log('取得された発信者番号数:', resultArray.length);
+    if (resultArray.length > 0) {
+      console.log('最初のレコード:', JSON.stringify(resultArray[0]));
     }
     
-    // 結果をログ出力
-    console.log('取得された発信者番号数:', callerIds.length);
-    if (callerIds.length > 0) {
-      console.log('最初のレコード:', JSON.stringify(callerIds[0]));
-    }
-    
-    res.json(callerIds);
+    res.json(resultArray);
   } catch (error) {
     console.error('発信者番号取得エラー:', error);
     res.status(500).json({ message: '発信者番号の取得に失敗しました: ' + error.message });

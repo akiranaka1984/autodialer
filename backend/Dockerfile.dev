@@ -2,11 +2,10 @@ FROM node:18-alpine
 
 WORKDIR /app
 
-# 必要なパッケージと開発ツールをインストール
+# 必要なパッケージと開発ツールをインストール（問題のパッケージを削除）
 RUN apk update && apk add --no-cache \
     alsa-lib \
     alsa-utils \
-    alsa-plugins-null \
     build-base \
     git \
     make \
@@ -14,12 +13,10 @@ RUN apk update && apk add --no-cache \
     g++ \
     linux-headers \
     # PJSIPをインストール
+    pjsua \
     pjproject \
-    pjproject-dev \
-    pjsua \ 
     iputils \
     netcat-openbsd \
-    libsrtp \
     tcpdump \
     socat
 
@@ -34,17 +31,19 @@ RUN npm install -g nodemon
 
 # pjsuaコマンドのラッパースクリプトを作成して、sipcmdの代わりに使用
 RUN echo '#!/bin/sh' > /usr/local/bin/sipcmd && \
+    echo 'echo "Executing SIP call: $1@$3 -> $4"' >> /usr/local/bin/sipcmd && \
     echo 'pjsua \
-      --id="sip:$1@$4" \
-      --registrar="sip:$4" \
+      --id="sip:$1@$3" \
+      --registrar="sip:$3" \
       --realm="*" \
       --username="$1" \
       --password="$2" \
       --null-audio \
       --no-vad \
-      --duration=$7 \
+      --auto-play \
+      --duration=30 \
       --log-level=5 \
-      sip:$5@$4' >> /usr/local/bin/sipcmd && \
+      sip:$4@$3' >> /usr/local/bin/sipcmd && \
     chmod +x /usr/local/bin/sipcmd
 
 # デバッグ用の簡易シェルスクリプトを作成
@@ -58,6 +57,7 @@ RUN echo '#!/bin/sh' > /usr/local/bin/test-sip && \
       --password="$3" \
       --null-audio \
       --no-vad \
+      --auto-play \
       --duration=30 \
       --log-level=5 \
       sip:$1@ito258258.site' >> /usr/local/bin/test-sip && \
