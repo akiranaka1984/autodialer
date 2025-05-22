@@ -449,6 +449,30 @@ server.on('listening', async () => {
   } catch (error) {
     logger.error('発信サービス初期化エラー:', error);
   }
+  // RTP音声サービスの初期化
+  try {
+    const rtpAudioService = require('./services/rtpAudioService');
+    logger.info('RTP音声サービスが利用可能です');
+    
+    // ffmpegの可用性確認
+    const { spawn } = require('child_process');
+    const ffmpegTest = spawn('ffmpeg', ['-version']);
+    
+    ffmpegTest.on('close', (code) => {
+      if (code === 0) {
+        logger.info('✅ ffmpegが利用可能です - RTP音声配信が有効');
+      } else {
+        logger.warn('⚠️ ffmpegが利用できません - RTP音声配信は無効');
+      }
+    });
+    
+    ffmpegTest.on('error', (error) => {
+      logger.warn('⚠️ ffmpegテストエラー - RTP音声配信は無効:', error.message);
+    });
+    
+  } catch (error) {
+    logger.error('RTP音声サービス初期化エラー:', error);
+  }
 
   // ★★★ ここに音声プレイヤーサービスの初期化を追加 ★★★
   /*

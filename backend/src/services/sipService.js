@@ -201,234 +201,329 @@ class SipService extends EventEmitter {
   }
   
   // ★★★ メイン発信メソッド（音声対応・シンプル版）★★★
-  async originate(params) {
-    if (this.mockMode) {
-      return this.originateMock(params);
+async originate(params) {
+  if (this.mockMode) {
+    return this.originateMock(params);
+  }
+  
+  logger.info(`SIP発信を開始: 発信先=${params.phoneNumber}`);
+  
+  try {
+    // キャンペーンの音声ファイルを事前に取得
+    let campaignAudio = null;
+    if (params.variables && params.variables.CAMPAIGN_ID) {
+      try {
+        const audioService = require('./audioService');
+        campaignAudio = await audioService.getCampaignAudio(params.variables.CAMPAIGN_ID);
+        
+        if (campaignAudio && campaignAudio.length > 0) {
+          logger.info(`キャンペーン ${params.variables.CAMPAIGN_ID} の音声ファイル取得: ${campaignAudio.length}件`);
+        }
+      } catch (audioError) {
+        logger.warn('音声ファイル取得エラー（続行）:', audioError.message);
+      }
     }
     
-    logger.info(`SIP発信を開始: 発信先=${params.phoneNumber}`);
+    // SIPアカウントを取得
+    const channelType = params.channelType || 'outbound';
+    let sipAccount = null;
     
-    try {
-      // キャンペーンの音声ファイルを事前に取得
-      let campaignAudio = null;
-      if (params.variables && params.variables.CAMPAIGN_ID) {
-        try {
-          const audioService = require('./audioService');
-          campaignAudio = await audioService.getCampaignAudio(params.variables.CAMPAIGN_ID);
-          
-          if (campaignAudio && campaignAudio.length > 0) {
-            logger.info(`キャンペーン ${params.variables.CAMPAIGN_ID} の音声ファイル取得: ${campaignAudio.length}件`);
-          }
-        } catch (audioError) {
-          logger.warn('音声ファイル取得エラー（続行）:', audioError.message);
-        }
-      }
-      
-      // SIPアカウントを取得
-      const channelType = params.channelType || 'outbound';
-      let sipAccount = null;
-      
-      if (params.callerIdData && params.callerIdData.id) {
-        sipAccount = await this.getAvailableSipAccountByType(params.callerIdData.id, channelType);
-        
-        if (!sipAccount) {
-          logger.warn(`発信者番号ID ${params.callerIdData.id} に利用可能な ${channelType} チャンネルがありません`);
-          sipAccount = await this.getAvailableSipAccount();
-        }
-      } else {
-        sipAccount = await this.getAvailableSipAccount();
-      }
+    if (params.callerIdData && params.callerIdData.id) {
+      sipAccount = await this.getAvailableSipAccountByType(params.callerIdData.id, channelType);
       
       if (!sipAccount) {
-        throw new Error('利用可能なSIPアカウントが見つかりません');
+        logger.warn(`発信者番号ID ${params.callerIdData.id} に利用可能な ${channelType} チャンネルがありません`);
+        sipAccount = await this.getAvailableSipAccount();
       }
-      
-      // 発信準備
-      const formattedNumber = this.formatPhoneNumber(params.phoneNumber);
-      const sipServer = process.env.SIP_SERVER || 'ito258258.site';
-      const callDuration = '30';
-      const callId = 'sip-' + Date.now() + '-' + Math.floor(Math.random() * 10000);
-      
-      // SIPアカウントを使用中にマーク
-      sipAccount.status = 'busy';
-      sipAccount.lastUsed = new Date();
-      
-      // データベースのチャンネル状態を更新
-      if (sipAccount.channelId) {
-        try {
-          await db.query(
-            'UPDATE caller_channels SET status = ?, last_used = NOW() WHERE id = ?',
-            ['busy', sipAccount.channelId]
-          );
-        } catch (dbError) {
-          logger.warn(`チャンネル状態更新エラー: ${dbError.message}`);
-        }
+    } else {
+      sipAccount = await this.getAvailableSipAccount();
+    }
+    
+    if (!sipAccount) {
+      throw new Error('利用可能なSIPアカウントが見つかりません');
+    }
+    
+    // 発信準備
+    const formattedNumber = this.formatPhoneNumber(params.phoneNumber);
+    const sipServer = process.env.SIP_SERVER || 'ito258258.site';
+    const callDuration = '30';
+    const callId = 'sip-' + Date.now() + '-' + Math.floor(Math.random() * 10000);
+    
+    // SIPアカウントを使用中にマーク
+    sipAccount.status = 'busy';
+    sipAccount.lastUsed = new Date();
+    
+    // データベースのチャンネル状態を更新
+    if (sipAccount.channelId) {
+      try {
+        await db.query(
+          'UPDATE caller_channels SET status = ?, last_used = NOW() WHERE id = ?',
+          ['busy', sipAccount.channelId]
+        );
+      } catch (dbError) {
+        logger.warn(`チャンネル状態更新エラー: ${dbError.message}`);
       }
+    }
+    
+    // 通話IDとSIPアカウントを関連付け
+    this.callToAccountMap.set(callId, sipAccount);
+    
+    // 🎵 音声ファイルの準備（Phase 1対応）
+    let primaryAudioFile = null;
+    if (campaignAudio && campaignAudio.length > 0) {
+      // welcomeメッセージを優先的に選択
+      const welcomeAudio = campaignAudio.find(audio => audio.audio_type === 'welcome');
       
-      // 通話IDとSIPアカウントを関連付け
-      this.callToAccountMap.set(callId, sipAccount);
-      
-      // pjsua用の引数を生成
-      const args = [
-        sipAccount.username,
-        sipAccount.password,
-        sipServer,
-        formattedNumber,
-        callDuration
-      ];
-      
-      logger.debug(`sipcmdコマンド実行: ${this.sipcmdPath} ${args.join(' ')}`);
-      
-      // sipcmdプロセスを起動
-      const sipcmdProcess = spawn(this.sipcmdPath, args);
-      
-      // アクティブコールマップに追加（音声情報も含める）
-      this.activeCallsMap.set(callId, {
-        process: sipcmdProcess,
-        startTime: Date.now(),
-        status: 'calling',
-        phoneNumber: formattedNumber,
-        callerID: sipAccount.callerID,
-        mainCallerId: sipAccount.mainCallerId,
-        campaignAudio: campaignAudio,
-        audioPlayed: false
-      });
-      
-      // 発信状態監視のタイムアウト設定
-      const callTimeout = setTimeout(() => {
-        if (this.activeCallsMap.has(callId)) {
-          const callData = this.activeCallsMap.get(callId);
-          if (callData.status === 'calling') {
-            logger.warn(`発信タイムアウト: callId=${callId}, number=${formattedNumber}`);
-            
-            if (callData.process) {
-              try {
-                callData.process.kill();
-              } catch (killError) {
-                logger.error(`プロセス終了エラー: ${killError.message}`);
-              }
-            }
-            
-            this.emit('callEnded', {
-              callId,
-              status: 'NO ANSWER',
-              duration: 0,
-              mainCallerId: callData.mainCallerId
-            });
-            
-            this.activeCallsMap.delete(callId);
-            this.releaseCallResource(callId);
-          }
-        }
-      }, 60000);
-      
-      // ★★★ プロセス出力の処理（stdout）- シンプル音声版 ★★★
-      sipcmdProcess.stdout.on('data', (data) => {
-        const output = data.toString();
-        logger.debug(`sipcmd出力: ${output}`);
-        
-        // 発信状況の処理
-        if (output.includes('Call established') || 
-            output.includes('Connected') || 
-            output.includes('confirmed dialog') || 
-            output.includes('Media active')) {
-          const callData = this.activeCallsMap.get(callId);
-          if (callData && callData.status === 'calling') {
-            callData.status = 'answered';
-            this.activeCallsMap.set(callId, callData);
-            logger.info(`通話確立: callId=${callId}, number=${formattedNumber}`);
-            
-            // 🎵 シンプル音声再生
-            if (callData.campaignAudio && !callData.audioPlayed) {
-              logger.info(`🎵 音声再生開始: callId=${callId}`);
-              this.playAudioSimple(callId, callData.campaignAudio);
-              callData.audioPlayed = true;
-              this.activeCallsMap.set(callId, callData);
-            }
-          }
-        }
-      });
-      
-      // エラー出力の処理（stderr）
-      sipcmdProcess.stderr.on('data', (data) => {
-        const errorOutput = data.toString();
-        logger.error(`sipcmd エラー: ${errorOutput}`);
-        
-        if (errorOutput.includes('408') || errorOutput.includes('Timeout')) {
-          logger.error('SIPタイムアウトエラーが発生しました - ネットワーク設定を確認してください');
-        } else if (errorOutput.includes('403')) {
-          logger.error('SIP認証エラー: ユーザー名またはパスワードが正しくない可能性があります');
-        }
-      });
-      
-      // プロセス終了時の処理
-      sipcmdProcess.on('close', (code) => {
-        clearTimeout(callTimeout);
-        
-        logger.info(`sipcmdプロセス終了: コード=${code}, callId=${callId}`);
-        
+      if (welcomeAudio) {
+        // 音声ファイルパスを構築
+        primaryAudioFile = welcomeAudio.path || 
+                          `/app/audio-files/${welcomeAudio.filename}`;
+        logger.info(`🎵 Primary音声ファイル設定: ${welcomeAudio.filename}`);
+      }
+    }
+    
+    // pjsua用の引数を生成（音声ファイル対応）
+    const args = [
+      sipAccount.username,
+      sipAccount.password,
+      sipServer,
+      formattedNumber,
+      callDuration,
+      primaryAudioFile || ''  // 音声ファイルパスを第6引数として追加
+    ];
+    
+    logger.debug(`sipcmdコマンド実行（音声付き）: ${this.sipcmdPath} ${args.join(' ')}`);
+    
+    // sipcmdプロセスを起動
+    const sipcmdProcess = spawn(this.sipcmdPath, args);
+    
+    // アクティブコールマップに追加（音声情報も含める）
+    this.activeCallsMap.set(callId, {
+      process: sipcmdProcess,
+      startTime: Date.now(),
+      status: 'calling',
+      phoneNumber: formattedNumber,
+      callerID: sipAccount.callerID,
+      mainCallerId: sipAccount.mainCallerId,
+      campaignAudio: campaignAudio,
+      audioPlayed: false
+    });
+
+    // 🚀 強制音声配信: ALSAエラー回避のため即座に実行
+    if (campaignAudio && campaignAudio.length > 0) {
+      logger.info(`🎵 [即時実行]音声再生開始: callId=${callId}`);
+      setTimeout(() => {
         const callData = this.activeCallsMap.get(callId);
-        
-        if (callData) {
-          const duration = Math.round((Date.now() - callData.startTime) / 1000);
-          let status = 'COMPLETED';
+        if (callData && !callData.audioPlayed) {
+          this.playAudioSimple(callId, campaignAudio);
+          callData.audioPlayed = true;
+          this.activeCallsMap.set(callId, callData);
+        }
+      }, 2000);
+    }
+    
+    // 発信状態監視のタイムアウト設定
+    const callTimeout = setTimeout(() => {
+      if (this.activeCallsMap.has(callId)) {
+        const callData = this.activeCallsMap.get(callId);
+        if (callData.status === 'calling') {
+          logger.warn(`発信タイムアウト: callId=${callId}, number=${formattedNumber}`);
           
-          if (code !== 0) {
-            if (callData.status === 'calling') {
-              status = code === 1 ? 'NO ANSWER' : 
-                      code === 2 ? 'BUSY' : 
-                      code === 3 ? 'REJECTED' : 'FAILED';
-            } else if (callData.status === 'answered') {
-              status = 'ANSWERED';
-            } else {
-              status = 'FAILED';
+          if (callData.process) {
+            try {
+              callData.process.kill();
+            } catch (killError) {
+              logger.error(`プロセス終了エラー: ${killError.message}`);
             }
-          } else if (callData.status === 'answered') {
-            status = 'ANSWERED';
-            sipAccount.failCount = 0;
           }
-          
-          this.updateCallStatus(callId, status, duration).catch(err => {
-            logger.error(`通話ステータス更新エラー: ${err.message}`);
-          });
           
           this.emit('callEnded', {
             callId,
-            status,
-            duration: callData.status === 'answered' ? duration : 0,
+            status: 'NO ANSWER',
+            duration: 0,
             mainCallerId: callData.mainCallerId
           });
           
           this.activeCallsMap.delete(callId);
+          this.releaseCallResource(callId);
+        }
+      }
+    }, 60000);
+    
+    // プロセス出力の処理（stdout）- RTP音声対応版
+    sipcmdProcess.stdout.on('data', (data) => {
+      const output = data.toString();
+      logger.debug(`sipcmd出力: ${output}`);
+      
+      // 通話確立の検出
+      if (output.includes('Call established') || 
+          output.includes('Connected') || 
+          output.includes('confirmed dialog') || 
+          output.includes('Media active')) {
+        const callData = this.activeCallsMap.get(callId);
+        if (callData && callData.status === 'calling') {
+          callData.status = 'answered';
+          this.activeCallsMap.set(callId, callData);
+          logger.info(`通話確立: callId=${callId}, number=${formattedNumber}`);
+          
+          // 🎵 RTP音声インジェクション開始
+          if (callData.campaignAudio && !callData.audioPlayed) {
+            this.startRtpAudioInjection(callId, callData.campaignAudio, output);
+            callData.audioPlayed = true;
+            this.activeCallsMap.set(callId, callData);
+          }
+        }
+      }
+    });
+    
+    // エラー出力の処理（stderr）
+    sipcmdProcess.stderr.on('data', (data) => {
+      const errorOutput = data.toString();
+      logger.error(`sipcmd エラー: ${errorOutput}`);
+      
+      if (errorOutput.includes('408') || errorOutput.includes('Timeout')) {
+        logger.error('SIPタイムアウトエラーが発生しました - ネットワーク設定を確認してください');
+      } else if (errorOutput.includes('403')) {
+        logger.error('SIP認証エラー: ユーザー名またはパスワードが正しくない可能性があります');
+      }
+    });
+    
+    // プロセス終了時の処理
+    sipcmdProcess.on('close', (code) => {
+      clearTimeout(callTimeout);
+      
+      logger.info(`sipcmdプロセス終了: コード=${code}, callId=${callId}`);
+      
+      const callData = this.activeCallsMap.get(callId);
+      
+      if (callData) {
+        const duration = Math.round((Date.now() - callData.startTime) / 1000);
+        let status = 'COMPLETED';
+        
+        if (code !== 0) {
+          if (callData.status === 'calling') {
+            status = code === 1 ? 'NO ANSWER' : 
+                    code === 2 ? 'BUSY' : 
+                    code === 3 ? 'REJECTED' : 'FAILED';
+          } else if (callData.status === 'answered') {
+            status = 'ANSWERED';
+          } else {
+            status = 'FAILED';
+          }
+        } else if (callData.status === 'answered') {
+          status = 'ANSWERED';
+          sipAccount.failCount = 0;
         }
         
-        this.releaseCallResource(callId);
-      });
+        this.updateCallStatus(callId, status, duration).catch(err => {
+          logger.error(`通話ステータス更新エラー: ${err.message}`);
+        });
+        
+        this.emit('callEnded', {
+          callId,
+          status,
+          duration: callData.status === 'answered' ? duration : 0,
+          mainCallerId: callData.mainCallerId
+        });
+        
+        this.activeCallsMap.delete(callId);
+      }
       
-      // 発信成功イベントをエミット
-      this.emit('callStarted', {
-        callId,
-        number: params.phoneNumber,
-        callerID: params.callerID || sipAccount.callerID,
-        variables: params.variables || {},
-        mainCallerId: sipAccount.mainCallerId,
-        hasAudio: campaignAudio ? true : false
-      });
-      
-      return {
-        ActionID: callId,
-        Response: 'Success',
-        Message: 'SIP call successfully initiated',
-        SipAccount: sipAccount.username,
-        mainCallerId: sipAccount.mainCallerId,
-        provider: 'sip',
-        audioFilesCount: campaignAudio ? campaignAudio.length : 0
-      };
-    } catch (error) {
-      logger.error('SIP発信エラー:', error);
-      throw error;
-    }
+      this.releaseCallResource(callId);
+    });
+    
+    // 発信成功イベントをエミット
+    this.emit('callStarted', {
+      callId,
+      number: params.phoneNumber,
+      callerID: params.callerID || sipAccount.callerID,
+      variables: params.variables || {},
+      mainCallerId: sipAccount.mainCallerId,
+      hasAudio: campaignAudio ? true : false
+    });
+    
+    return {
+      ActionID: callId,
+      Response: 'Success',
+      Message: 'SIP call successfully initiated',
+      SipAccount: sipAccount.username,
+      mainCallerId: sipAccount.mainCallerId,
+      provider: 'sip',
+      audioFilesCount: campaignAudio ? campaignAudio.length : 0
+    };
+  } catch (error) {
+    logger.error('SIP発信エラー:', error);
+    throw error;
   }
+}
+// RTP音声インジェクション開始メソッド（新規追加）
+async startRtpAudioInjection(callId, campaignAudio, pjsuaOutput) {
+  try {
+    logger.info(`🎵 RTP音声インジェクション開始: callId=${callId}`);
+    
+    // pjsuaの出力からRTP情報を抽出
+    const rtpInfo = this.extractRtpInfo(pjsuaOutput);
+    
+    if (!rtpInfo) {
+      logger.warn(`RTP情報の抽出に失敗: callId=${callId}`);
+      // フォールバック：従来の音声再生方式
+      this.playAudioSimple(callId, campaignAudio);
+      return;
+    }
+    
+    // RTP音声サービスで音声配信
+    const rtpAudioService = require('./rtpAudioService');
+    const success = await rtpAudioService.injectAudioToCall(
+      callId, 
+      campaignAudio, 
+      rtpInfo
+    );
+    
+    if (success) {
+      logger.info(`✅ RTP音声インジェクション成功: callId=${callId}`);
+    } else {
+      logger.warn(`⚠️ RTP音声インジェクション失敗、フォールバック: callId=${callId}`);
+      // フォールバック：従来の音声再生方式
+      this.playAudioSimple(callId, campaignAudio);
+    }
+    
+  } catch (error) {
+    logger.error(`RTP音声インジェクションエラー: ${error.message}`);
+    // フォールバック：従来の音声再生方式
+    this.playAudioSimple(callId, campaignAudio);
+  }
+}
+
+// pjsuaの出力からRTP情報を抽出（新規追加）
+extractRtpInfo(pjsuaOutput) {
+  try {
+    // pjsuaの出力例：
+    // "RTP port 4000, RTCP port 4001"
+    // "Remote RTP/RTCP address: 192.168.1.100:5004/5005"
+    
+    const rtpPortMatch = pjsuaOutput.match(/RTP port (\d+)/);
+    const remoteAddressMatch = pjsuaOutput.match(/Remote.*?(\d+\.\d+\.\d+\.\d+):(\d+)/);
+    
+    if (rtpPortMatch && remoteAddressMatch) {
+      return {
+        localPort: parseInt(rtpPortMatch[1]),
+        ip: remoteAddressMatch[1],
+        port: parseInt(remoteAddressMatch[2])
+      };
+    }
+    
+    // デフォルト値（ローカルテスト用）
+    return {
+      localPort: 4000,
+      ip: '127.0.0.1',
+      port: 5004
+    };
+    
+  } catch (error) {
+    logger.error(`RTP情報抽出エラー: ${error.message}`);
+    return null;
+  }
+}
   
   // ★★★ シンプル音声再生メソッド ★★★
   playAudioSimple(callId, campaignAudio) {
@@ -644,13 +739,16 @@ class SipService extends EventEmitter {
   // SIPリソース解放
   async releaseCallResource(callId) {
     logger.info(`SIPリソース解放: ${callId}`);
-    
+  
     if (!callId) {
       logger.warn('無効な通話ID: undefined または null');
       return false;
     }
     
     try {
+      // RTP音声配信を停止
+      const rtpAudioService = require('./rtpAudioService');
+      rtpAudioService.stopAudioForCall(callId);
       // アクティブコールを停止
       const callData = this.activeCallsMap.get(callId);
       if (callData && callData.process) {

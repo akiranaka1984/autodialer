@@ -6,7 +6,7 @@ const db = require('../services/database');
 // テスト発信
 exports.testCall = async (req, res) => {
   try {
-    const { phoneNumber, callerID, mockMode, provider } = req.body;
+    const { phoneNumber, callerID, mockMode, provider, campaignId } = req.body;
     
     // デバッグ情報を追加
     logger.info('テスト発信リクエスト受信:', {
@@ -14,6 +14,7 @@ exports.testCall = async (req, res) => {
       callerID,
       mockMode,
       provider,
+      campaignId,
       環境変数_MOCK_ASTERISK: process.env.MOCK_ASTERISK,
       環境変数_MOCK_SIP: process.env.MOCK_SIP,
       環境変数_DEFAULT_CALL_PROVIDER: process.env.DEFAULT_CALL_PROVIDER
@@ -42,6 +43,24 @@ exports.testCall = async (req, res) => {
       }
     }
     
+    // キャンペーンの音声ファイルを取得
+    let campaignAudio = null;
+    if (campaignId) {
+      try {
+        const audioService = require('../services/audioService');
+        campaignAudio = await audioService.getCampaignAudio(campaignId);
+        
+        if (campaignAudio && campaignAudio.length > 0) {
+          logger.info(`テスト発信でキャンペーン ${campaignId} の音声ファイル取得: ${campaignAudio.length}件`);
+        } else {
+          logger.info(`テスト発信でキャンペーン ${campaignId} に音声ファイルが設定されていません`);
+        }
+      } catch (audioError) {
+        logger.warn('テスト発信での音声ファイル取得エラー:', audioError.message);
+        // 音声なしで続行
+      }
+    }
+    
     // 発信パラメータの設定
     const params = {
       phoneNumber,
@@ -52,17 +71,18 @@ exports.testCall = async (req, res) => {
       exten: 's',
       priority: 1,
       variables: {
-        CAMPAIGN_ID: 'TEST',
+        CAMPAIGN_ID: campaignId || 'TEST',
         CONTACT_ID: 'TEST',
         CONTACT_NAME: 'テストユーザー',
         COMPANY: 'テスト会社'
       },
-      callerIdData,  // 発信者番号データを渡す
-      mockMode,      // モックモードフラグ
-      provider       // 明示的なプロバイダ指定
+      callerIdData,
+      mockMode,
+      provider,
+      campaignAudio
     };
     
-    logger.info(`テスト発信実行: 発信先=${phoneNumber}, モード=${mockMode ? 'mock' : '通常'}, 指定プロバイダ=${provider || '自動選択'}`);
+    logger.info(`テスト発信実行: 発信先=${phoneNumber}, モード=${mockMode ? 'mock' : '通常'}, 指定プロバイダ=${provider || '自動選択'}, キャンペーン=${campaignId || 'なし'}, 音声ファイル=${campaignAudio ? campaignAudio.length : 0}件`);
     
     try {
       // 統合コールサービスで発信
@@ -85,7 +105,10 @@ exports.testCall = async (req, res) => {
         success: true,
         callId: result.ActionID,
         message: `テスト発信が開始されました（${result.provider}${mockMode ? 'モード' : ''}）`,
-        data: result
+        data: {
+          ...result,
+          audioFilesCount: campaignAudio ? campaignAudio.length : 0
+        }
       };
       
       // SIPアカウント情報がある場合は追加
@@ -115,7 +138,7 @@ exports.testCall = async (req, res) => {
     res.status(500).json({ 
       message: 'テスト発信に失敗しました', 
       error: error.message,
-      isSipError: error.message.includes('SIP') || originateError.message.includes('利用可能なSIPアカウント')
+      isSipError: error.message.includes('SIP') || error.message.includes('利用可能なSIPアカウント')
     });
   }
 };

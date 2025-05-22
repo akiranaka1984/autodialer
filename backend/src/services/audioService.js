@@ -140,26 +140,42 @@ class AudioService {
   }
 
   // キャンペーンの音声ファイル割り当てを取得
-async getCampaignAudio(campaignId) {
-  try {
-    const audioFiles = await db.query(`
-      SELECT ca.audio_type, af.id, af.name, af.filename, af.mimetype, af.description
-      FROM campaign_audio ca
-      JOIN audio_files af ON ca.audio_file_id = af.id
-      WHERE ca.campaign_id = ?
-    `, [campaignId]);
-    
-    // 戻り値の形式を確認（MySQL2の場合は[rows, fields]形式）
-    if (Array.isArray(audioFiles) && audioFiles.length === 2 && Array.isArray(audioFiles[0])) {
-      return audioFiles[0]; // MySQL2の場合は最初の要素を返す
+  async getCampaignAudio(campaignId) {
+    try {
+      logger.info(`キャンペーン音声取得開始: Campaign=${campaignId}`);
+      
+      const audioFiles = await db.query(`
+        SELECT ca.audio_type, af.id, af.name, af.filename, af.mimetype, af.description, af.path
+        FROM campaign_audio ca
+        JOIN audio_files af ON ca.audio_file_id = af.id
+        WHERE ca.campaign_id = ?
+      `, [campaignId]);
+      
+      // MySQL2の戻り値を正しく処理
+      let results;
+      if (Array.isArray(audioFiles) && audioFiles.length === 2 && Array.isArray(audioFiles[0])) {
+        results = audioFiles[0]; // MySQL2の場合は最初の要素が行データ
+      } else {
+        results = audioFiles || [];
+      }
+      
+      logger.info(`キャンペーン音声取得結果: Campaign=${campaignId}, 件数=${results.length}`);
+      
+      // デバッグ用に詳細をログ出力
+      if (results.length > 0) {
+        results.forEach(audio => {
+          logger.info(`音声ファイル詳細: タイプ=${audio.audio_type}, 名前=${audio.name}, ファイル名=${audio.filename}`);
+        });
+      } else {
+        logger.warn(`キャンペーン ${campaignId} に音声ファイルが見つかりません`);
+      }
+      
+      return results;
+    } catch (error) {
+      logger.error(`キャンペーン音声取得エラー: Campaign=${campaignId}`, error);
+      return []; // エラー時は空配列を返す
     }
-    
-    return audioFiles || []; // 互換性のために空配列をデフォルトで返す
-  } catch (error) {
-    logger.error(`キャンペーン音声取得エラー: Campaign=${campaignId}`, error);
-    return []; // エラー時は空配列を返す
   }
-}
 }
 
 module.exports = new AudioService();
