@@ -10,7 +10,7 @@ services:
       MYSQL_DATABASE: autodialer
       MYSQL_CHARSET: utf8mb4
       MYSQL_COLLATION: utf8mb4_unicode_ci
-      TZ: Asia/Tokyo  # タイムゾーンを追加
+      TZ: Asia/Tokyo
     command:
       - --default-authentication-plugin=mysql_native_password
       - --character-set-server=utf8mb4
@@ -19,17 +19,16 @@ services:
     volumes:
       - mysql_data:/var/lib/mysql
       - ./backend/database/schema.sql:/docker-entrypoint-initdb.d/1-schema.sql
-      - /etc/localtime:/etc/localtime:ro  # ホストのタイムゾーンをマウント
+      - /etc/localtime:/etc/localtime:ro
     networks:
       - autodialer-network
-    # 以下のhealthcheckセクションを追加
     healthcheck:
       test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-ppassword"]
       timeout: 5s
       retries: 10
       interval: 5s
 
-  # バックエンドサーバー
+  # バックエンドサーバー（音声対応版）
   backend:
     build:
       context: ./backend
@@ -41,11 +40,13 @@ services:
       - ./backend:/app
       - /app/node_modules
       - /etc/localtime:/etc/localtime:ro
-      # 音声デバイスアクセスを追加
-      - /dev/snd:/dev/snd
+      # 音声デバイスアクセス用ボリューム
+      - /dev/snd:/dev/snd:rw
       - /tmp/.X11-unix:/tmp/.X11-unix:rw
+      # PulseAudioソケット（存在する場合）
+      - /run/user/1000/pulse:/run/user/1000/pulse:rw
     devices:
-      # 音声デバイスを追加
+      # 音声デバイスを明示的にマウント
       - /dev/snd:/dev/snd
     environment:
       NODE_ENV: development
@@ -64,11 +65,13 @@ services:
       WAIT_HOSTS: mysql:3306
       WAIT_TIMEOUT: 60
       TZ: Asia/Tokyo
-      # 音声関連環境変数を追加
-      PULSE_RUNTIME_PATH: /tmp/pulse
-      ALSA_PCM_CARD: default
+      # 音声関連環境変数
+      PULSE_RUNTIME_PATH: /run/user/1000/pulse
+      ALSA_PCM_CARD: 0
       ALSA_PCM_DEVICE: 0
       DISPLAY: :0
+      # 音声デバイス強制有効化
+      AUDIO_ENABLE: "true"
     # 特権モードを有効（音声デバイスアクセス用）
     privileged: true
     depends_on:
@@ -78,7 +81,7 @@ services:
       - autodialer-network
     restart: unless-stopped
 
-  # フロントエンドサーバー（APIエンドポイントを修正）
+  # フロントエンドサーバー
   frontend:
     build:
       context: ./frontend
@@ -88,24 +91,22 @@ services:
     volumes:
       - ./frontend:/app
       - /app/node_modules
-      - /etc/localtime:/etc/localtime:ro  # ホストのタイムゾーンをマウント
+      - /etc/localtime:/etc/localtime:ro
     environment:
       NODE_ENV: development
-      # APIのURLを修正（localhostを使用）
       REACT_APP_API_URL: "http://localhost:5001/api"
-      REACT_APP_USE_MOCK_DATA: "true"  # モックデータを使用
+      REACT_APP_USE_MOCK_DATA: "true"
       CHOKIDAR_USEPOLLING: "true"
       WDS_SOCKET_HOST: localhost
       WDS_SOCKET_PORT: 3003
       DANGEROUSLY_DISABLE_HOST_CHECK: true
       PORT: 3000
       HOST: "0.0.0.0"
-      TZ: Asia/Tokyo  # タイムゾーンを追加
+      TZ: Asia/Tokyo
     depends_on:
       - backend
     networks:
       - autodialer-network
-    # 再起動ポリシーを追加
     restart: unless-stopped
 
 networks:

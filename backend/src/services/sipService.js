@@ -548,7 +548,7 @@ extractRtpInfo(pjsuaOutput) {
         if (audioMap.welcome) {
           logger.info(`🔊 [音声再生] ウェルカムメッセージ: ${audioMap.welcome.name}`);
           logger.info(`🔊 [再生内容] "電話に出ていただきありがとうございます。"`);
-          this.tryPlayAudio(audioMap.welcome.path || audioMap.welcome.filename);
+          this.tryPlayAudioWithAplay(audioMap.welcome.path || audioMap.welcome.filename);
         }
       }, 1000);
       
@@ -557,7 +557,7 @@ extractRtpInfo(pjsuaOutput) {
         if (audioMap.menu) {
           logger.info(`🔊 [音声再生] メニュー案内: ${audioMap.menu.name}`);
           logger.info(`🔊 [再生内容] "詳しい情報をお聞きになりたい場合は1を、電話帳から削除をご希望の場合は9を押してください。"`);
-          this.tryPlayAudio(audioMap.menu.path || audioMap.menu.filename);
+          this.tryPlayAudioWithAplay(audioMap.menu.path || audioMap.menu.filename);
         }
       }, 4000);
       
@@ -566,7 +566,7 @@ extractRtpInfo(pjsuaOutput) {
         if (audioMap.goodbye) {
           logger.info(`🔊 [音声再生] お別れメッセージ: ${audioMap.goodbye.name}`);
           logger.info(`🔊 [再生内容] "お電話ありがとうございました。"`);
-          this.tryPlayAudio(audioMap.goodbye.path || audioMap.goodbye.filename);
+          this.tryPlayAudioWithAplay(audioMap.goodbye.path || audioMap.goodbye.filename);
         }
       }, 15000);
       
@@ -575,76 +575,211 @@ extractRtpInfo(pjsuaOutput) {
     }
   }
   
-  // ★★★ 音声ファイル再生試行メソッド ★★★
-  tryPlayAudio(audioPath) {
-    if (!audioPath) {
-      logger.debug('音声ファイルパスが未設定');
-      return;
-    }
-    
-    try {
-      // FFplayで音声再生を試行
-      const audioProcess = spawn('ffplay', [
-        '-nodisp',
-        '-autoexit',
-        '-loglevel', 'quiet',
-        audioPath
-      ]);
-      
-      audioProcess.on('error', (error) => {
-        logger.debug(`音声再生エラー（${audioPath}）:`, error.message);
-        // FFplayが失敗した場合はaplayを試行
-        this.tryPlayAudioWithAplay(audioPath);
-      });
-      
-      audioProcess.on('close', (code) => {
-        if (code === 0) {
-          logger.debug(`音声再生成功: ${audioPath}`);
-        } else {
-          logger.debug(`音声再生終了: ${audioPath}, code=${code}`);
-        }
-      });
-      
-      // 5秒でタイムアウト
-      setTimeout(() => {
-        try {
-          audioProcess.kill();
-        } catch (killError) {
-          // 既に終了している場合のエラーは無視
-        }
-      }, 5000);
-      
-    } catch (error) {
-      logger.debug('音声再生プロセス起動エラー:', error.message);
-    }
+  // 現在のtryPlayAudioメソッドを以下に置き換え
+// ★★★ Docker対応強化版音声再生メソッド ★★★
+tryPlayAudio(audioPath) {
+  if (!audioPath) {
+    logger.debug('音声ファイルパスが未設定');
+    return;
   }
   
-  // aplayでの音声再生試行
-  tryPlayAudioWithAplay(audioPath) {
-    try {
-      const aplayProcess = spawn('aplay', [audioPath]);
-      
-      aplayProcess.on('error', (error) => {
-        logger.debug(`aplay音声再生エラー（${audioPath}）:`, error.message);
+  logger.info(`🔊 音声再生試行: ${audioPath}`);
+  
+  try {
+    // 方法1: ALSAのaplayを使用（最も確実）
+    this.tryPlayWithAplay(audioPath)
+      .then(success => {
+        if (!success) {
+          // 方法2: ffplayでフォールバック
+          return this.tryPlayWithFFplay(audioPath);
+        }
+        return success;
+      })
+      .then(success => {
+        if (!success) {
+          // 方法3: スピーカーテストで音声確認
+          return this.tryPlaySystemBeep();
+        }
+        return success;
+      })
+      .catch(error => {
+        logger.error('全ての音声再生方法が失敗:', error.message);
       });
       
-      aplayProcess.on('close', (code) => {
-        logger.debug(`aplay音声再生終了: ${audioPath}, code=${code}`);
-      });
-      
-      // 5秒でタイムアウト
-      setTimeout(() => {
+  } catch (error) {
+    logger.error('音声再生処理エラー:', error.message);
+  }
+}
+
+// ALSAのaplayを使用した音声再生
+async tryPlayWithAplay(audioPath) {
+  return new Promise((resolve) => {
+    logger.info(`🔊 aplay音声再生開始: ${audioPath}`);
+    
+    const aplayProcess = spawn('aplay', [
+      '-D', 'default',  // デフォルトデバイス指定
+      '-f', 'cd',       // CD品質
+      audioPath
+    ]);
+    
+    let resolved = false;
+    
+    aplayProcess.stdout.on('data', (data) => {
+      logger.debug(`aplay出力: ${data.toString()}`);
+    });
+    
+    aplayProcess.stderr.on('data', (data) => {
+      logger.debug(`aplayエラー: ${data.toString()}`);
+    });
+    
+    aplayProcess.on('close', (code) => {
+      if (!resolved) {
+        resolved = true;
+        const success = code === 0;
+        logger.info(`✅ aplay音声再生結果: ${success ? '成功' : '失敗'} (code: ${code})`);
+        resolve(success);
+      }
+    });
+    
+    aplayProcess.on('error', (error) => {
+      if (!resolved) {
+        resolved = true;
+        logger.debug(`aplayプロセスエラー: ${error.message}`);
+        resolve(false);
+      }
+    });
+    
+    // 15秒でタイムアウト
+    setTimeout(() => {
+      if (!resolved) {
+        resolved = true;
         try {
           aplayProcess.kill();
         } catch (killError) {
-          // 既に終了している場合のエラーは無視
+          // 無視
+        }
+        logger.warn('aplay音声再生タイムアウト');
+        resolve(false);
+      }
+    }, 15000);
+  });
+}
+async tryPlayWithFFplay(audioPath) {
+  return new Promise((resolve) => {
+    logger.info(`🔊 ffplay音声再生開始: ${audioPath}`);
+    
+    const ffplayProcess = spawn('ffplay', [
+      '-nodisp',
+      '-autoexit',
+      '-loglevel', 'quiet',
+      '-volume', '100',
+      audioPath
+    ]);
+    
+    let resolved = false;
+    
+    ffplayProcess.on('close', (code) => {
+      if (!resolved) {
+        resolved = true;
+        const success = code === 0;
+        logger.info(`✅ ffplay音声再生結果: ${success ? '成功' : '失敗'} (code: ${code})`);
+        resolve(success);
+      }
+    });
+    
+    ffplayProcess.on('error', (error) => {
+      if (!resolved) {
+        resolved = true;
+        logger.debug(`ffplayプロセスエラー: ${error.message}`);
+        resolve(false);
+      }
+    });
+    
+    setTimeout(() => {
+      if (!resolved) {
+        resolved = true;
+        try {
+          ffplayProcess.kill();
+        } catch (killError) {
+          // 無視
+        }
+        logger.warn('ffplay音声再生タイムアウト');
+        resolve(false);
+      }
+    }, 15000);
+  });
+}
+
+async tryPlaySystemBeep() {
+  return new Promise((resolve) => {
+    logger.info('🔔 システムビープ音テスト開始');
+    
+    try {
+      // 方法1: speaker-testコマンド
+      const speakerTest = spawn('speaker-test', [
+        '-t', 'sine',
+        '-f', '1000',
+        '-l', '1',
+        '-s', '1'
+      ]);
+      
+      let resolved = false;
+      
+      speakerTest.on('close', (code) => {
+        if (!resolved) {
+          resolved = true;
+          const success = code === 0;
+          logger.info(`✅ speaker-testビープ音結果: ${success ? '成功' : '失敗'}`);
+          
+          if (!success) {
+            // 方法2: echo bell文字
+            try {
+              spawn('sh', ['-c', 'echo -e "\\a"']);
+              logger.info('🔔 ベル文字出力完了');
+              resolve(true);
+            } catch (error) {
+              resolve(false);
+            }
+          } else {
+            resolve(success);
+          }
+        }
+      });
+      
+      speakerTest.on('error', (error) => {
+        if (!resolved) {
+          resolved = true;
+          logger.debug(`speaker-testエラー: ${error.message}`);
+          
+          // フォールバック: echo bell
+          try {
+            spawn('sh', ['-c', 'echo -e "\\a"']);
+            logger.info('🔔 ベル文字フォールバック出力');
+            resolve(true);
+          } catch (echoError) {
+            resolve(false);
+          }
+        }
+      });
+      
+      setTimeout(() => {
+        if (!resolved) {
+          resolved = true;
+          try {
+            speakerTest.kill();
+          } catch (killError) {
+            // 無視
+          }
+          resolve(false);
         }
       }, 5000);
       
     } catch (error) {
-      logger.debug('aplay音声再生プロセス起動エラー:', error.message);
+      logger.debug('システムビープ音エラー:', error.message);
+      resolve(false);
     }
-  }
+  });
+}
   
   // モックモードでの発信処理
   async originateMock(params) {
