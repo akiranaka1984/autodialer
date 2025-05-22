@@ -287,7 +287,7 @@ router.get('/:id/details', auth, async (req, res) => {
   }
 });
 
-// キャンペーン開始エンドポイント修正
+// キャンペーン開始エンドポイント修正版
 router.post('/:id/start', auth, async (req, res) => {
   try {
     const campaignId = req.params.id;
@@ -295,7 +295,7 @@ router.post('/:id/start', auth, async (req, res) => {
     
     // キャンペーンの検証
     const [campaign] = await db.query(`
-      SELECT c.*, ci.active as caller_id_active,
+      SELECT c.*, ci.active as caller_id_active, ci.number as caller_id_number,
              (SELECT COUNT(*) FROM contacts WHERE campaign_id = c.id) as contact_count
       FROM campaigns c
       LEFT JOIN caller_ids ci ON c.caller_id_id = ci.id
@@ -314,20 +314,50 @@ router.post('/:id/start', auth, async (req, res) => {
       return res.status(400).json({ message: '連絡先が登録されていません' });
     }
     
-    // 発信サービスを明示的にインポート
-    const dialerService = require('../services/dialerService');
-    
     // キャンペーンのステータスを更新
     await db.query('UPDATE campaigns SET status = ? WHERE id = ?', ['active', campaignId]);
+    
+    // 発信サービスを取得
+    const dialerService = require('../services/dialerService');
     
     // 発信サービスが初期化されているか確認
     if (!dialerService.initialized) {
       logger.info('発信サービスを初期化します');
-      await dialerService.initialize();
+      await dialerService.initializeService();
     }
     
-    // キャンペーンを開始 - 重要: ここでdialerServiceに通知
-    const started = await dialerService.startCampaign(campaignId);
+    // 【重要】キャンペーンを発信サービスに手動登録
+    const campaignData = {
+      id: parseInt(campaignId),
+      name: campaign[0].name,
+      maxConcurrentCalls: campaign[0].max_concurrent_calls || 5,
+      callerIdId: campaign[0].caller_id_id,
+      callerIdNumber: campaign[0].caller_id_number,
+      activeCalls: 0,
+      status: 'active',
+      lastDialTime: new Date()
+    };
+    
+    // 発信サービスにキャンペーンを登録
+    dialerService.activeCampaigns.set(parseInt(campaignId), campaignData);
+    logger.info(`キャンペーン ${campaignId} を発信サービスに登録しました`);
+    
+    // キャンペーンを開始（従来の方法も併用）
+    try {
+      await dialerService.startCampaign(campaignId);
+    } catch (startError) {
+      logger.warn(`startCampaign エラー（無視して続行）: ${startError.message}`);
+    }
+    
+    // 即座に発信キュー処理を実行
+    setTimeout(async () => {
+      try {
+        await dialerService.processDialerQueue();
+        logger.info(`発信キュー処理が実行されました: campaignId=${campaignId}`);
+      } catch (queueError) {
+        logger.error(`発信キュー処理エラー: ${queueError.message}`);
+      }
+    }, 1000); // 1秒後に実行
     
     // キャンペーン情報を取得して応答
     const [updatedCampaign] = await db.query(`
@@ -337,28 +367,17 @@ router.post('/:id/start', auth, async (req, res) => {
       WHERE c.id = ?
     `, [campaignId]);
     
-    // 即座に発信キュー処理を実行
-    try {
-      await dialerService.processDialerQueue();
-      logger.info(`発信キュー処理が実行されました: campaignId=${campaignId}`);
-    } catch (queueError) {
-      logger.error(`発信キュー処理エラー: ${queueError.message}`);
-    }
-    
-    // 5秒後に再度発信キューを処理（バックグラウンドで実行）
-    setTimeout(() => {
-      dialerService.processDialerQueue()
-        .catch(err => logger.error(`遅延発信キュー処理エラー: ${err.message}`));
-    }, 5000);
+    logger.info(`キャンペーン開始完了: ID=${campaignId}, ActiveCampaigns=${dialerService.activeCampaigns.size}`);
     
     res.json({ 
       message: 'キャンペーンを開始しました', 
       status: 'active',
-      campaign: updatedCampaign[0]
+      campaign: updatedCampaign[0],
+      activeCampaignsCount: dialerService.activeCampaigns.size
     });
   } catch (error) {
     logger.error('キャンペーン開始エラー:', error);
-    res.status(500).json({ message: 'エラーが発生しました' });
+    res.status(500).json({ message: 'エラーが発生しました: ' + error.message });
   }
 });
 

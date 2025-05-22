@@ -10,6 +10,7 @@ services:
       MYSQL_DATABASE: autodialer
       MYSQL_CHARSET: utf8mb4
       MYSQL_COLLATION: utf8mb4_unicode_ci
+      TZ: Asia/Tokyo  # タイムゾーンを追加
     command:
       - --default-authentication-plugin=mysql_native_password
       - --character-set-server=utf8mb4
@@ -18,6 +19,7 @@ services:
     volumes:
       - mysql_data:/var/lib/mysql
       - ./backend/database/schema.sql:/docker-entrypoint-initdb.d/1-schema.sql
+      - /etc/localtime:/etc/localtime:ro  # ホストのタイムゾーンをマウント
     networks:
       - autodialer-network
     # 以下のhealthcheckセクションを追加
@@ -38,6 +40,7 @@ services:
     volumes:
       - ./backend:/app
       - /app/node_modules
+      - /etc/localtime:/etc/localtime:ro  # ホストのタイムゾーンをマウント
     environment:
       NODE_ENV: development
       MYSQL_HOST: mysql
@@ -54,6 +57,7 @@ services:
       USE_MOCK_DATA: "false"
       WAIT_HOSTS: mysql:3306
       WAIT_TIMEOUT: 60
+      TZ: Asia/Tokyo  # タイムゾーンを追加
     depends_on:
       mysql:
         condition: service_healthy
@@ -71,6 +75,7 @@ services:
     volumes:
       - ./frontend:/app
       - /app/node_modules
+      - /etc/localtime:/etc/localtime:ro  # ホストのタイムゾーンをマウント
     environment:
       NODE_ENV: development
       # APIのURLを修正（localhostを使用）
@@ -82,6 +87,7 @@ services:
       DANGEROUSLY_DISABLE_HOST_CHECK: true
       PORT: 3000
       HOST: "0.0.0.0"
+      TZ: Asia/Tokyo  # タイムゾーンを追加
     depends_on:
       - backend
     networks:
