@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const db = require('../services/database');
 const auth = require('../middleware/auth');
+const logger = require('../services/logger');
 // campaignsControllerをインポート
 const campaignsController = require('../controllers/campaignsController');
 
@@ -287,35 +288,60 @@ router.get('/:id/details', auth, async (req, res) => {
   }
 });
 
-// キャンペーン開始エンドポイント修正版
+// キャンペーン開始エンドポイント - 修正版
 router.post('/:id/start', auth, async (req, res) => {
   try {
-    const campaignId = req.params.id;
+    const campaignId = parseInt(req.params.id, 10);
     logger.info(`キャンペーン開始リクエスト受信: ID=${campaignId}`);
     
     // キャンペーンの検証
     const [campaign] = await db.query(`
       SELECT c.*, ci.active as caller_id_active, ci.number as caller_id_number,
-             (SELECT COUNT(*) FROM contacts WHERE campaign_id = c.id) as contact_count
+             (SELECT COUNT(*) FROM contacts WHERE campaign_id = c.id AND status = 'pending') as pending_count
       FROM campaigns c
       LEFT JOIN caller_ids ci ON c.caller_id_id = ci.id
       WHERE c.id = ?
     `, [campaignId]);
     
     if (!campaign || campaign.length === 0) {
+      logger.error(`キャンペーンが見つかりません: ID=${campaignId}`);
       return res.status(404).json({ message: 'キャンペーンが見つかりません' });
     }
     
-    if (!campaign[0].caller_id_id || !campaign[0].caller_id_active) {
+    const campaignData = campaign[0];
+    
+    // バリデーション
+    if (!campaignData.caller_id_id || !campaignData.caller_id_active) {
+      logger.error(`発信者番号が無効: ID=${campaignId}, CallerId=${campaignData.caller_id_id}, Active=${campaignData.caller_id_active}`);
       return res.status(400).json({ message: '有効な発信者番号が設定されていません' });
     }
     
-    if (campaign[0].contact_count === 0) {
-      return res.status(400).json({ message: '連絡先が登録されていません' });
+    if (campaignData.pending_count === 0) {
+      logger.error(`発信待ち連絡先がありません: ID=${campaignId}, PendingCount=${campaignData.pending_count}`);
+      return res.status(400).json({ message: '発信待ちの連絡先がありません' });
     }
+    
+    // 現在時刻チェック（営業時間内かどうか）
+    const now = new Date();
+    const currentHour = now.getHours();
+    const currentMinute = now.getMinutes();
+    const currentTime = currentHour * 60 + currentMinute;
+    
+    // デフォルトの営業時間設定
+    const workingHoursStart = campaignData.working_hours_start || '09:00';
+    const workingHoursEnd = campaignData.working_hours_end || '18:00';
+    
+    const [startHour, startMin] = workingHoursStart.split(':').map(n => parseInt(n, 10));
+    const [endHour, endMin] = workingHoursEnd.split(':').map(n => parseInt(n, 10));
+    
+    const startTime = startHour * 60 + startMin;
+    const endTime = endHour * 60 + endMin;
+    
+    logger.info(`時間チェック: 現在=${currentHour}:${currentMinute}, 営業時間=${workingHoursStart}-${workingHoursEnd}`);
     
     // キャンペーンのステータスを更新
     await db.query('UPDATE campaigns SET status = ? WHERE id = ?', ['active', campaignId]);
+    logger.info(`キャンペーンステータスを更新: ID=${campaignId} -> active`);
     
     // 発信サービスを取得
     const dialerService = require('../services/dialerService');
@@ -326,58 +352,93 @@ router.post('/:id/start', auth, async (req, res) => {
       await dialerService.initializeService();
     }
     
-    // 【重要】キャンペーンを発信サービスに手動登録
-    const campaignData = {
-      id: parseInt(campaignId),
-      name: campaign[0].name,
-      maxConcurrentCalls: campaign[0].max_concurrent_calls || 5,
-      callerIdId: campaign[0].caller_id_id,
-      callerIdNumber: campaign[0].caller_id_number,
-      activeCalls: 0,
+    // キャンペーンデータを準備
+    const activeCallsCount = dialerService.activeCalls ? 
+      Array.from(dialerService.activeCalls.values()).filter(call => call.campaignId === campaignId).length : 0;
+    
+    const campaignConfig = {
+      id: campaignId,
+      name: campaignData.name,
+      maxConcurrentCalls: campaignData.max_concurrent_calls || 5,
+      callerIdId: campaignData.caller_id_id,
+      callerIdNumber: campaignData.caller_id_number,
+      activeCalls: activeCallsCount,
       status: 'active',
-      lastDialTime: new Date()
+      lastDialTime: new Date(),
+      workingHoursStart: workingHoursStart,
+      workingHoursEnd: workingHoursEnd
     };
     
     // 発信サービスにキャンペーンを登録
-    dialerService.activeCampaigns.set(parseInt(campaignId), campaignData);
-    logger.info(`キャンペーン ${campaignId} を発信サービスに登録しました`);
+    dialerService.activeCampaigns.set(campaignId, campaignConfig);
+    logger.info(`キャンペーンを発信サービスに登録: ID=${campaignId}, ActiveCampaigns=${dialerService.activeCampaigns.size}`);
     
-    // キャンペーンを開始（従来の方法も併用）
+    // 営業時間内の場合は即座に発信処理を実行
+    if (currentTime >= startTime && currentTime <= endTime) {
+      logger.info(`営業時間内のため即座に発信処理を実行: ID=${campaignId}`);
+      
+      try {
+        // 即座に発信キュー処理を実行（awaitで待機）
+        await dialerService.processDialerQueue();
+        logger.info(`発信キュー処理完了: ID=${campaignId}`);
+        
+        // 発信状況を確認
+        const updatedCampaign = dialerService.activeCampaigns.get(campaignId);
+        logger.info(`発信後のキャンペーン状態: ID=${campaignId}, ActiveCalls=${updatedCampaign?.activeCalls || 0}`);
+        
+      } catch (queueError) {
+        logger.error(`発信キュー処理エラー: ${queueError.message}`, queueError);
+        // エラーでも続行（キャンペーンは開始されている）
+      }
+    } else {
+      logger.info(`営業時間外のため発信処理をスキップ: ID=${campaignId}, 現在=${currentHour}:${currentMinute}`);
+    }
+    
+    // 従来の方法も併用（フォールバック）
     try {
       await dialerService.startCampaign(campaignId);
+      logger.info(`startCampaign メソッドも実行: ID=${campaignId}`);
     } catch (startError) {
       logger.warn(`startCampaign エラー（無視して続行）: ${startError.message}`);
     }
     
-    // 即座に発信キュー処理を実行
-    setTimeout(async () => {
-      try {
-        await dialerService.processDialerQueue();
-        logger.info(`発信キュー処理が実行されました: campaignId=${campaignId}`);
-      } catch (queueError) {
-        logger.error(`発信キュー処理エラー: ${queueError.message}`);
-      }
-    }, 1000); // 1秒後に実行
-    
-    // キャンペーン情報を取得して応答
+    // 最新のキャンペーン情報を取得
     const [updatedCampaign] = await db.query(`
-      SELECT c.*, ci.number as caller_id_number 
+      SELECT c.*, ci.number as caller_id_number,
+             (SELECT COUNT(*) FROM contacts WHERE campaign_id = c.id AND status = 'pending') as pending_contacts,
+             (SELECT COUNT(*) FROM contacts WHERE campaign_id = c.id AND status = 'called') as called_contacts
       FROM campaigns c 
       LEFT JOIN caller_ids ci ON c.caller_id_id = ci.id 
       WHERE c.id = ?
     `, [campaignId]);
     
-    logger.info(`キャンペーン開始完了: ID=${campaignId}, ActiveCampaigns=${dialerService.activeCampaigns.size}`);
-    
-    res.json({ 
-      message: 'キャンペーンを開始しました', 
+    // レスポンス
+    const responseData = {
+      message: 'キャンペーンを開始しました',
       status: 'active',
       campaign: updatedCampaign[0],
-      activeCampaignsCount: dialerService.activeCampaigns.size
-    });
+      dialerServiceInfo: {
+        initialized: dialerService.initialized,
+        activeCampaignsCount: dialerService.activeCampaigns.size,
+        activeCallsCount: dialerService.activeCalls ? dialerService.activeCalls.size : 0,
+        campaignRegistered: dialerService.activeCampaigns.has(campaignId)
+      },
+      timeInfo: {
+        currentTime: `${currentHour}:${currentMinute}`,
+        workingHours: `${workingHoursStart}-${workingHoursEnd}`,
+        isWithinWorkingHours: currentTime >= startTime && currentTime <= endTime
+      }
+    };
+    
+    logger.info(`キャンペーン開始完了: ID=${campaignId}`, responseData.dialerServiceInfo);
+    res.json(responseData);
+    
   } catch (error) {
     logger.error('キャンペーン開始エラー:', error);
-    res.status(500).json({ message: 'エラーが発生しました: ' + error.message });
+    res.status(500).json({ 
+      message: 'エラーが発生しました: ' + error.message,
+      error: process.env.NODE_ENV === 'development' ? error.stack : undefined
+    });
   }
 });
 

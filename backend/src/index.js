@@ -92,6 +92,9 @@ app.use('/api/campaigns/:campaignId/contacts', contactsRouter);
 // 追加: 独立した contacts ルートパスを追加
 app.use('/api/contacts', contactsRouter);
 
+const audioRouter = require('./routes/audio');
+app.use('/api/audio', audioRouter);
+
 // ヘルスチェックエンドポイント
 app.get('/health', (req, res) => {
   res.json({ 
