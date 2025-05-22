@@ -57,28 +57,37 @@ const getPool = async () => {
 };
 
 // クエリを実行する関数
-// クエリを実行する関数
 const query = async (sql, params = []) => {
   const conn = await getPool();
   try {
-    // LIMIT句を含むSQLの特別な処理
-    if (sql.includes('LIMIT ?') && params.length > 0) {
-      // 最後のパラメータが数値であることを確認
-      const lastParam = params[params.length - 1];
-      if (typeof lastParam !== 'number') {
-        // LIMIT句のプレースホルダーを直接置換
-        sql = sql.replace('LIMIT ?', `LIMIT ${parseInt(lastParam, 10) || 1}`);
-        // 最後のパラメータを削除
+    // LIMIT句を含むSQLの処理
+    if (typeof sql === 'string' && sql.includes('LIMIT ?')) {
+      // LIMIT句の位置を検索
+      const limitIndex = sql.lastIndexOf('LIMIT ?');
+      if (limitIndex !== -1) {
+        // パラメータ配列の最後の要素を取得
+        const limitValue = params.length > 0 ? params[params.length - 1] : null;
+        
+        // 最後のパラメータが有効な数値であることを確認
+        const limit = Number.isInteger(limitValue) ? limitValue : 
+                     (typeof limitValue === 'string' && /^\d+$/.test(limitValue)) ? parseInt(limitValue, 10) : 10;
+        
+        // SQLのLIMIT句を直接置換
+        sql = sql.substring(0, limitIndex) + `LIMIT ${limit}` + sql.substring(limitIndex + 7);
+        
+        // パラメータ配列から最後の要素を削除
         params = params.slice(0, -1);
+        
+        logger.debug(`SQL再構築 (LIMIT句): ${sql}, 残りパラメータ: ${JSON.stringify(params)}`);
       }
     }
     
-    // execute を使用
     logger.debug(`SQL実行: ${sql}, パラメータ: ${JSON.stringify(params)}`);
-    const result = await conn.execute(sql, params);
-    return result;
+    
+    // query を使用（prepareなしで直接クエリを実行）
+    return await conn.query(sql, params);
   } catch (error) {
-    logger.error(`クエリエラー: ${sql}`, error);
+    logger.error(`クエリエラー: ${sql}, パラメータ: ${JSON.stringify(params)}`, error);
     throw error;
   }
 };
