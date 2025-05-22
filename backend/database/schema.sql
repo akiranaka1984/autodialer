@@ -20,7 +20,7 @@ CREATE TABLE caller_channels (
   FOREIGN KEY (caller_id_id) REFERENCES caller_ids(id) ON DELETE CASCADE
 );
 
--- キャンペーンテーブル
+-- キャンペーンテーブル（progressカラム追加）
 CREATE TABLE IF NOT EXISTS campaigns (
   id INT AUTO_INCREMENT PRIMARY KEY,
   name VARCHAR(100) NOT NULL,
@@ -34,6 +34,7 @@ CREATE TABLE IF NOT EXISTS campaigns (
   schedule_end DATETIME,
   working_hours_start TIME DEFAULT '09:00:00',
   working_hours_end TIME DEFAULT '18:00:00',
+  progress INT DEFAULT 0, -- 進捗率（0-100%）
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   FOREIGN KEY (caller_id_id) REFERENCES caller_ids(id)
