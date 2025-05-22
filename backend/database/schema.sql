@@ -197,3 +197,34 @@ CREATE TABLE IF NOT EXISTS operator_status_logs (
   changed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   FOREIGN KEY (operator_id) REFERENCES operators(id)
 );
+
+-- backend/database/schema.sql への追加
+-- 音声再生ログテーブル
+
+-- 音声再生ログテーブル
+CREATE TABLE IF NOT EXISTS audio_playback_logs (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    call_id VARCHAR(255) NOT NULL,
+    audio_file_id VARCHAR(255),
+    audio_type ENUM('welcome', 'menu', 'goodbye', 'error') NOT NULL,
+    played_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    status ENUM('played', 'failed', 'skipped') DEFAULT 'played',
+    duration_ms INT DEFAULT 0,
+    error_message TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    
+    INDEX idx_call_id (call_id),
+    INDEX idx_audio_file_id (audio_file_id),
+    INDEX idx_played_at (played_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- call_logs テーブルに音声関連カラムを追加
+ALTER TABLE call_logs 
+ADD COLUMN has_audio TINYINT(1) DEFAULT 0 AFTER keypress,
+ADD COLUMN audio_file_count INT DEFAULT 0 AFTER has_audio,
+ADD COLUMN audio_played_at TIMESTAMP NULL AFTER audio_file_count;
+
+-- campaigns テーブルにIVRデプロイ状態を追加
+ALTER TABLE campaigns
+ADD COLUMN ivr_deployed TINYINT(1) DEFAULT 0 AFTER progress,
+ADD COLUMN ivr_deploy_time TIMESTAMP NULL AFTER ivr_deployed;

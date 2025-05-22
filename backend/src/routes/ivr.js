@@ -241,59 +241,116 @@ router.post('/campaigns/:id/deploy', async (req, res) => {
   }
 });
 
-// IVRスクリプトのテスト
+// backend/src/routes/ivr.js の test-call エンドポイントを修正
+
+// IVRスクリプトのテスト（既存のtest-callエンドポイントを置き換え）
 router.post('/test-call/:id', async (req, res) => {
   try {
     const campaignId = req.params.id;
     const { phoneNumber } = req.body;
     
+    logger.info(`IVRテスト発信開始: Campaign=${campaignId}, Phone=${phoneNumber}`);
+    
     if (!phoneNumber) {
       return res.status(400).json({ message: '電話番号は必須です' });
     }
     
-    // キャンペーンの存在確認
+    // 電話番号の簡易検証
+    const cleanPhoneNumber = phoneNumber.replace(/[^\d]/g, '');
+    if (cleanPhoneNumber.length < 8) {
+      return res.status(400).json({ message: '有効な電話番号を入力してください' });
+    }
+    
+    // キャンペーンの存在確認と情報取得
     const [campaigns] = await db.query(`
-      SELECT c.*, ci.id as caller_id_id, ci.number as caller_id_number 
+      SELECT c.*, ci.id as caller_id_id, ci.number as caller_id_number, ci.description
       FROM campaigns c 
       JOIN caller_ids ci ON c.caller_id_id = ci.id 
-      WHERE c.id = ?
+      WHERE c.id = ? AND ci.active = true
     `, [campaignId]);
     
     if (campaigns.length === 0) {
-      return res.status(404).json({ message: 'キャンペーンが見つかりません' });
+      return res.status(404).json({ message: 'キャンペーンが見つからないか、発信者番号が無効です' });
     }
     
     const campaign = campaigns[0];
     
-    // IVRスクリプトをデプロイ（最新の状態を確保）
-    await ivrService.deployIvrScript(campaignId);
+    // IVRスクリプトの生成・デプロイ（最新状態を確保）
+    try {
+      const scriptResult = await ivrService.generateIvrScript(campaignId);
+      logger.info(`IVRスクリプト生成完了: ${scriptResult.path}`);
+    } catch (scriptError) {
+      logger.warn(`IVRスクリプト生成警告: ${scriptError.message}`);
+      // 続行する（既存スクリプトを使用）
+    }
     
-    // コールサービスに発信リクエスト
+    // コールサービスで発信実行
     const callService = require('../services/callService');
     
-    const callResult = await callService.originate({
-      phoneNumber,
+    // 発信パラメータの設定
+    const callParams = {
+      phoneNumber: cleanPhoneNumber,
       callerID: `"${campaign.name}" <${campaign.caller_id_number}>`,
-      context: `autodialer-campaign-${campaignId}`,
+      context: 'autodialer', // 基本コンテキスト（IVR用に後で拡張）
       exten: 's',
       priority: 1,
+      callerIdData: { 
+        id: campaign.caller_id_id,
+        number: campaign.caller_id_number,
+        description: campaign.description 
+      },
       variables: {
         CAMPAIGN_ID: campaignId,
-        CONTACT_ID: 'test',
-        CONTACT_NAME: 'テスト発信',
-        TEST_CALL: true
-      }
-    });
+        CONTACT_ID: 'ivr-test',
+        CONTACT_NAME: 'IVRテスト',
+        TEST_CALL: 'true',
+        IVR_TEST: 'true'
+      },
+      mockMode: process.env.NODE_ENV === 'development' && process.env.MOCK_SIP === 'true'
+    };
+    
+    logger.debug('IVRテスト発信パラメータ:', JSON.stringify(callParams, null, 2));
+    
+    // 発信実行
+    const callResult = await callService.originate(callParams);
+    
+    // テスト発信ログを記録
+    try {
+      await db.query(`
+        INSERT INTO call_logs 
+        (campaign_id, caller_id_id, call_id, phone_number, start_time, status, test_call, call_provider)
+        VALUES (?, ?, ?, ?, NOW(), 'ORIGINATING', 1, ?)
+      `, [
+        campaignId, 
+        campaign.caller_id_id, 
+        callResult.ActionID, 
+        cleanPhoneNumber,
+        callResult.provider || 'unknown'
+      ]);
+    } catch (logError) {
+      logger.warn('テスト発信ログ記録エラー:', logError.message);
+    }
+    
+    logger.info(`IVRテスト発信成功: CallID=${callResult.ActionID}, Provider=${callResult.provider}`);
     
     res.json({
       success: true,
       message: 'IVRテスト発信を開始しました',
       callId: callResult.ActionID,
+      campaignId,
+      phoneNumber: cleanPhoneNumber,
+      callerIdNumber: campaign.caller_id_number,
+      provider: callResult.provider,
       data: callResult
     });
+    
   } catch (error) {
     logger.error('IVRテスト発信エラー:', error);
-    res.status(500).json({ message: `エラー: ${error.message}` });
+    res.status(500).json({ 
+      message: 'IVRテスト発信に失敗しました', 
+      error: error.message,
+      details: process.env.NODE_ENV === 'development' ? error.stack : undefined
+    });
   }
 });
 

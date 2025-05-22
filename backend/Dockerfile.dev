@@ -1,24 +1,39 @@
+# backend/Dockerfile.dev を修正
 FROM node:18-alpine
 
 WORKDIR /app
 
-# 必要なパッケージと開発ツールをインストール（問題のパッケージを削除）
+# 音声関連パッケージとFFmpegを追加インストール
 RUN apk update && apk add --no-cache \
     alsa-lib \
     alsa-utils \
+    alsa-lib-dev \
     build-base \
     git \
     make \
     gcc \
     g++ \
     linux-headers \
-    # PJSIPをインストール
     pjsua \
     pjproject \
     iputils \
     netcat-openbsd \
     tcpdump \
-    socat
+    socat \
+    # 音声再生用ツールを追加
+    ffmpeg \
+    sox \
+    pulseaudio \
+    pulseaudio-utils \
+    # 追加の音声コーデック
+    lame \
+    flac \
+    opus \
+    vorbis-tools
+
+# サウンドデバイスの設定
+RUN echo "pcm.!default { type pulse }" > /etc/asound.conf && \
+    echo "ctl.!default { type pulse }" >> /etc/asound.conf
 
 # パッケージインストール用ファイルのみコピー
 COPY package*.json ./
@@ -29,7 +44,7 @@ RUN npm install
 # nodemonをグローバルにインストール
 RUN npm install -g nodemon
 
-# pjsuaコマンドのラッパースクリプトを作成して、sipcmdの代わりに使用
+# pjsuaコマンドのラッパースクリプトを作成（音声対応版）
 RUN echo '#!/bin/sh' > /usr/local/bin/sipcmd && \
     echo 'echo "Executing SIP call: $1@$3 -> $4"' >> /usr/local/bin/sipcmd && \
     echo 'pjsua \
@@ -40,28 +55,34 @@ RUN echo '#!/bin/sh' > /usr/local/bin/sipcmd && \
       --password="$2" \
       --null-audio \
       --no-vad \
-      --auto-play \
-      --duration=30 \
-      --log-level=5 \
+      --duration=$5 \
+      --log-level=3 \
+      --app-log-level=3 \
       sip:$4@$3' >> /usr/local/bin/sipcmd && \
     chmod +x /usr/local/bin/sipcmd
 
-    RUN echo '#!/bin/sh' > /usr/local/bin/sipcmd && \
-    echo 'echo "Executing SIP call: $1@$3 -> $4"' >> /usr/local/bin/sipcmd && \
-    echo 'pjsua \
-      --id="sip:$1@$3" \
-      --registrar="sip:$3" \
-      --realm="*" \
-      --username="$1" \
-      --password="$2" \
-      --null-audio \
-      --no-vad \
-      --duration=$5 \
-      sip:$4@$3' >> /usr/local/bin/sipcmd && \
-    chmod +x /usr/local/bin/sipcmd
+# 音声テスト用スクリプトを作成
+RUN echo '#!/bin/sh' > /usr/local/bin/audio-test && \
+    echo 'echo "Testing audio system..."' >> /usr/local/bin/audio-test && \
+    echo 'if command -v ffplay >/dev/null 2>&1; then' >> /usr/local/bin/audio-test && \
+    echo '  echo "ffplay is available"' >> /usr/local/bin/audio-test && \
+    echo 'else' >> /usr/local/bin/audio-test && \
+    echo '  echo "ffplay is not available"' >> /usr/local/bin/audio-test && \
+    echo 'fi' >> /usr/local/bin/audio-test && \
+    echo 'if command -v aplay >/dev/null 2>&1; then' >> /usr/local/bin/audio-test && \
+    echo '  echo "aplay is available"' >> /usr/local/bin/audio-test && \
+    echo 'else' >> /usr/local/bin/audio-test && \
+    echo '  echo "aplay is not available"' >> /usr/local/bin/audio-test && \
+    echo 'fi' >> /usr/local/bin/audio-test && \
+    chmod +x /usr/local/bin/audio-test
 
 # アプリケーションのポートを公開
 EXPOSE 5000
+
+# 環境変数を設定
+ENV PULSE_RUNTIME_PATH=/tmp/pulse
+ENV ALSA_PCM_CARD=default
+ENV ALSA_PCM_DEVICE=0
 
 # 開発モードで起動
 CMD ["nodemon", "src/index.js"]

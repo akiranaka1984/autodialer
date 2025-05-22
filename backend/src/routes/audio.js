@@ -258,4 +258,119 @@ router.delete('/:id', async (req, res) => {
   }
 });
 
+// backend/src/routes/audio.js に追加するテスト用エンドポイント
+
+// 🧪 音声再生テスト用エンドポイント
+router.post('/test-playback/:id', auth, async (req, res) => {
+  try {
+    const audioId = req.params.id;
+    
+    logger.info(`音声再生テスト開始: audioId=${audioId}`);
+    
+    // 音声ファイル情報を取得
+    const [rows] = await db.query('SELECT * FROM audio_files WHERE id = ?', [audioId]);
+    
+    if (rows.length === 0) {
+      return res.status(404).json({ message: '音声ファイルが見つかりません' });
+    }
+    
+    const audioFile = rows[0];
+    
+    // 音声プレイヤーサービスを取得
+    const audioPlayerService = require('../services/audioPlayerService');
+    
+    // テスト用通話IDを生成
+    const testCallId = `test-audio-${Date.now()}`;
+    
+    // 音声再生を実行
+    logger.info(`音声ファイル直接再生テスト: ${audioFile.filename}`);
+    
+    const success = await audioPlayerService.playAudioFile(testCallId, audioFile, `テスト再生: ${audioFile.name}`);
+    
+    if (success) {
+      res.json({
+        success: true,
+        message: '音声ファイルの再生テストが完了しました',
+        audioFile: {
+          id: audioFile.id,
+          name: audioFile.name,
+          filename: audioFile.filename,
+          size: audioFile.size
+        }
+      });
+    } else {
+      res.status(500).json({
+        success: false,
+        message: '音声ファイルの再生に失敗しました',
+        audioFile: {
+          id: audioFile.id,
+          name: audioFile.name,
+          filename: audioFile.filename
+        }
+      });
+    }
+    
+  } catch (error) {
+    logger.error('音声再生テストエラー:', error);
+    res.status(500).json({ 
+      message: '音声再生テストでエラーが発生しました', 
+      error: error.message 
+    });
+  }
+});
+
+// 🧪 システム音声テスト用エンドポイント
+router.post('/test-system-audio', auth, async (req, res) => {
+  try {
+    logger.info('システム音声テスト開始');
+    
+    const audioPlayerService = require('../services/audioPlayerService');
+    
+    // システム音声テストを実行
+    const success = await audioPlayerService.playSystemTestSound('システム音声テスト');
+    
+    // 音声プレイヤーサービスのステータスを取得
+    const status = audioPlayerService.getStatus();
+    
+    res.json({
+      success,
+      message: success ? 'システム音声テストが実行されました' : 'システム音声テストに失敗しました',
+      audioPlayerStatus: status,
+      recommendations: [
+        'Docker内でサウンドデバイスが利用可能か確認してください',
+        'ALSA、PulseAudio、またはOSSがインストールされているか確認してください', 
+        'ffmpeg、aplay、paplayのいずれかがインストールされているか確認してください'
+      ]
+    });
+    
+  } catch (error) {
+    logger.error('システム音声テストエラー:', error);
+    res.status(500).json({ 
+      message: 'システム音声テストでエラーが発生しました', 
+      error: error.message 
+    });
+  }
+});
+
+// 🧪 音声プレイヤーサービスのステータス取得
+router.get('/player-status', auth, async (req, res) => {
+  try {
+    const audioPlayerService = require('../services/audioPlayerService');
+    const status = audioPlayerService.getStatus();
+    
+    res.json({
+      success: true,
+      status,
+      timestamp: new Date().toISOString()
+    });
+    
+  } catch (error) {
+    logger.error('音声プレイヤーステータス取得エラー:', error);
+    res.status(500).json({ 
+      message: 'ステータス取得でエラーが発生しました', 
+      error: error.message 
+    });
+  }
+});
+
 module.exports = router;

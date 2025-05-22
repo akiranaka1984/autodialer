@@ -317,30 +317,53 @@ async dialContact(campaign, contact) {
       ['called', contact.id]
     );
     
-    // 発信パラメータの準備
+    // キャンペーンの音声ファイルを取得
+    let campaignAudio = null;
+    try {
+      const audioService = require('./audioService');
+      campaignAudio = await audioService.getCampaignAudio(campaign.id);
+      
+      if (campaignAudio && campaignAudio.length > 0) {
+        logger.info(`キャンペーン ${campaign.id} の音声ファイル取得: ${campaignAudio.length}件`);
+      } else {
+        logger.info(`キャンペーン ${campaign.id} に音声ファイルが設定されていません`);
+      }
+    } catch (audioError) {
+      logger.warn('音声ファイル取得エラー:', audioError.message);
+      // 音声なしで続行
+    }
+    
+    // 発信パラメータの準備（音声対応）
     const params = {
       phoneNumber: contact.phone,
       context: 'autodialer',
       exten: 's',
       priority: 1,
       callerID: `"${campaign.name}" <${campaign.callerIdNumber}>`,
-      callerIdData: { id: campaign.callerIdId }, // 発信者番号データを追加
+      callerIdData: { id: campaign.callerIdId },
       variables: {
         CAMPAIGN_ID: campaign.id,
         CONTACT_ID: contact.id,
         CONTACT_NAME: contact.name || '',
-        COMPANY: contact.company || ''
-      }
+        COMPANY: contact.company || '',
+        HAS_AUDIO: campaignAudio && campaignAudio.length > 0 ? 'true' : 'false',
+        AUDIO_COUNT: campaignAudio ? campaignAudio.length : 0
+      },
+      // 🎵 音声ファイル情報を追加
+      campaignAudio: campaignAudio
     };
     
     // デバッグ用に発信パラメータをログ出力
-    logger.info(`発信パラメータ: ${JSON.stringify(params)}`);
+    logger.info(`発信パラメータ: ${JSON.stringify({
+      ...params,
+      campaignAudio: campaignAudio ? `${campaignAudio.length}件の音声ファイル` : 'なし'
+    })}`);
     
     try {
-      // 発信サービスの選択（asteriskからcallServiceに変更）
+      // 発信サービスの選択（音声対応版を使用）
       const callService = require('./callService');
       
-      // 発信実行
+      // 発信実行（音声ファイル情報も渡す）
       const result = await callService.originate(params);
       logger.info(`発信結果: ${JSON.stringify(result)}`);
       
@@ -349,12 +372,20 @@ async dialContact(campaign, contact) {
       campaign.lastDialTime = new Date();
       this.activeCampaigns.set(campaign.id, campaign);
       
-      // 通話ログを記録
+      // 通話ログを記録（音声情報も含める）
       const [logResult] = await db.query(`
         INSERT INTO call_logs 
-        (contact_id, campaign_id, caller_id_id, call_id, start_time, status, call_provider)
-        VALUES (?, ?, ?, ?, NOW(), 'active', ?)
-      `, [contact.id, campaign.id, campaign.callerIdId, result.ActionID, result.provider || 'unknown']);
+        (contact_id, campaign_id, caller_id_id, call_id, start_time, status, call_provider, has_audio, audio_file_count)
+        VALUES (?, ?, ?, ?, NOW(), 'active', ?, ?, ?)
+      `, [
+        contact.id, 
+        campaign.id, 
+        campaign.callerIdId, 
+        result.ActionID, 
+        result.provider || 'unknown',
+        campaignAudio && campaignAudio.length > 0 ? 1 : 0,
+        campaignAudio ? campaignAudio.length : 0
+      ]);
       
       const callId = result.ActionID;
       this.activeCalls.set(callId, {
@@ -362,10 +393,12 @@ async dialContact(campaign, contact) {
         contactId: contact.id,
         campaignId: campaign.id,
         startTime: new Date(),
-        status: 'active'
+        status: 'active',
+        hasAudio: campaignAudio && campaignAudio.length > 0,
+        audioFileCount: campaignAudio ? campaignAudio.length : 0
       });
       
-      logger.info(`発信成功: Campaign=${campaign.id}, Contact=${contact.id}, Number=${contact.phone}, CallID=${callId}`);
+      logger.info(`🎵 音声対応発信成功: Campaign=${campaign.id}, Contact=${contact.id}, Number=${contact.phone}, CallID=${callId}, Audio=${campaignAudio ? campaignAudio.length : 0}件`);
       return true;
     } catch (originateError) {
       logger.error(`発信実行エラー: ${originateError.message}`);
@@ -376,7 +409,7 @@ async dialContact(campaign, contact) {
         logger.error(`SIP関連エラー詳細: ${originateError.stack}`);
       }
       
-      throw originateError; // 再スロー
+      throw originateError;
     }
     
   } catch (error) {

@@ -75,7 +75,7 @@ app.use((req, res, next) => {
   next();
 });
 
-// ★★★ この位置にルーターを登録 ★★★
+// ★★★ 既存のルート登録（参考）★★★
 const campaignsRouter = require('./routes/campaigns');
 app.use('/api/campaigns', campaignsRouter);
 
@@ -85,15 +85,19 @@ app.use('/api/caller-ids', callerIdsRouter);
 const callsRouter = require('./routes/calls');
 app.use('/api/calls', callsRouter);
 
-// contacts ルーターは routes/contacts.js 内で mergeParams: true と設定
 const contactsRouter = require('./routes/contacts');
 app.use('/api/campaigns/:campaignId/contacts', contactsRouter);
-
-// 追加: 独立した contacts ルートパスを追加
 app.use('/api/contacts', contactsRouter);
 
+// ★★★ 追加が必要な部分 ★★★
 const audioRouter = require('./routes/audio');
 app.use('/api/audio', audioRouter);
+
+// 【重要】この部分を追加
+const ivrRouter = require('./routes/ivr');
+app.use('/api/ivr', ivrRouter);
+
+// ★★★ 追加完了 ★★★
 
 // ヘルスチェックエンドポイント
 app.get('/health', (req, res) => {
@@ -445,6 +449,16 @@ server.on('listening', async () => {
   } catch (error) {
     logger.error('発信サービス初期化エラー:', error);
   }
+
+  // ★★★ ここに音声プレイヤーサービスの初期化を追加 ★★★
+  /*
+  try {
+    const audioPlayerService = require('./services/audioPlayerService');
+    logger.info('音声プレイヤーサービスの初期化が完了しました');
+  } catch (error) {
+    logger.error('音声プレイヤーサービス初期化エラー:', error);
+  }
+    */
   
   logger.info('全サービスの初期化が完了しました');
 });

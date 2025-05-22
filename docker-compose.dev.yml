@@ -35,12 +35,18 @@ services:
       context: ./backend
       dockerfile: Dockerfile.dev
     ports:
-      - "5001:5000"  # 既存のHTTPポート
-      - "5060:5060/udp"  # SIP用UDPポートを追加
+      - "5001:5000"
+      - "5060:5060/udp"
     volumes:
       - ./backend:/app
       - /app/node_modules
-      - /etc/localtime:/etc/localtime:ro  # ホストのタイムゾーンをマウント
+      - /etc/localtime:/etc/localtime:ro
+      # 音声デバイスアクセスを追加
+      - /dev/snd:/dev/snd
+      - /tmp/.X11-unix:/tmp/.X11-unix:rw
+    devices:
+      # 音声デバイスを追加
+      - /dev/snd:/dev/snd
     environment:
       NODE_ENV: development
       MYSQL_HOST: mysql
@@ -57,7 +63,14 @@ services:
       USE_MOCK_DATA: "false"
       WAIT_HOSTS: mysql:3306
       WAIT_TIMEOUT: 60
-      TZ: Asia/Tokyo  # タイムゾーンを追加
+      TZ: Asia/Tokyo
+      # 音声関連環境変数を追加
+      PULSE_RUNTIME_PATH: /tmp/pulse
+      ALSA_PCM_CARD: default
+      ALSA_PCM_DEVICE: 0
+      DISPLAY: :0
+    # 特権モードを有効（音声デバイスアクセス用）
+    privileged: true
     depends_on:
       mysql:
         condition: service_healthy
