@@ -229,3 +229,34 @@ ADD COLUMN audio_played_at TIMESTAMP NULL AFTER audio_file_count;
 ALTER TABLE campaigns
 ADD COLUMN ivr_deployed TINYINT(1) DEFAULT 0 AFTER progress,
 ADD COLUMN ivr_deploy_time TIMESTAMP NULL AFTER ivr_deployed;
+
+-- 既存テーブルの修正（エラーを無視して続行）
+SET sql_mode = '';
+
+-- call_logsテーブルに不足カラムを追加
+ALTER TABLE call_logs 
+ADD COLUMN IF NOT EXISTS call_provider VARCHAR(50) DEFAULT 'unknown' AFTER keypress;
+
+ALTER TABLE call_logs 
+ADD COLUMN IF NOT EXISTS has_audio TINYINT(1) DEFAULT 0 AFTER call_provider;
+
+ALTER TABLE call_logs 
+ADD COLUMN IF NOT EXISTS audio_file_count INT DEFAULT 0 AFTER has_audio;
+
+ALTER TABLE call_logs 
+ADD COLUMN IF NOT EXISTS audio_played_at TIMESTAMP NULL AFTER audio_file_count;
+
+-- MySQL 5.7対応（IF NOT EXISTSが使えない場合）
+-- エラーが出ても続行
+ALTER TABLE call_logs ADD COLUMN call_provider VARCHAR(50) DEFAULT 'unknown' AFTER keypress;
+ALTER TABLE call_logs ADD COLUMN has_audio TINYINT(1) DEFAULT 0 AFTER call_provider;
+ALTER TABLE call_logs ADD COLUMN audio_file_count INT DEFAULT 0 AFTER has_audio;
+ALTER TABLE call_logs ADD COLUMN audio_played_at TIMESTAMP NULL AFTER audio_file_count;
+
+-- campaignsテーブルも修正
+ALTER TABLE campaigns ADD COLUMN IF NOT EXISTS ivr_deployed TINYINT(1) DEFAULT 0 AFTER progress;
+ALTER TABLE campaigns ADD COLUMN IF NOT EXISTS ivr_deploy_time TIMESTAMP NULL AFTER ivr_deployed;
+
+-- MySQL 5.7対応
+ALTER TABLE campaigns ADD COLUMN ivr_deployed TINYINT(1) DEFAULT 0 AFTER progress;
+ALTER TABLE campaigns ADD COLUMN ivr_deploy_time TIMESTAMP NULL AFTER ivr_deployed;

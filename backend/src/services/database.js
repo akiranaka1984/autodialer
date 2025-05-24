@@ -1,3 +1,4 @@
+// backend/src/services/database.js - 500エラー修正版
 const mysql = require('mysql2/promise');
 const logger = require('./logger');
 
@@ -9,9 +10,11 @@ const initDb = async (retries = 5, delay = 5000) => {
   
   for (let attempt = 1; attempt <= retries; attempt++) {
     try {
+      console.log(`データベース接続試行 ${attempt}/${retries}...`);
+      
       // Docker Composeの環境変数を適切に使用
       pool = mysql.createPool({
-        host: process.env.MYSQL_HOST || 'mysql', // Dockerコンテナ名に変更
+        host: process.env.MYSQL_HOST || 'mysql',
         user: process.env.MYSQL_USER || 'root',
         password: process.env.MYSQL_PASSWORD || 'password',
         database: process.env.MYSQL_DATABASE || 'autodialer',
@@ -22,7 +25,10 @@ const initDb = async (retries = 5, delay = 5000) => {
         collation: 'utf8mb4_unicode_ci',
         supportBigNumbers: true,
         bigNumberStrings: true,
-        dateStrings: true
+        dateStrings: true,
+        acquireTimeout: 60000,
+        timeout: 60000,
+        reconnect: true
       });
 
       // 接続後に文字セットを設定する追加のクエリ
@@ -31,19 +37,24 @@ const initDb = async (retries = 5, delay = 5000) => {
       await pool.query("SET character_set_connection=utf8mb4");
       
       // 接続テスト
-      await pool.query('SELECT 1');
+      const [rows] = await pool.query('SELECT 1 as test');
+      console.log('データベース接続テスト成功:', rows);
       
       logger.info('データベース接続プールを作成しました');
       return pool;
     } catch (error) {
       lastError = error;
+      console.error(`データベース接続試行 ${attempt}/${retries} 失敗:`, error.message);
       logger.warn(`データベース接続試行 ${attempt}/${retries} 失敗: ${error.message}、${delay}ms後に再試行します...`);
       
-      // 次の試行まで待機
-      await new Promise(resolve => setTimeout(resolve, delay));
+      // 最後の試行でなければ待機
+      if (attempt < retries) {
+        await new Promise(resolve => setTimeout(resolve, delay));
+      }
     }
   }
   
+  console.error('データベース接続エラー:', lastError);
   logger.error('データベース接続エラー:', lastError);
   throw lastError;
 };
@@ -51,43 +62,45 @@ const initDb = async (retries = 5, delay = 5000) => {
 // プールを取得する関数
 const getPool = async () => {
   if (!pool) {
+    console.log('プールが存在しないため再初期化します');
     await initDb();
   }
   return pool;
 };
 
-// クエリを実行する関数
+// クエリを実行する関数（エラーハンドリング強化）
 const query = async (sql, params = []) => {
-  const conn = await getPool();
+  let conn;
   try {
-    // LIMIT句を含むSQLの処理
-    if (typeof sql === 'string' && sql.includes('LIMIT ?')) {
-      // LIMIT句の位置を検索
-      const limitIndex = sql.lastIndexOf('LIMIT ?');
-      if (limitIndex !== -1) {
-        // パラメータ配列の最後の要素を取得
-        const limitValue = params.length > 0 ? params[params.length - 1] : null;
-        
-        // 最後のパラメータが有効な数値であることを確認
-        const limit = Number.isInteger(limitValue) ? limitValue : 
-                     (typeof limitValue === 'string' && /^\d+$/.test(limitValue)) ? parseInt(limitValue, 10) : 10;
-        
-        // SQLのLIMIT句を直接置換
-        sql = sql.substring(0, limitIndex) + `LIMIT ${limit}` + sql.substring(limitIndex + 7);
-        
-        // パラメータ配列から最後の要素を削除
-        params = params.slice(0, -1);
-        
-        logger.debug(`SQL再構築 (LIMIT句): ${sql}, 残りパラメータ: ${JSON.stringify(params)}`);
-      }
+    conn = await getPool();
+    
+    console.log(`SQL実行: ${sql.substring(0, 100)}...`, params.length > 0 ? `パラメータ数: ${params.length}` : '');
+    
+    // クエリ実行
+    const result = await conn.query(sql, params);
+    
+    console.log(`SQL実行成功: 結果行数=${Array.isArray(result[0]) ? result[0].length : '不明'}`);
+    
+    return result;
+  } catch (error) {
+    console.error(`クエリエラー詳細:`, {
+      sql: sql.substring(0, 200),
+      params: params,
+      error: error.message,
+      code: error.code,
+      errno: error.errno
+    });
+    
+    logger.error(`クエリエラー: ${sql.substring(0, 100)}...`, error);
+    
+    // 接続エラーの場合はプールをリセット
+    if (error.code === 'PROTOCOL_CONNECTION_LOST' || 
+        error.code === 'ECONNRESET' || 
+        error.code === 'ETIMEDOUT') {
+      console.log('接続エラーのためプールをリセットします');
+      pool = null;
     }
     
-    logger.debug(`SQL実行: ${sql}, パラメータ: ${JSON.stringify(params)}`);
-    
-    // query を使用（prepareなしで直接クエリを実行）
-    return await conn.query(sql, params);
-  } catch (error) {
-    logger.error(`クエリエラー: ${sql}, パラメータ: ${JSON.stringify(params)}`, error);
     throw error;
   }
 };
@@ -112,8 +125,28 @@ const rollback = async (connection) => {
 
 const close = async () => {
   if (pool) {
+    console.log('データベースプールを閉じています...');
     await pool.end();
     pool = null;
+    console.log('データベースプールを閉じました');
+  }
+};
+
+// ヘルスチェック関数
+const healthCheck = async () => {
+  try {
+    const [rows] = await query('SELECT 1 as healthy, NOW() as timestamp');
+    return {
+      healthy: true,
+      timestamp: rows[0].timestamp,
+      poolState: pool ? 'active' : 'inactive'
+    };
+  } catch (error) {
+    return {
+      healthy: false,
+      error: error.message,
+      poolState: pool ? 'active' : 'inactive'
+    };
   }
 };
 
@@ -124,5 +157,6 @@ module.exports = {
   commit,
   rollback,
   close,
-  getPool
+  getPool,
+  healthCheck
 };
