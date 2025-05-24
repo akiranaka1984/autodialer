@@ -78,46 +78,194 @@ class SipService extends EventEmitter {
     }
   }
   
-  // データベースからSIPアカウント情報を読み込む
   async loadSipAccountsFromDatabase() {
     try {
       logger.info('データベースからSIPチャンネル情報を読み込み中...');
       
+      // より詳細なクエリでデバッグ情報を取得
       const [channels] = await db.query(`
-        SELECT cc.*, ci.number as caller_number, ci.description as description, 
-              ci.provider, ci.domain, ci.id as main_caller_id,
-              cc.channel_type
+        SELECT 
+          cc.id,
+          cc.caller_id_id,
+          cc.username,
+          cc.password,
+          cc.channel_type,
+          cc.status,
+          cc.last_used,
+          cc.created_at,
+          ci.number as caller_number, 
+          ci.description, 
+          ci.provider, 
+          ci.domain, 
+          ci.active as caller_active
         FROM caller_channels cc
         JOIN caller_ids ci ON cc.caller_id_id = ci.id
         WHERE ci.active = true
+        ORDER BY cc.caller_id_id, cc.id
       `);
+      
+      logger.info(`データベースクエリ結果: ${channels ? channels.length : 0}件のチャンネル`);
       
       if (!channels || channels.length === 0) {
         logger.warn('データベースに有効なSIPチャンネルが見つかりません');
+        
+        // デバッグ: 関連テーブルの状況を確認
+        try {
+          const [callerIds] = await db.query('SELECT * FROM caller_ids WHERE active = true');
+          const [allChannels] = await db.query('SELECT * FROM caller_channels');
+          
+          logger.info(`発信者番号数: ${callerIds.length}件`);
+          logger.info(`全チャンネル数: ${allChannels.length}件`);
+          
+          if (callerIds.length === 0) {
+            logger.error('有効な発信者番号が登録されていません');
+          }
+          if (allChannels.length === 0) {
+            logger.error('チャンネルが1件も登録されていません');
+          }
+        } catch (debugError) {
+          logger.error('デバッグクエリエラー:', debugError);
+        }
+        
         return [];
       }
       
-      const formattedAccounts = channels.map(channel => ({
-        username: channel.username,
-        password: channel.password,
-        callerID: channel.caller_number,
-        description: channel.description,
-        domain: channel.domain,
-        provider: channel.provider,
-        mainCallerId: channel.main_caller_id,
-        channelType: channel.channel_type || 'both',
-        status: channel.status || 'available',
-        lastUsed: channel.last_used || null,
-        failCount: 0,
-        channelId: channel.id
-      }));
+      const formattedAccounts = channels.map(channel => {
+        const account = {
+          username: channel.username,
+          password: channel.password,
+          callerID: channel.caller_number,
+          description: channel.description || '',
+          domain: channel.domain || 'ito258258.site',
+          provider: channel.provider || 'SIP Provider',
+          mainCallerId: channel.caller_id_id,
+          channelType: channel.channel_type || 'both',
+          status: channel.status || 'available',
+          lastUsed: channel.last_used || null,
+          failCount: 0,
+          channelId: channel.id
+        };
+        
+        logger.info(`チャンネル読み込み: ${account.username} (${account.callerID}) - ${account.status}`);
+        return account;
+      });
       
-      logger.info(`データベースから${formattedAccounts.length}個のSIPチャンネルを読み込みました`);
+      logger.info(`合計${formattedAccounts.length}個のSIPチャンネルを読み込みました`);
+      
+      // 発信者番号ごとの統計
+      const stats = {};
+      formattedAccounts.forEach(account => {
+        if (!stats[account.mainCallerId]) {
+          stats[account.mainCallerId] = { total: 0, available: 0, callerID: account.callerID };
+        }
+        stats[account.mainCallerId].total++;
+        if (account.status === 'available') {
+          stats[account.mainCallerId].available++;
+        }
+      });
+      
+      Object.entries(stats).forEach(([callerId, stat]) => {
+        logger.info(`発信者番号 ${stat.callerID}: 全${stat.total}ch, 利用可能${stat.available}ch`);
+      });
+      
       return formattedAccounts;
     } catch (error) {
       logger.error('データベースからのSIPチャンネル読み込みエラー:', error);
-      return [];
+      
+      // エラー時はデフォルトアカウントを返す
+      logger.warn('デフォルトSIPアカウントを使用します');
+      return [
+        {
+          username: '03080001',
+          password: '56110478',
+          callerID: '03-5946-8520',
+          description: 'デフォルトテスト',
+          domain: 'ito258258.site',
+          provider: 'Default SIP',
+          mainCallerId: 1,
+          channelType: 'both',
+          status: 'available',
+          lastUsed: null,
+          failCount: 0,
+          channelId: 999
+        }
+      ];
     }
+  }
+  
+  // SIPサービス初期化時の追加デバッグ
+  async connect() {
+    try {
+      logger.info('SIPサービス接続開始...');
+      
+      // データベースからSIPアカウント情報をロード
+      this.sipAccounts = await this.loadSipAccountsFromDatabase();
+      
+      logger.info(`SIPアカウント読み込み結果: ${this.sipAccounts.length}個`);
+      
+      if (this.sipAccounts.length === 0) {
+        logger.warn('SIPアカウントが0個です。ファイルから読み込みを試します...');
+        this.sipAccounts = this.loadSipAccountsFromFile();
+      }
+      
+      if (this.sipAccounts.length === 0) {
+        logger.error('SIPアカウントが設定されていません');
+        throw new Error('SIPアカウントが設定されていません');
+      }
+      
+      // 発信者番号ごとのチャンネルグループを作成
+      this.organizeChannelsByCallerId();
+      
+      logger.info(`SIPサービス接続完了: ${this.sipAccounts.length}個のアカウント, ${this.callerIdToChannelsMap.size}個の発信者番号`);
+      
+      this.connected = true;
+      return true;
+    } catch (error) {
+      logger.error('SIP接続エラー:', error);
+      this.connected = false;
+      throw error;
+    }
+  }
+  
+  // getAvailableSipAccount メソッドにデバッグ追加
+  async getAvailableSipAccount() {
+    logger.info(`利用可能なSIPアカウントを検索中 (全${this.sipAccounts.length}個)`);
+    
+    if (!this.sipAccounts || this.sipAccounts.length === 0) {
+      logger.warn('SIPアカウントが設定されていません。再読み込みを試みます...');
+      
+      // 再読み込みを試行
+      this.sipAccounts = await this.loadSipAccountsFromDatabase();
+      
+      if (this.sipAccounts.length === 0) {
+        this.sipAccounts = this.loadSipAccountsFromFile();
+      }
+      
+      this.organizeChannelsByCallerId();
+    }
+    
+    // 利用可能なアカウントを検索
+    const availableAccounts = this.sipAccounts.filter(account => 
+      account && account.status === 'available'
+    );
+    
+    logger.info(`利用可能なSIPアカウント: ${availableAccounts.length}/${this.sipAccounts.length}`);
+    
+    if (availableAccounts.length === 0) {
+      logger.error('利用可能なSIPアカウントがありません');
+      
+      // 全アカウントの状態をログ出力
+      this.sipAccounts.forEach((account, index) => {
+        logger.info(`アカウント${index}: ${account.username} - ${account.status}`);
+      });
+      
+      return null;
+    }
+    
+    const selectedAccount = availableAccounts[0];
+    logger.info(`選択されたSIPアカウント: ${selectedAccount.username}`);
+    
+    return selectedAccount;
   }
   
   // 発信者番号ごとにチャンネルをグループ化
@@ -139,66 +287,198 @@ class SipService extends EventEmitter {
     });
   }
   
-  // ファイルからSIPアカウント情報を読み込む
-  loadSipAccountsFromFile() {
-    logger.info('ファイルからSIPアカウントを読み込み中...');
+  // backend/src/services/sipService.js の修正
+// loadSipAccountsFromDatabase メソッドの改良版
+
+async loadSipAccountsFromDatabase() {
+  try {
+    logger.info('データベースからSIPチャンネル情報を読み込み中...');
     
-    try {
-      let accounts = [];
+    // より詳細なクエリでデバッグ情報を取得
+    const [channels] = await db.query(`
+      SELECT 
+        cc.id,
+        cc.caller_id_id,
+        cc.username,
+        cc.password,
+        cc.channel_type,
+        cc.status,
+        cc.last_used,
+        cc.created_at,
+        ci.number as caller_number, 
+        ci.description, 
+        ci.provider, 
+        ci.domain, 
+        ci.active as caller_active
+      FROM caller_channels cc
+      JOIN caller_ids ci ON cc.caller_id_id = ci.id
+      WHERE ci.active = true
+      ORDER BY cc.caller_id_id, cc.id
+    `);
+    
+    logger.info(`データベースクエリ結果: ${channels ? channels.length : 0}件のチャンネル`);
+    
+    if (!channels || channels.length === 0) {
+      logger.warn('データベースに有効なSIPチャンネルが見つかりません');
       
-      // 環境変数から読み込み
-      const accountsStr = process.env.SIP_ACCOUNTS || '[]';
-      if (accountsStr && accountsStr !== '[]') {
-        try {
-          accounts = JSON.parse(accountsStr);
-          logger.info(`環境変数からSIPアカウント ${accounts.length}個 を読み込みました`);
-        } catch (err) {
-          logger.error('SIPアカウント形式エラー（環境変数）:', err);
-        }
-      }
-      
-      // ファイルから読み込み
-      if (accounts.length === 0) {
-        const accountsFile = process.env.SIP_ACCOUNTS_FILE || path.join(__dirname, '../../config/sip-accounts.json');
+      // デバッグ: 関連テーブルの状況を確認
+      try {
+        const [callerIds] = await db.query('SELECT * FROM caller_ids WHERE active = true');
+        const [allChannels] = await db.query('SELECT * FROM caller_channels');
         
-        try {
-          if (fs.existsSync(accountsFile)) {
-            const fileContent = fs.readFileSync(accountsFile, 'utf8');
-            accounts = JSON.parse(fileContent);
-            logger.info(`ファイルから ${accounts.length}個 のSIPアカウントを読み込みました: ${accountsFile}`);
-          }
-        } catch (fileErr) {
-          logger.error(`SIPアカウントファイル読み込みエラー: ${accountsFile}`, fileErr);
+        logger.info(`発信者番号数: ${callerIds.length}件`);
+        logger.info(`全チャンネル数: ${allChannels.length}件`);
+        
+        if (callerIds.length === 0) {
+          logger.error('有効な発信者番号が登録されていません');
         }
+        if (allChannels.length === 0) {
+          logger.error('チャンネルが1件も登録されていません');
+        }
+      } catch (debugError) {
+        logger.error('デバッグクエリエラー:', debugError);
       }
       
-      // デフォルトアカウント
-      if (accounts.length === 0) {
-        logger.warn('SIPアカウントが設定されていません。デフォルトアカウントを使用します。');
-        accounts = [
-          { username: '03080001', password: '56110478', callerID: '0359468520', mainCallerId: 1 },
-          { username: '03080002', password: '51448459', callerID: '0335289538', mainCallerId: 2 }
-        ];
-      }
+      return [];
+    }
+    
+    const formattedAccounts = channels.map(channel => {
+      const account = {
+        username: channel.username,
+        password: channel.password,
+        callerID: channel.caller_number,
+        description: channel.description || '',
+        domain: channel.domain || 'ito258258.site',
+        provider: channel.provider || 'SIP Provider',
+        mainCallerId: channel.caller_id_id,
+        channelType: channel.channel_type || 'both',
+        status: channel.status || 'available',
+        lastUsed: channel.last_used || null,
+        failCount: 0,
+        channelId: channel.id
+      };
       
-      const formattedAccounts = accounts.map(account => ({
-        ...account,
+      logger.info(`チャンネル読み込み: ${account.username} (${account.callerID}) - ${account.status}`);
+      return account;
+    });
+    
+    logger.info(`合計${formattedAccounts.length}個のSIPチャンネルを読み込みました`);
+    
+    // 発信者番号ごとの統計
+    const stats = {};
+    formattedAccounts.forEach(account => {
+      if (!stats[account.mainCallerId]) {
+        stats[account.mainCallerId] = { total: 0, available: 0, callerID: account.callerID };
+      }
+      stats[account.mainCallerId].total++;
+      if (account.status === 'available') {
+        stats[account.mainCallerId].available++;
+      }
+    });
+    
+    Object.entries(stats).forEach(([callerId, stat]) => {
+      logger.info(`発信者番号 ${stat.callerID}: 全${stat.total}ch, 利用可能${stat.available}ch`);
+    });
+    
+    return formattedAccounts;
+  } catch (error) {
+    logger.error('データベースからのSIPチャンネル読み込みエラー:', error);
+    
+    // エラー時はデフォルトアカウントを返す
+    logger.warn('デフォルトSIPアカウントを使用します');
+    return [
+      {
+        username: '03080001',
+        password: '56110478',
+        callerID: '03-5946-8520',
+        description: 'デフォルトテスト',
+        domain: 'ito258258.site',
+        provider: 'Default SIP',
+        mainCallerId: 1,
+        channelType: 'both',
         status: 'available',
         lastUsed: null,
-        failCount: 0
-      }));
-      
-      logger.info(`${formattedAccounts.length}個のSIPアカウントを初期化しました`);
-      return formattedAccounts;
-    } catch (error) {
-      logger.error('SIPアカウント読み込みエラー:', error);
-      
-      return [
-        { username: '03080001', password: '56110478', callerID: '0359468520', mainCallerId: 1, status: 'available', lastUsed: null, failCount: 0 },
-        { username: '03080002', password: '51448459', callerID: '0335289538', mainCallerId: 2, status: 'available', lastUsed: null, failCount: 0 }
-      ];
-    }
+        failCount: 0,
+        channelId: 999
+      }
+    ];
   }
+}
+
+// SIPサービス初期化時の追加デバッグ
+async connect() {
+  try {
+    logger.info('SIPサービス接続開始...');
+    
+    // データベースからSIPアカウント情報をロード
+    this.sipAccounts = await this.loadSipAccountsFromDatabase();
+    
+    logger.info(`SIPアカウント読み込み結果: ${this.sipAccounts.length}個`);
+    
+    if (this.sipAccounts.length === 0) {
+      logger.warn('SIPアカウントが0個です。ファイルから読み込みを試します...');
+      this.sipAccounts = this.loadSipAccountsFromFile();
+    }
+    
+    if (this.sipAccounts.length === 0) {
+      logger.error('SIPアカウントが設定されていません');
+      throw new Error('SIPアカウントが設定されていません');
+    }
+    
+    // 発信者番号ごとのチャンネルグループを作成
+    this.organizeChannelsByCallerId();
+    
+    logger.info(`SIPサービス接続完了: ${this.sipAccounts.length}個のアカウント, ${this.callerIdToChannelsMap.size}個の発信者番号`);
+    
+    this.connected = true;
+    return true;
+  } catch (error) {
+    logger.error('SIP接続エラー:', error);
+    this.connected = false;
+    throw error;
+  }
+}
+
+// getAvailableSipAccount メソッドにデバッグ追加
+async getAvailableSipAccount() {
+  logger.info(`利用可能なSIPアカウントを検索中 (全${this.sipAccounts.length}個)`);
+  
+  if (!this.sipAccounts || this.sipAccounts.length === 0) {
+    logger.warn('SIPアカウントが設定されていません。再読み込みを試みます...');
+    
+    // 再読み込みを試行
+    this.sipAccounts = await this.loadSipAccountsFromDatabase();
+    
+    if (this.sipAccounts.length === 0) {
+      this.sipAccounts = this.loadSipAccountsFromFile();
+    }
+    
+    this.organizeChannelsByCallerId();
+  }
+  
+  // 利用可能なアカウントを検索
+  const availableAccounts = this.sipAccounts.filter(account => 
+    account && account.status === 'available'
+  );
+  
+  logger.info(`利用可能なSIPアカウント: ${availableAccounts.length}/${this.sipAccounts.length}`);
+  
+  if (availableAccounts.length === 0) {
+    logger.error('利用可能なSIPアカウントがありません');
+    
+    // 全アカウントの状態をログ出力
+    this.sipAccounts.forEach((account, index) => {
+      logger.info(`アカウント${index}: ${account.username} - ${account.status}`);
+    });
+    
+    return null;
+  }
+  
+  const selectedAccount = availableAccounts[0];
+  logger.info(`選択されたSIPアカウント: ${selectedAccount.username}`);
+  
+  return selectedAccount;
+}
   
   // ★★★ メイン発信メソッド（音声対応・シンプル版）★★★
 async originate(params) {

@@ -69,66 +69,163 @@ exports.getCallerIdById = async (req, res) => {
   }
 };
 
-// 新しいチャンネルを追加
+// backend/src/controllers/callerIdController.js のチャンネル登録処理修正
+
 exports.addCallerChannel = async (req, res) => {
   try {
-    res.setHeader('Content-Type', 'application/json; charset=utf-8');
-    const { caller_id_id, username, password, channel_type } = req.body;
+    console.log('=== チャンネル追加リクエスト受信 ===');
+    console.log('リクエストボディ:', req.body);
     
-    if (!caller_id_id || !username || !password) {
-      return res.status(400).json({ message: '必須フィールドが不足しています' });
+    const callerId = req.params.id;
+    const { username, password, channel_type = 'both' } = req.body;
+    
+    // 入力検証
+    if (!username || !password) {
+      return res.status(400).json({ 
+        message: 'ユーザー名とパスワードは必須です' 
+      });
     }
     
-    // チャンネルタイプの検証（指定されていない場合はデフォルト値を使用）
-    const validType = channel_type && ['outbound', 'transfer', 'both'].includes(channel_type) 
-      ? channel_type 
-      : 'both';
+    // channel_type の検証
+    const validChannelTypes = ['outbound', 'transfer', 'both'];
+    const finalChannelType = validChannelTypes.includes(channel_type) ? channel_type : 'both';
     
-    // チャンネルを追加（channel_typeも含める）
-    const [result] = await db.query(
-      'INSERT INTO caller_channels (caller_id_id, username, password, channel_type) VALUES (?, ?, ?, ?)',
-      [caller_id_id, username, password, validType]
+    // 発信者番号の存在確認
+    const [callerIds] = await db.query(
+      'SELECT id FROM caller_ids WHERE id = ?',
+      [callerId]
     );
     
-    res.status(201).json({ 
-      id: result.insertId,
-      caller_id_id,
-      username,
-      password,
-      channel_type: validType,
-      status: 'available'
+    if (callerIds.length === 0) {
+      return res.status(404).json({ message: '発信者番号が見つかりません' });
+    }
+    
+    // 重複チェック
+    const [existingChannels] = await db.query(
+      'SELECT id FROM caller_channels WHERE caller_id_id = ? AND username = ?',
+      [callerId, username]
+    );
+    
+    if (existingChannels.length > 0) {
+      return res.status(409).json({ 
+        message: 'このユーザー名のチャンネルは既に存在します' 
+      });
+    }
+    
+    // データベーステーブル構造に合わせてINSERTクエリを調整
+    // created_at は TIMESTAMP DEFAULT CURRENT_TIMESTAMP なので自動設定される
+    const insertSql = `
+      INSERT INTO caller_channels 
+      (caller_id_id, username, password, channel_type, status) 
+      VALUES (?, ?, ?, ?, 'available')
+    `;
+    
+    const insertParams = [callerId, username, password, finalChannelType];
+    
+    console.log('実行するSQL:', insertSql);
+    console.log('SQLパラメータ:', [callerId, username, '***', finalChannelType]);
+    
+    // チャンネルを追加
+    const [result] = await db.query(insertSql, insertParams);
+    
+    console.log('INSERT結果:', result.insertId);
+    
+    // 新しく作成されたチャンネルを取得
+    const [newChannel] = await db.query(
+      `SELECT id, caller_id_id, username, channel_type, status, last_used, created_at 
+       FROM caller_channels WHERE id = ?`,
+      [result.insertId]
+    );
+    
+    console.log('新規チャンネル:', newChannel[0]);
+    
+    res.status(201).json({
+      success: true,
+      message: 'チャンネルを追加しました',
+      channel: newChannel[0]
     });
+    
   } catch (error) {
-    logger.error('チャンネル追加エラー:', error);
-    res.status(500).json({ message: 'サーバーエラーが発生しました: ' + error.message });
+    console.error('チャンネル追加エラー:', error);
+    res.status(500).json({ 
+      message: 'チャンネルの追加に失敗しました',
+      error: error.message 
+    });
   }
 };
 
-// 新しい発信者番号を作成
 exports.createCallerId = async (req, res) => {
   try {
-    res.setHeader('Content-Type', 'application/json; charset=utf-8');
-    const { number, description, provider, active } = req.body;
+    const { number, description, provider, domain, active } = req.body;
     
+    console.log('発信者番号登録処理開始:', req.body);
+    
+    // 入力検証
     if (!number) {
+      console.log('バリデーションエラー: 電話番号が未入力');
       return res.status(400).json({ message: '電話番号は必須です' });
     }
     
-    const result = await db.query(
-      'INSERT INTO caller_ids (number, description, provider, active) VALUES (?, ?, ?, ?)',
-      [number, description, provider, active === false ? 0 : 1]
+    // 重複チェック
+    const [existingCallerIds] = await db.query(
+      'SELECT id FROM caller_ids WHERE number = ?',
+      [number]
     );
     
-    res.status(201).json({ 
-      id: result.insertId,
+    if (existingCallerIds.length > 0) {
+      console.log('重複エラー: 電話番号が既に存在:', number);
+      return res.status(400).json({ message: 'この電話番号は既に登録されています' });
+    }
+    
+    // データベースに挿入
+    const [result] = await db.query(`
+      INSERT INTO caller_ids (number, description, provider, domain, active, created_at) 
+      VALUES (?, ?, ?, ?, ?, NOW())
+    `, [
       number,
-      description,
-      provider,
-      active: active === false ? false : true
+      description || '',
+      provider || '',
+      domain || '',
+      active !== false ? 1 : 0  // デフォルトはtrue
+    ]);
+    
+    console.log('データベース挿入結果:', {
+      insertId: result.insertId,
+      affectedRows: result.affectedRows
     });
+    
+    if (result.affectedRows === 0) {
+      console.log('挿入失敗: 影響行数が0');
+      return res.status(500).json({ message: '登録処理に失敗しました' });
+    }
+    
+    // 挿入されたデータを取得
+    const [newCallerIds] = await db.query(`
+      SELECT id, number, description, provider, domain, active, created_at,
+             0 as channelCount,
+             0 as availableChannels
+      FROM caller_ids WHERE id = ?
+    `, [result.insertId]);
+    
+    if (newCallerIds.length === 0) {
+      console.log('エラー: 挿入後のデータ取得に失敗');
+      return res.status(500).json({ message: 'データの取得に失敗しました' });
+    }
+    
+    const newCallerId = newCallerIds[0];
+    console.log('登録成功:', newCallerId);
+    
+    res.status(201).json({
+      ...newCallerId,
+      message: '発信者番号を登録しました'
+    });
+    
   } catch (error) {
-    logger.error('発信者番号作成エラー:', error);
-    res.status(500).json({ message: 'サーバーエラーが発生しました: ' + error.message });
+    console.error('発信者番号登録エラー:', error);
+    res.status(500).json({ 
+      message: '登録処理中にエラーが発生しました', 
+      error: error.message 
+    });
   }
 };
 
@@ -165,19 +262,82 @@ exports.updateCallerId = async (req, res) => {
 };
 
 // 発信者番号を削除
+// backend/src/controllers/callerIdController.js の削除処理修正
+
+// 発信者番号削除処理（修正版）
 exports.deleteCallerId = async (req, res) => {
+  const connection = await db.beginTransaction();
+  
   try {
-    res.setHeader('Content-Type', 'application/json; charset=utf-8');
-    const result = await db.query('DELETE FROM caller_ids WHERE id = ?', [req.params.id]);
+    const callerId = req.params.id;
+    console.log(`削除処理開始: 発信者番号ID=${callerId}`);
     
-    if (result.affectedRows === 0) {
+    // 発信者番号の存在確認
+    const [callerIds] = await connection.query(
+      'SELECT id, number FROM caller_ids WHERE id = ?',
+      [callerId]
+    );
+    
+    if (callerIds.length === 0) {
+      await db.rollback(connection);
+      console.log(`発信者番号が見つかりません: ID=${callerId}`);
       return res.status(404).json({ message: '発信者番号が見つかりません' });
     }
     
-    res.json({ message: '発信者番号が削除されました' });
+    console.log(`削除対象: ${callerIds[0].number} (ID=${callerId})`);
+    
+    // キャンペーンで使用されているかチェック
+    const [campaignUsage] = await connection.query(
+      'SELECT COUNT(*) as count FROM campaigns WHERE caller_id_id = ?',
+      [callerId]
+    );
+    
+    if (campaignUsage[0].count > 0) {
+      await db.rollback(connection);
+      console.log(`キャンペーンで使用中のため削除できません: ID=${callerId}`);
+      return res.status(400).json({ 
+        message: 'この発信者番号は現在キャンペーンで使用されているため削除できません' 
+      });
+    }
+    
+    // 関連するチャンネルを先に削除
+    const [channelResult] = await connection.query(
+      'DELETE FROM caller_channels WHERE caller_id_id = ?',
+      [callerId]
+    );
+    console.log(`関連チャンネル削除: ${channelResult.affectedRows}件`);
+    
+    // 発信者番号を削除
+    const [deleteResult] = await connection.query(
+      'DELETE FROM caller_ids WHERE id = ?',
+      [callerId]
+    );
+    
+    if (deleteResult.affectedRows === 0) {
+      await db.rollback(connection);
+      console.log(`削除に失敗: 影響行数=0, ID=${callerId}`);
+      return res.status(500).json({ message: '削除処理に失敗しました' });
+    }
+    
+    // トランザクションをコミット
+    await db.commit(connection);
+    
+    console.log(`削除成功: ID=${callerId}, 影響行数=${deleteResult.affectedRows}`);
+    
+    res.json({ 
+      message: '発信者番号を削除しました', 
+      success: true,
+      deletedId: callerId,
+      deletedChannels: channelResult.affectedRows
+    });
+    
   } catch (error) {
-    logger.error('発信者番号削除エラー:', error);
-    res.status(500).json({ message: 'サーバーエラーが発生しました: ' + error.message });
+    await db.rollback(connection);
+    console.error('削除処理エラー:', error);
+    res.status(500).json({ 
+      message: '削除処理中にエラーが発生しました', 
+      error: error.message 
+    });
   }
 };
 

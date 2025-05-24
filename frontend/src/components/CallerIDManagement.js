@@ -298,263 +298,306 @@ const CallerIDManagement = () => {
     setSelectedCallerId(callerId);
   };
 
-  // 発信者番号の保存（新規作成/更新）
-  const handleSubmit = async (e) => {
-    e.preventDefault();
-    setSubmitError(null);
-    setSuccessMessage(null);
-    
-    console.log('送信開始 - フォームデータ:', formData);
-    console.log('更新モード:', formData.id !== null);
-    
-    try {
-      const token = localStorage.getItem('token');
-      if (!token) {
-        console.error('認証トークンが見つかりません');
-        setSubmitError('認証エラー: ログインが必要です');
-        return;
-      }
-      
-      const isUpdate = formData.id !== null;
-      
-      // 開発環境でモックデータを使用するオプション
-      if (process.env.NODE_ENV === 'development' && window.location.hostname === 'localhost') {
-        console.log('開発環境でモックデータを使用 - 保存処理');
-        // 以下は既存のコード
-        setTimeout(() => {
-          if (isUpdate) {
-            // 更新処理のシミュレーション
-            const updatedCallerId = { ...formData };
-            setCallerIds(callerIds.map(c => c.id === updatedCallerId.id ? updatedCallerId : c));
-            setSuccessMessage('発信者番号を更新しました');
-          } else {
-            // 新規作成のシミュレーション
-            const newCallerId = { 
-              ...formData,
-              id: Math.max(...callerIds.map(c => c.id)) + 1,
-              channelCount: 0,
-              availableChannels: 0
-            };
-            setCallerIds([...callerIds, newCallerId]);
-            setSuccessMessage('新しい発信者番号を登録しました');
-          }
-          resetForm();
-        }, 500);
-        return;
-      }
-      
-      const url = isUpdate 
-        ? `${apiBaseUrl}/caller-ids/${formData.id}`
-        : `${apiBaseUrl}/caller-ids`;
-      
-      const method = isUpdate ? 'PUT' : 'POST';
-      
-      console.log('API呼び出しの詳細:', {
-        url,
-        method,
-        token: token ? '取得済み' : '未取得',
-        body: formData
-      });
-      
-      const response = await fetch(url, {
-        method,
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
-        },
-        body: JSON.stringify(formData)
-      });
-      
-      console.log('API応答ステータス:', response.status);
-      
-      if (!response.ok) {
-        const errorText = await response.text();
-        let errorMessage;
-        
-        try {
-          const errorData = JSON.parse(errorText);
-          errorMessage = errorData.message || '保存に失敗しました';
-        } catch (parseError) {
-          errorMessage = `APIエラー: ${response.status} ${response.statusText}`;
-          console.error('応答の解析に失敗:', errorText);
-        }
-        
-        throw new Error(errorMessage);
-      }
-      
-      const savedCallerId = await response.json();
-      console.log('保存成功 - 応答データ:', savedCallerId);
-      
-      if (isUpdate) {
-        setCallerIds(callerIds.map(c => c.id === savedCallerId.id ? savedCallerId : c));
-        setSuccessMessage('発信者番号を更新しました');
-      } else {
-        setCallerIds([...callerIds, savedCallerId]);
-        setSuccessMessage('新しい発信者番号を登録しました');
-      }
-      
-      resetForm();
-    } catch (err) {
-      console.error('保存エラー:', err);
-      setSubmitError(err.message);
-    }
-  };
-
-  // チャンネルの保存（新規作成/更新）
-  const handleSubmitChannel = async (e) => {
-    e.preventDefault();
-    setSubmitError(null);
-    setSuccessMessage(null);
-    
-    try {
-      const token = localStorage.getItem('token');
-      const isUpdate = channelFormMode === 'edit';
-      const callerId = channelFormData.caller_id_id;
-
-      console.log('送信するチャンネルデータ:', channelFormData);
-      
-      // 開発環境でモックデータを使用するオプション
-      if (process.env.NODE_ENV === 'development' && window.location.hostname === 'localhost') {
-        console.log('開発環境でモックデータを使用 - チャンネル保存処理');
-        
-        setTimeout(() => {
-          if (isUpdate) {
-            // 更新処理のシミュレーション
-            const updatedChannels = channels[callerId].map(ch => 
-              ch.id === editingChannelId 
-                ? { ...ch, username: channelFormData.username, password: '********' }
-                : ch
-            );
-            
-            setChannels(prev => ({ ...prev, [callerId]: updatedChannels }));
-            setSuccessMessage('チャンネルを更新しました');
-          } else {
-            // 新規作成のシミュレーション
-            const newChannel = { 
-              id: Date.now(),
-              caller_id_id: callerId,
-              username: channelFormData.username,
-              password: '********',
-              status: 'available',
-              last_used: null
-            };
-            
-            const updatedChannels = channels[callerId] 
-              ? [...channels[callerId], newChannel]
-              : [newChannel];
-            
-            setChannels(prev => ({ ...prev, [callerId]: updatedChannels }));
-            
-            // 発信者番号のチャンネル数も更新
-            const updatedCallerIds = callerIds.map(c => {
-              if (c.id === callerId) {
-                return {
-                  ...c,
-                  channelCount: (c.channelCount || 0) + 1,
-                  availableChannels: (c.availableChannels || 0) + 1
-                };
-              }
-              return c;
-            });
-            
-            setCallerIds(updatedCallerIds);
-            setSuccessMessage('新しいチャンネルを登録しました');
-          }
-          
-          resetChannelForm();
-        }, 500);
-        return;
-      }
-      
-      const url = isUpdate 
-        ? `${apiBaseUrl}/caller-ids/channels/${editingChannelId}`
-        : `${apiBaseUrl}/caller-ids/${callerId}/channels`;
-      
-      const method = isUpdate ? 'PUT' : 'POST';
-      
-      console.log('API呼び出し:', url, method);
-      
-      const response = await fetch(url, {
-        method,
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
-        },
-        body: JSON.stringify(channelFormData)
-      });
-      
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.message || '保存に失敗しました');
-      }
-      
-      // 再取得
-      await fetchChannels(callerId);
-      
-      // 発信者番号一覧も再取得（チャンネル数の更新のため）
-      await fetchCallerIds();
-      
-      resetChannelForm();
-      setSuccessMessage(isUpdate ? 'チャンネルを更新しました' : '新しいチャンネルを登録しました');
-    } catch (err) {
-      console.error('チャンネル保存エラー:', err);
-      setSubmitError(err.message);
-    }
-  };
-
-  // 発信者番号の削除
-  const handleDelete = async (id) => {
-    if (!window.confirm('この発信者番号を削除してもよろしいですか？登録されているすべてのチャンネルも削除され、キャンペーンで使用されている場合は削除できません。')) {
+// 発信者番号の保存（新規作成/更新）修正版
+const handleSubmit = async (e) => {
+  e.preventDefault();
+  setSubmitError(null);
+  setSuccessMessage(null);
+  
+  console.log('送信開始 - フォームデータ:', formData);
+  console.log('更新モード:', formData.id !== null);
+  
+  try {
+    const token = localStorage.getItem('token');
+    if (!token) {
+      console.error('認証トークンが見つかりません');
+      setSubmitError('認証エラー: ログインが必要です');
       return;
     }
     
-    try {
-      const token = localStorage.getItem('token');
+    const isUpdate = formData.id !== null;
+    
+    const url = isUpdate 
+      ? `${apiBaseUrl}/caller-ids/${formData.id}`
+      : `${apiBaseUrl}/caller-ids`;
+    
+    const method = isUpdate ? 'PUT' : 'POST';
+    
+    console.log('API呼び出し:', { url, method, body: formData });
+    
+    const response = await fetch(url, {
+      method,
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${token}`
+      },
+      body: JSON.stringify({
+        number: formData.number,
+        description: formData.description,
+        provider: formData.provider,
+        domain: formData.domain,
+        active: formData.active
+      })
+    });
+    
+    console.log('API応答:', response.status, response.statusText);
+    
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error('API応答エラー:', errorText);
       
-      // 開発環境でモックデータを使用するオプション
-      if (process.env.NODE_ENV === 'development' && window.location.hostname === 'localhost') {
-        console.log('開発環境でモックデータを使用 - 削除処理');
-        // モックデータのセット
-        setTimeout(() => {
-          setCallerIds(callerIds.filter(c => c.id !== id));
-          // チャンネルも削除
-          setChannels(prev => {
-            const updated = { ...prev };
-            delete updated[id];
-            return updated;
-          });
-          setSuccessMessage('発信者番号を削除しました');
-        }, 500);
-        return;
+      let errorMessage;
+      try {
+        const errorData = JSON.parse(errorText);
+        errorMessage = errorData.message || '保存に失敗しました';
+      } catch (parseError) {
+        errorMessage = `APIエラー: ${response.status} ${response.statusText}`;
       }
       
-      console.log('API呼び出し:', `${apiBaseUrl}/caller-ids/${id}`, 'DELETE');
-      
-      const response = await fetch(`${apiBaseUrl}/caller-ids/${id}`, {
-        method: 'DELETE',
-        headers: {
-          'Authorization': `Bearer ${token}`
-        }
-      });
-      
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.message || '削除に失敗しました');
-      }
-      
-      setCallerIds(callerIds.filter(c => c.id !== id));
-      // チャンネルも削除
-      setChannels(prev => {
-        const updated = { ...prev };
-        delete updated[id];
+      throw new Error(errorMessage);
+    }
+    
+    const savedCallerId = await response.json();
+    console.log('保存成功 - 応答データ:', savedCallerId);
+    
+    if (isUpdate) {
+      // 更新の場合
+      setCallerIds(prevCallerIds => {
+        const updated = prevCallerIds.map(c => 
+          c.id === savedCallerId.id ? { ...savedCallerId } : c
+        );
+        console.log('更新後のリスト:', updated.length, '件');
         return updated;
       });
-      setSuccessMessage('発信者番号を削除しました');
-    } catch (err) {
-      console.error('削除エラー:', err);
-      setSubmitError(err.message);
+      setSuccessMessage('発信者番号を更新しました');
+    } else {
+      // 新規作成の場合
+      const newCallerId = {
+        ...savedCallerId,
+        channelCount: 0,
+        availableChannels: 0
+      };
+      
+      setCallerIds(prevCallerIds => {
+        const updated = [...prevCallerIds, newCallerId];
+        console.log('新規追加後のリスト:', updated.length, '件');
+        return updated;
+      });
+      setSuccessMessage('新しい発信者番号を登録しました');
     }
-  };
+    
+    // フォームをリセット
+    resetForm();
+    
+    // 3秒後にメッセージをクリア
+    setTimeout(() => {
+      setSuccessMessage(null);
+    }, 3000);
+    
+  } catch (err) {
+    console.error('保存エラー:', err);
+    setSubmitError(err.message);
+    
+    // エラーメッセージを5秒後にクリア
+    setTimeout(() => {
+      setSubmitError(null);
+    }, 5000);
+  }
+};
+
+// frontend/src/components/CallerIDManagement.js のチャンネル登録処理修正
+
+// チャンネルの保存（新規作成/更新）修正版
+const handleSubmitChannel = async (e) => {
+  e.preventDefault();
+  setSubmitError(null);
+  setSuccessMessage(null);
+  
+  console.log('チャンネル送信開始:', channelFormData);
+  
+  try {
+    const token = localStorage.getItem('token');
+    const isUpdate = channelFormMode === 'edit';
+    const callerId = channelFormData.caller_id_id;
+
+    if (!callerId) {
+      setSubmitError('発信者番号IDが設定されていません');
+      return;
+    }
+    
+    // 送信データの準備
+    const submitData = {
+      username: channelFormData.username,
+      password: channelFormData.password,
+      channel_type: channelFormData.channel_type || 'both'
+    };
+    
+    console.log('API送信データ:', { ...submitData, password: '****' });
+    
+    const url = isUpdate 
+      ? `${apiBaseUrl}/caller-ids/channels/${editingChannelId}`
+      : `${apiBaseUrl}/caller-ids/${callerId}/channels`;
+    
+    const method = isUpdate ? 'PUT' : 'POST';
+    
+    console.log('API呼び出し:', { url, method });
+    
+    const response = await fetch(url, {
+      method,
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${token}`
+      },
+      body: JSON.stringify(submitData)
+    });
+    
+    console.log('API応答:', response.status, response.statusText);
+    
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error('API応答エラー:', errorText);
+      
+      let errorMessage;
+      try {
+        const errorData = JSON.parse(errorText);
+        errorMessage = errorData.message || 'チャンネル保存に失敗しました';
+      } catch (parseError) {
+        errorMessage = `APIエラー: ${response.status} ${response.statusText}`;
+      }
+      
+      throw new Error(errorMessage);
+    }
+    
+    const savedChannel = await response.json();
+    console.log('チャンネル保存成功:', savedChannel);
+    
+    if (isUpdate) {
+      // 更新の場合
+      const updatedChannels = channels[callerId].map(ch => 
+        ch.id === editingChannelId 
+          ? { ...ch, username: savedChannel.username, channel_type: savedChannel.channel_type }
+          : ch
+      );
+      
+      setChannels(prev => ({ ...prev, [callerId]: updatedChannels }));
+      setSuccessMessage('チャンネルを更新しました');
+    } else {
+      // 新規作成の場合
+      const newChannel = {
+        id: savedChannel.id,
+        caller_id_id: callerId,
+        username: savedChannel.username,
+        password: '********',
+        channel_type: savedChannel.channel_type,
+        status: savedChannel.status || 'available',
+        last_used: savedChannel.last_used
+      };
+      
+      const updatedChannels = channels[callerId] 
+        ? [...channels[callerId], newChannel]
+        : [newChannel];
+      
+      setChannels(prev => ({ ...prev, [callerId]: updatedChannels }));
+      
+      // 発信者番号のチャンネル数も更新
+      setCallerIds(prevCallerIds => 
+        prevCallerIds.map(c => {
+          if (c.id === callerId) {
+            return {
+              ...c,
+              channelCount: (c.channelCount || 0) + 1,
+              availableChannels: (c.availableChannels || 0) + 1
+            };
+          }
+          return c;
+        })
+      );
+      
+      setSuccessMessage('新しいチャンネルを登録しました');
+    }
+    
+    // フォームをリセット
+    resetChannelForm();
+    
+    // 3秒後にメッセージをクリア
+    setTimeout(() => {
+      setSuccessMessage(null);
+    }, 3000);
+    
+  } catch (err) {
+    console.error('チャンネル保存エラー:', err);
+    setSubmitError(err.message);
+    
+    // エラーメッセージを5秒後にクリア
+    setTimeout(() => {
+      setSubmitError(null);
+    }, 5000);
+  }
+};
+
+  // 発信者番号の削除（修正版）
+const handleDelete = async (id) => {
+  console.log('削除ボタンクリック:', id, typeof id);
+  
+  if (!window.confirm('この発信者番号を削除してもよろしいですか？登録されているすべてのチャンネルも削除され、キャンペーンで使用されている場合は削除できません。')) {
+    return;
+  }
+  
+  try {
+    const token = localStorage.getItem('token');
+    
+    console.log('削除API呼び出し開始:', `${apiBaseUrl}/caller-ids/${id}`);
+    
+    const response = await fetch(`${apiBaseUrl}/caller-ids/${id}`, {
+      method: 'DELETE',
+      headers: {
+        'Authorization': `Bearer ${token}`,
+        'Content-Type': 'application/json'
+      }
+    });
+    
+    console.log('削除API応答:', response.status, response.statusText);
+    
+    if (!response.ok) {
+      const errorData = await response.json();
+      console.error('削除APIエラー:', errorData);
+      throw new Error(errorData.message || '削除に失敗しました');
+    }
+    
+    const result = await response.json();
+    console.log('削除結果:', result);
+    
+    // UI状態を更新（削除されたIDを除外）
+    setCallerIds(prevCallerIds => {
+      const filtered = prevCallerIds.filter(c => c.id !== id);
+      console.log('削除後のUI状態:', filtered.length, '件');
+      return filtered;
+    });
+    
+    // チャンネル状態も削除
+    setChannels(prev => {
+      const updated = { ...prev };
+      delete updated[id];
+      return updated;
+    });
+    
+    setSuccessMessage(`発信者番号を削除しました（チャンネル${result.deletedChannels || 0}件も削除）`);
+    
+    // 3秒後にメッセージをクリア
+    setTimeout(() => {
+      setSuccessMessage(null);
+    }, 3000);
+    
+  } catch (err) {
+    console.error('削除処理エラー:', err);
+    setSubmitError(err.message);
+    
+    // エラーメッセージを5秒後にクリア
+    setTimeout(() => {
+      setSubmitError(null);
+    }, 5000);
+  }
+};
 
   // チャンネルの削除
   const handleDeleteChannel = async (channel) => {
