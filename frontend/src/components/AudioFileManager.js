@@ -376,6 +376,42 @@ const AudioFileManager = () => {
     });
   };
 
+  // 🎵 音声テストボタン機能
+  const testAudioPlayback = async (audioId) => {
+    try {
+      const token = localStorage.getItem('token');
+      
+      // APIエンドポイントのデバッグログ
+      console.log('音声テスト開始:', { audioId, apiBaseUrl });
+      
+      const response = await fetch(`${apiBaseUrl}/audio/test-playback/${audioId}`, {
+        method: 'POST',
+        headers: { 
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        }
+      });
+      
+      console.log('レスポンス状態:', response.status);
+      
+      if (!response.ok) {
+        throw new Error(`サーバーエラー: ${response.status}`);
+      }
+      
+      const result = await response.json();
+      console.log('テスト結果:', result);
+      
+      if (result.success) {
+        setSuccessMessage('🔊 音声再生テスト成功！');
+      } else {
+        setError(`音声再生テストに失敗: ${result.message}`);
+      }
+    } catch (error) {
+      console.error('音声テストエラー:', error);
+      setError(`音声再生テストエラー: ${error.message}`);
+    }
+  };
+
   // ファイル選択ダイアログを開く
   const openFileDialog = () => {
     fileInputRef.current.click();
@@ -574,6 +610,13 @@ const AudioFileManager = () => {
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
                     <div className="flex justify-end space-x-2">
+                      <button
+                        onClick={() => testAudioPlayback(file.id)}
+                        className="p-2 rounded-full bg-purple-100 text-purple-600 hover:bg-purple-200"
+                        title="音声テスト"
+                      >
+                        🧪
+                      </button>
                       <button
                         onClick={() => togglePlayAudio(file.id)}
                         className={`p-2 rounded-full ${

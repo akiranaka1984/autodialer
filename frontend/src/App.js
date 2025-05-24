@@ -19,6 +19,7 @@ import NotFound from './components/NotFound';
 import DNCManagement from './components/DNCManagement';
 import SystemSettings from './components/SystemSettings';
 import OperatorDashboard from './components/OperatorDashboard';
+import AudioFileManager from './components/AudioFileManager';
 
 // オペレーターインターフェースのインポート
 import OperatorLayout from './components/OperatorInterface/OperatorLayout';
@@ -134,6 +135,7 @@ function App() {
                 <Route path="operators" element={<OperatorDashboard />} />
                 <Route path="settings" element={<SystemSettings />} />
                 <Route path="*" element={<NotFound />} />
+                <Route path="/audio-files" element={<AudioFileManager />} />
               </Route>
             )}
             

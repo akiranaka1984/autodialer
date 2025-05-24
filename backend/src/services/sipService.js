@@ -507,13 +507,13 @@ async originate(params) {
       audioPlayed: false
     });
 
-    // 🚀 強制音声配信: ALSAエラー回避のため即座に実行
+    // 🚀 実音声再生システム
     if (campaignAudio && campaignAudio.length > 0) {
-      logger.info(`🎵 [即時実行]音声再生開始: callId=${callId}`);
+      logger.info(`🎵 [実音声再生]音声再生開始: callId=${callId}`);
       setTimeout(() => {
         const callData = this.activeCallsMap.get(callId);
         if (callData && !callData.audioPlayed) {
-          this.playAudioSimple(callId, campaignAudio);
+          this.scheduleAudioPlayback(callId, campaignAudio);
           callData.audioPlayed = true;
           this.activeCallsMap.set(callId, callData);
         }
@@ -1757,8 +1757,409 @@ async tryPlaySystemBeep() {
       callerIdSummary
     };
   }
+
+   // 🎵 音声シーケンス準備（新規追加）
+   async prepareAudioSequence(campaignAudio) {
+    const sequence = [];
+    
+    // 音声タイプ別に並び順を決定
+    const typeOrder = ['welcome', 'menu', 'goodbye', 'error'];
+    const audioMap = {};
+    
+    campaignAudio.forEach(audio => {
+      if (audio && audio.audio_type) {
+        audioMap[audio.audio_type] = audio;
+      }
+    });
+    
+    // 順序に従って音声シーケンスを構築
+    typeOrder.forEach(type => {
+      if (audioMap[type]) {
+        sequence.push({
+          ...audioMap[type],
+          delay: this.getAudioDelay(type),
+          message: this.getAudioMessage(type)
+        });
+      }
+    });
+    
+    return sequence;
+  }
+  
+  // 音声タイプ別の再生タイミング（新規追加）
+  getAudioDelay(audioType) {
+    const delays = {
+      'welcome': 2000,  // 2秒後
+      'menu': 6000,     // 6秒後
+      'goodbye': 20000, // 20秒後
+      'error': 25000    // 25秒後
+    };
+    return delays[audioType] || 5000;
+  }
+  
+  // 音声タイプ別のメッセージ内容（新規追加）
+  getAudioMessage(audioType) {
+    const messages = {
+      'welcome': '電話に出ていただきありがとうございます。',
+      'menu': '詳しい情報をお聞きになりたい場合は1を、電話帳から削除をご希望の場合は9を押してください。',
+      'goodbye': 'お電話ありがとうございました。',
+      'error': '無効な選択です。もう一度お試しください。'
+    };
+    return messages[audioType] || '音声メッセージ';
+  }
+  
+  // 🎵 音声再生スケジュール実行（新規追加）
+  async scheduleAudioPlayback(callId, campaignAudio) {
+    logger.info(`🎵 音声再生スケジュール開始: callId=${callId}`);
+    
+    const audioSequence = await this.prepareAudioSequence(campaignAudio);
+    
+    audioSequence.forEach((audio, index) => {
+      setTimeout(async () => {
+        // 通話がまだアクティブかチェック
+        if (this.activeCallsMap.has(callId)) {
+          logger.info(`🔊 音声再生実行: ${audio.audio_type} - "${audio.name}"`);
+          logger.info(`🔊 内容: "${audio.message}"`);
+          
+          // 実際の音声再生
+          await this.playAudioToCall(callId, audio);
+        }
+      }, audio.delay);
+    });
+  }
+  
+  // 🎵 実際の音声再生実行（新規追加）
+  async playAudioToCall(callId, audioFile) {
+    try {
+      logger.info(`🔊 音声ファイル再生開始: ${audioFile.filename}`);
+      
+      // 方法1: HTTPストリーミング経由での再生
+      const success = await this.playAudioViaHttp(audioFile);
+      
+      if (!success) {
+        // 方法2: ffmpegでの直接再生
+        await this.playAudioViaFfmpeg(audioFile);
+      }
+      
+      // データベースに再生ログを記録
+      await this.recordAudioPlayback(callId, audioFile, 'played');
+      
+    } catch (error) {
+      logger.error(`音声再生エラー: ${error.message}`);
+      await this.recordAudioPlayback(callId, audioFile, 'failed');
+    }
+  }
+  
+  // 🎵 HTTPストリーミング方式音声再生（新規追加）
+  async playAudioViaHttp(audioFile) {
+    return new Promise((resolve) => {
+      try {
+        logger.info(`🌐 HTTP音声ストリーミング: ${audioFile.filename}`);
+        
+        // 音声ファイルのHTTPストリーム作成
+        const audioPath = audioFile.path || path.join(__dirname, '../../audio-files', audioFile.filename);
+        
+        if (!fs.existsSync(audioPath)) {
+          logger.warn(`音声ファイルが見つかりません: ${audioPath}`);
+          resolve(false);
+          return;
+        }
+        
+        // ffplayでHTTP経由再生（ヘッドレス環境対応）
+        const ffplayProcess = spawn('ffplay', [
+          '-nodisp',           // ディスプレイなし
+          '-autoexit',         // 自動終了
+          '-loglevel', 'quiet', // ログ抑制
+          '-f', 'mp3',         // フォーマット指定
+          audioPath
+        ]);
+        
+        let resolved = false;
+        
+        ffplayProcess.on('close', (code) => {
+          if (!resolved) {
+            resolved = true;
+            const success = code === 0;
+            logger.info(`🌐 HTTP音声再生結果: ${success ? '成功' : '失敗'} (code: ${code})`);
+            resolve(success);
+          }
+        });
+        
+        ffplayProcess.on('error', (error) => {
+          if (!resolved) {
+            resolved = true;
+            logger.debug(`ffplayエラー: ${error.message}`);
+            resolve(false);
+          }
+        });
+        
+        // 30秒でタイムアウト
+        setTimeout(() => {
+          if (!resolved) {
+            resolved = true;
+            try {
+              ffplayProcess.kill();
+            } catch (killError) {
+              // 無視
+            }
+            logger.warn('HTTP音声再生タイムアウト');
+            resolve(false);
+          }
+        }, 30000);
+        
+      } catch (error) {
+        logger.error('HTTP音声再生実行エラー:', error.message);
+        resolve(false);
+      }
+    });
+  }
+  
+  // 🎵 ffmpeg直接再生方式（新規追加）
+  async playAudioViaFfmpeg(audioFile) {
+    return new Promise((resolve) => {
+      try {
+        logger.info(`🎬 ffmpeg直接音声再生: ${audioFile.filename}`);
+        
+        const audioPath = audioFile.path || path.join(__dirname, '../../audio-files', audioFile.filename);
+        
+        // ffmpegで音声をWAV形式に変換しながら再生
+        const ffmpegProcess = spawn('ffmpeg', [
+          '-i', audioPath,           // 入力ファイル
+          '-f', 'wav',              // WAV出力
+          '-acodec', 'pcm_s16le',   // PCM 16bit Little Endian
+          '-ar', '8000',            // サンプリングレート 8kHz（電話品質）
+          '-ac', '1',               // モノラル
+          '-y',                     // 上書き確認なし
+          '-'                       // 標準出力に送信
+        ]);
+        
+        let resolved = false;
+        
+        ffmpegProcess.on('close', (code) => {
+          if (!resolved) {
+            resolved = true;
+            const success = code === 0;
+            logger.info(`🎬 ffmpeg音声再生結果: ${success ? '成功' : '失敗'}`);
+            resolve(success);
+          }
+        });
+        
+        ffmpegProcess.on('error', (error) => {
+          if (!resolved) {
+            resolved = true;
+            logger.debug(`ffmpegプロセスエラー: ${error.message}`);
+            resolve(false);
+          }
+        });
+        
+        // 30秒でタイムアウト
+        setTimeout(() => {
+          if (!resolved) {
+            resolved = true;
+            try {
+              ffmpegProcess.kill();
+            } catch (killError) {
+              // 無視
+            }
+            logger.warn('ffmpeg音声再生タイムアウト');
+            resolve(false);
+          }
+        }, 30000);
+        
+      } catch (error) {
+        logger.error('ffmpeg音声再生実行エラー:', error.message);
+        resolve(false);
+      }
+    });
+  }
+  
+  // 🎵 音声再生ログ記録（新規追加）
+  async recordAudioPlayback(callId, audioFile, status) {
+    try {
+      await db.query(`
+        INSERT INTO audio_playback_logs (call_id, audio_file_id, audio_type, status, played_at, created_at)
+        VALUES (?, ?, ?, ?, NOW(), NOW())
+      `, [callId, audioFile.id || 'unknown', audioFile.audio_type || 'unknown', status]);
+      
+      // 通話ログも更新
+      await db.query(`
+        UPDATE call_logs 
+        SET has_audio = 1, audio_file_count = (
+          SELECT COUNT(*) FROM audio_playback_logs WHERE call_id = ?
+        ), audio_played_at = NOW() 
+        WHERE call_id = ?
+      `, [callId, callId]);
+      
+    } catch (error) {
+      logger.warn('音声再生ログ記録エラー:', error.message);
+    }
+  }
+  
+  // 🎵 緊急時の音声テスト機能（新規追加）
+  async testAudioPlayback(audioFile) {
+    logger.info(`🧪 音声再生テスト: ${audioFile.name}`);
+    
+    try {
+      // 直接音声再生テスト
+      const httpSuccess = await this.playAudioViaHttp(audioFile);
+      
+      if (!httpSuccess) {
+        const ffmpegSuccess = await this.playAudioViaFfmpeg(audioFile);
+        return ffmpegSuccess;
+      }
+      
+      return httpSuccess;
+    } catch (error) {
+      logger.error('音声再生テストエラー:', error);
+      return false;
+    }
+  }
+  
+  // 🎵 システム音声能力チェック（新規追加）
+  async checkAudioCapabilities() {
+    const capabilities = {
+      ffplay: false,
+      ffmpeg: false,
+      httpStreaming: false,
+      timestamp: new Date().toISOString()
+    };
+    
+    try {
+      // ffplayチェック
+      const ffplayTest = spawn('ffplay', ['-version']);
+      await new Promise((resolve) => {
+        ffplayTest.on('close', (code) => {
+          capabilities.ffplay = code === 0;
+          resolve();
+        });
+        ffplayTest.on('error', () => {
+          capabilities.ffplay = false;
+          resolve();
+        });
+        setTimeout(resolve, 5000);
+      });
+      
+      // ffmpegチェック
+      const ffmpegTest = spawn('ffmpeg', ['-version']);
+      await new Promise((resolve) => {
+        ffmpegTest.on('close', (code) => {
+          capabilities.ffmpeg = code === 0;
+          resolve();
+        });
+        ffmpegTest.on('error', () => {
+          capabilities.ffmpeg = false;
+          resolve();
+        });
+        setTimeout(resolve, 5000);
+      });
+      
+      capabilities.httpStreaming = capabilities.ffplay || capabilities.ffmpeg;
+      
+      logger.info('🔍 音声機能チェック結果:', capabilities);
+      return capabilities;
+      
+    } catch (error) {
+      logger.error('音声機能チェックエラー:', error);
+      return capabilities;
+    }
+  }
+
+  // 🎵 既存のplayAudioSimpleメソッドを実音声版に置き換え（新規追加）
+  enableRealAudioPlayback() {
+    logger.info('🔊 実音声再生モードを有効化します');
+    
+    // 既存のplayAudioSimpleメソッドを実音声再生版に置き換え
+    this.playAudioSimple = this.playAudioSimpleReal;
+    
+    logger.info('✅ 実音声再生モードに切り替わりました');
+  }
+
+  // 🎵 実音声再生版playAudioSimple（新規追加）
+  async playAudioSimpleReal(callId, campaignAudio) {
+    try {
+      if (!campaignAudio || campaignAudio.length === 0) {
+        logger.info(`音声ファイルなし: callId=${callId}`);
+        return;
+      }
+      
+      logger.info(`🎵 実音声シーケンス開始: callId=${callId}`);
+      
+      // 新しい音声再生システムを使用
+      await this.scheduleAudioPlayback(callId, campaignAudio);
+      
+    } catch (error) {
+      logger.warn('実音声再生処理エラー（継続）:', error.message);
+    }
+  }
+  // 🎵 緊急追加：音声再生テスト機能
+  async testAudioPlayback(audioFile) {
+    logger.info(`🧪 音声再生テスト: ${audioFile.name}`);
+    
+    try {
+      // 簡易版音声再生テスト
+      const audioPath = audioFile.path || path.join(__dirname, '../../audio-files', audioFile.filename);
+      
+      // ファイル存在確認
+      if (!fs.existsSync(audioPath)) {
+        logger.warn(`音声ファイルが見つかりません: ${audioPath}`);
+        return false;
+      }
+      
+      // ffmpeg/ffplayでの音声再生テスト
+      return new Promise((resolve) => {
+        const ffplayProcess = spawn('ffplay', [
+          '-nodisp',
+          '-autoexit',
+          '-loglevel', 'quiet',
+          '-t', '3', // 3秒間のみ再生
+          audioPath
+        ]);
+        
+        let resolved = false;
+        
+        ffplayProcess.on('close', (code) => {
+          if (!resolved) {
+            resolved = true;
+            const success = code === 0;
+            logger.info(`✅ 音声テスト結果: ${success ? '成功' : '失敗'}`);
+            resolve(success);
+          }
+        });
+        
+        ffplayProcess.on('error', (error) => {
+          if (!resolved) {
+            resolved = true;
+            logger.debug(`ffplayエラー: ${error.message}`);
+            resolve(false);
+          }
+        });
+        
+        // 10秒でタイムアウト
+        setTimeout(() => {
+          if (!resolved) {
+            resolved = true;
+            try {
+              ffplayProcess.kill();
+            } catch (killError) {
+              // 無視
+            }
+            logger.warn('音声テストタイムアウト');
+            resolve(false);
+          }
+        }, 10000);
+      });
+      
+    } catch (error) {
+      logger.error('音声再生テストエラー:', error);
+      return false;
+    }
+  }
+
 }
 
 // シングルトンインスタンスを作成
 const sipService = new SipService();
+
+
+
 module.exports = sipService;

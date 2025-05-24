@@ -373,4 +373,152 @@ router.get('/player-status', auth, async (req, res) => {
   }
 });
 
+// 🎵 音声再生テスト用エンドポイント
+router.post('/test-playback/:id', auth, async (req, res) => {
+  try {
+    const audioId = req.params.id;
+    const [rows] = await db.query('SELECT * FROM audio_files WHERE id = ?', [audioId]);
+    
+    if (rows.length === 0) {
+      return res.status(404).json({ message: '音声ファイルが見つかりません' });
+    }
+    
+    const audioFile = rows[0];
+    const sipService = require('../services/sipService');
+    const success = await sipService.testAudioPlayback(audioFile);
+    
+    res.json({
+      success,
+      message: success ? '🔊 音声再生テスト成功！' : '音声再生テストに失敗しました',
+      audioFile: { id: audioFile.id, name: audioFile.name, filename: audioFile.filename }
+    });
+  } catch (error) {
+    logger.error('音声再生テストエラー:', error);
+    res.status(500).json({ message: '音声再生テストでエラーが発生しました' });
+  }
+});
+
+// 🎵 システム音声能力チェック
+router.get('/system-capabilities', auth, async (req, res) => {
+  try {
+    logger.info('🔍 システム音声能力チェック開始');
+    
+    const sipService = require('../services/sipService');
+    const capabilities = await sipService.checkAudioCapabilities();
+    
+    res.json({
+      success: true,
+      capabilities,
+      status: capabilities.httpStreaming ? 'ready' : 'needs_setup',
+      recommendations: capabilities.httpStreaming ? 
+        ['✅ 音声再生機能が利用可能です', '✅ HTTP音声ストリーミング対応'] : 
+        ['❌ ffmpeg/ffplayのインストールが必要です', '⚠️ 音声再生機能が制限されます'],
+      timestamp: new Date().toISOString()
+    });
+    
+  } catch (error) {
+    logger.error('音声能力チェックエラー:', error);
+    res.status(500).json({ 
+      message: '音声能力チェックでエラーが発生しました', 
+      error: error.message 
+    });
+  }
+});
+
+// 🎵 通話中音声再生強制実行（デバッグ用）
+router.post('/force-play-in-call', auth, async (req, res) => {
+  try {
+    const { callId, audioId } = req.body;
+    
+    if (!callId || !audioId) {
+      return res.status(400).json({ message: 'callIdとaudioIdは必須です' });
+    }
+    
+    logger.info(`🚀 強制音声再生: callId=${callId}, audioId=${audioId}`);
+    
+    // 音声ファイル情報を取得
+    const [rows] = await db.query('SELECT * FROM audio_files WHERE id = ?', [audioId]);
+    
+    if (rows.length === 0) {
+      return res.status(404).json({ message: '音声ファイルが見つかりません' });
+    }
+    
+    const audioFile = rows[0];
+    
+    // SIPサービスで音声再生
+    const sipService = require('../services/sipService');
+    await sipService.playAudioToCall(callId, audioFile);
+    
+    res.json({
+      success: true,
+      message: '通話中音声再生を実行しました',
+      callId,
+      audioFile: {
+        id: audioFile.id,
+        name: audioFile.name,
+        type: audioFile.audio_type || 'unknown'
+      }
+    });
+    
+  } catch (error) {
+    logger.error('強制音声再生エラー:', error);
+    res.status(500).json({ 
+      message: '強制音声再生でエラーが発生しました', 
+      error: error.message 
+    });
+  }
+});
+
+// 🎵 音声再生テスト用エンドポイント（緊急追加）
+router.post('/test-playback/:id', auth, async (req, res) => {
+  try {
+    const audioId = req.params.id;
+    
+    logger.info(`🧪 音声再生テスト開始: audioId=${audioId}`);
+    
+    // 音声ファイル情報を取得
+    const [rows] = await db.query('SELECT * FROM audio_files WHERE id = ?', [audioId]);
+    
+    if (rows.length === 0) {
+      return res.status(404).json({ message: '音声ファイルが見つかりません' });
+    }
+    
+    const audioFile = rows[0];
+    
+    // 音声再生テスト実行
+    const sipService = require('../services/sipService');
+    const success = await sipService.testAudioPlayback(audioFile);
+    
+    if (success) {
+      res.json({
+        success: true,
+        message: '🔊 音声ファイルの再生が完了しました',
+        audioFile: {
+          id: audioFile.id,
+          name: audioFile.name,
+          filename: audioFile.filename,
+          size: audioFile.size
+        }
+      });
+    } else {
+      res.status(500).json({
+        success: false,
+        message: '音声ファイルの再生に失敗しました',
+        audioFile: {
+          id: audioFile.id,
+          name: audioFile.name,
+          filename: audioFile.filename
+        }
+      });
+    }
+    
+  } catch (error) {
+    logger.error('音声再生テストエラー:', error);
+    res.status(500).json({ 
+      message: '音声再生テストでエラーが発生しました', 
+      error: error.message 
+    });
+  }
+});
+
 module.exports = router;
