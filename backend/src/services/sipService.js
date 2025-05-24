@@ -21,6 +21,7 @@ class SipService extends EventEmitter {
     this.on('callEnded', this.handleCallEnded.bind(this));
   }
 
+  // ★★★ 統合版connectメソッド（これのみを残す）★★★
   async connect() {
     if (this.mockMode) {
       logger.info('SIPサービスにモックモードで接続しました');
@@ -37,7 +38,7 @@ class SipService extends EventEmitter {
     }
 
     try {
-      logger.info('SIPサービスに接続を試みています...');
+      logger.info('SIPサービス接続開始...');
       
       // sipcmdコマンドの存在チェック
       try {
@@ -51,15 +52,17 @@ class SipService extends EventEmitter {
       // データベースからSIPアカウント情報をロード
       this.sipAccounts = await this.loadSipAccountsFromDatabase();
       
+      logger.info(`SIPアカウント読み込み結果: ${this.sipAccounts.length}個`);
+      
       if (this.sipAccounts.length === 0) {
+        logger.warn('SIPアカウントが0個です。ファイルから読み込みを試します...');
         this.sipAccounts = this.loadSipAccountsFromFile();
       }
       
       if (this.sipAccounts.length === 0) {
+        logger.error('SIPアカウントが設定されていません');
         throw new Error('SIPアカウントが設定されていません');
       }
-      
-      logger.info(`${this.sipAccounts.length}個のSIPアカウントを読み込みました`);
       
       // 発信者番号ごとのチャンネルグループを作成
       this.organizeChannelsByCallerId();
@@ -67,9 +70,9 @@ class SipService extends EventEmitter {
       // 定期的なステータスモニタリングを開始
       this.startStatusMonitoring();
       
-      this.connected = true;
-      logger.info('SIPサービスへの接続が完了しました');
+      logger.info(`SIPサービス接続完了: ${this.sipAccounts.length}個のアカウント, ${this.callerIdToChannelsMap.size}個の発信者番号`);
       
+      this.connected = true;
       return true;
     } catch (error) {
       logger.error('SIP接続エラー:', error);
@@ -77,7 +80,7 @@ class SipService extends EventEmitter {
       throw error;
     }
   }
-  
+
   async loadSipAccountsFromDatabase() {
     try {
       logger.info('データベースからSIPチャンネル情報を読み込み中...');
@@ -191,81 +194,6 @@ class SipService extends EventEmitter {
         }
       ];
     }
-  }
-  
-  // SIPサービス初期化時の追加デバッグ
-  async connect() {
-    try {
-      logger.info('SIPサービス接続開始...');
-      
-      // データベースからSIPアカウント情報をロード
-      this.sipAccounts = await this.loadSipAccountsFromDatabase();
-      
-      logger.info(`SIPアカウント読み込み結果: ${this.sipAccounts.length}個`);
-      
-      if (this.sipAccounts.length === 0) {
-        logger.warn('SIPアカウントが0個です。ファイルから読み込みを試します...');
-        this.sipAccounts = this.loadSipAccountsFromFile();
-      }
-      
-      if (this.sipAccounts.length === 0) {
-        logger.error('SIPアカウントが設定されていません');
-        throw new Error('SIPアカウントが設定されていません');
-      }
-      
-      // 発信者番号ごとのチャンネルグループを作成
-      this.organizeChannelsByCallerId();
-      
-      logger.info(`SIPサービス接続完了: ${this.sipAccounts.length}個のアカウント, ${this.callerIdToChannelsMap.size}個の発信者番号`);
-      
-      this.connected = true;
-      return true;
-    } catch (error) {
-      logger.error('SIP接続エラー:', error);
-      this.connected = false;
-      throw error;
-    }
-  }
-  
-  // getAvailableSipAccount メソッドにデバッグ追加
-  async getAvailableSipAccount() {
-    logger.info(`利用可能なSIPアカウントを検索中 (全${this.sipAccounts.length}個)`);
-    
-    if (!this.sipAccounts || this.sipAccounts.length === 0) {
-      logger.warn('SIPアカウントが設定されていません。再読み込みを試みます...');
-      
-      // 再読み込みを試行
-      this.sipAccounts = await this.loadSipAccountsFromDatabase();
-      
-      if (this.sipAccounts.length === 0) {
-        this.sipAccounts = this.loadSipAccountsFromFile();
-      }
-      
-      this.organizeChannelsByCallerId();
-    }
-    
-    // 利用可能なアカウントを検索
-    const availableAccounts = this.sipAccounts.filter(account => 
-      account && account.status === 'available'
-    );
-    
-    logger.info(`利用可能なSIPアカウント: ${availableAccounts.length}/${this.sipAccounts.length}`);
-    
-    if (availableAccounts.length === 0) {
-      logger.error('利用可能なSIPアカウントがありません');
-      
-      // 全アカウントの状態をログ出力
-      this.sipAccounts.forEach((account, index) => {
-        logger.info(`アカウント${index}: ${account.username} - ${account.status}`);
-      });
-      
-      return null;
-    }
-    
-    const selectedAccount = availableAccounts[0];
-    logger.info(`選択されたSIPアカウント: ${selectedAccount.username}`);
-    
-    return selectedAccount;
   }
   
   // 発信者番号ごとにチャンネルをグループ化
@@ -405,43 +333,7 @@ async loadSipAccountsFromDatabase() {
   }
 }
 
-// SIPサービス初期化時の追加デバッグ
-async connect() {
-  try {
-    logger.info('SIPサービス接続開始...');
-    
-    // データベースからSIPアカウント情報をロード
-    this.sipAccounts = await this.loadSipAccountsFromDatabase();
-    
-    logger.info(`SIPアカウント読み込み結果: ${this.sipAccounts.length}個`);
-    
-    if (this.sipAccounts.length === 0) {
-      logger.warn('SIPアカウントが0個です。ファイルから読み込みを試します...');
-      this.sipAccounts = this.loadSipAccountsFromFile();
-    }
-    
-    if (this.sipAccounts.length === 0) {
-      logger.error('SIPアカウントが設定されていません');
-      throw new Error('SIPアカウントが設定されていません');
-    }
-    
-    // 発信者番号ごとのチャンネルグループを作成
-    this.organizeChannelsByCallerId();
-    
-    logger.info(`SIPサービス接続完了: ${this.sipAccounts.length}個のアカウント, ${this.callerIdToChannelsMap.size}個の発信者番号`);
-    
-    this.connected = true;
-    return true;
-  } catch (error) {
-    logger.error('SIP接続エラー:', error);
-    this.connected = false;
-    throw error;
-  }
-}
 
-// backend/src/services/sipService.js の修正箇所
-
-// getAvailableSipAccount メソッドを修正
 async getAvailableSipAccount() {
   logger.info(`利用可能なSIPアカウントを検索中 (全${this.sipAccounts.length}個)`);
   
@@ -830,7 +722,7 @@ extractRtpInfo(pjsuaOutput) {
     return null;
   }
 }
-  
+  /*
   // ★★★ シンプル音声再生メソッド ★★★
   playAudioSimple(callId, campaignAudio) {
     try {
@@ -880,9 +772,71 @@ extractRtpInfo(pjsuaOutput) {
       logger.warn('音声再生処理エラー（継続）:', error.message);
     }
   }
+*/
+playAudioSimple(callId, campaignAudio) {
+  try {
+    if (!campaignAudio || campaignAudio.length === 0) {
+      logger.info(`🔊 [安全モード] 音声ファイルなし: callId=${callId}`);
+      return true;
+    }
+    
+    logger.info(`🔊 [安全モード] 音声再生シミュレーション開始: callId=${callId}`);
+    logger.info(`🔊 [情報] 音声ファイル数: ${campaignAudio.length}件`);
+    
+    // 音声ファイルをタイプ別に整理
+    const audioMap = {};
+    campaignAudio.forEach(audio => {
+      if (audio && audio.audio_type) {
+        audioMap[audio.audio_type] = audio;
+      }
+    });
+    
+    logger.info(`🔊 [音声タイプ] ${Object.keys(audioMap).join(', ')}`);
+    
+    // 段階的音声再生ログ（実際の再生は後で実装）
+    setTimeout(() => {
+      if (audioMap.welcome) {
+        logger.info(`🔊 [シミュレーション] ウェルカムメッセージ: ${audioMap.welcome.name}`);
+        logger.info(`🔊 [内容] "電話に出ていただきありがとうございます。"`);
+        
+        // 安全モード：実際の音声再生はスキップ
+        // this.tryPlayAudioWithAplay(audioMap.welcome.path);
+      }
+    }, 1000);
+    
+    setTimeout(() => {
+      if (audioMap.menu) {
+        logger.info(`🔊 [シミュレーション] メニュー案内: ${audioMap.menu.name}`);
+        logger.info(`🔊 [内容] "詳しい情報をお聞きになりたい場合は1を、電話帳から削除をご希望の場合は9を押してください。"`);
+        
+        // 安全モード：実際の音声再生はスキップ
+        // this.tryPlayAudioWithAplay(audioMap.menu.path);
+      }
+    }, 4000);
+    
+    setTimeout(() => {
+      if (audioMap.goodbye) {
+        logger.info(`🔊 [シミュレーション] お別れメッセージ: ${audioMap.goodbye.name}`);
+        logger.info(`🔊 [内容] "お電話ありがとうございました。"`);
+        
+        // 安全モード：実際の音声再生はスキップ
+        // this.tryPlayAudioWithAplay(audioMap.goodbye.path);
+      }
+    }, 15000);
+    
+    logger.info(`✅ [安全モード] 音声再生シミュレーション完了: callId=${callId}`);
+    return true;
+    
+  } catch (error) {
+    logger.warn('音声再生シミュレーションエラー（継続）:', error.message);
+    return false;
+  }
+}
+
   
   // 現在のtryPlayAudioメソッドを以下に置き換え
 // ★★★ Docker対応強化版音声再生メソッド ★★★
+/*
 tryPlayAudio(audioPath) {
   if (!audioPath) {
     logger.debug('音声ファイルパスが未設定');
@@ -914,6 +868,299 @@ tryPlayAudio(audioPath) {
       
   } catch (error) {
     logger.error('音声再生処理エラー:', error.message);
+  }
+}
+*/
+async tryPlayAudio(audioPath) {
+  if (!audioPath) {
+    logger.debug('音声ファイルパスが未設定');
+    return false;
+  }
+  
+  logger.info(`🔊 Docker対応音声再生試行: ${audioPath}`);
+  
+  try {
+    // 方法1: ALSAのaplayを使用（最も確実）
+    const aplaySuccess = await this.tryPlayWithAplay(audioPath);
+    if (aplaySuccess) {
+      return true;
+    }
+    
+    // 方法2: ffplayでフォールバック
+    const ffplaySuccess = await this.tryPlayWithFFplay(audioPath);
+    if (ffplaySuccess) {
+      return true;
+    }
+    
+    // 方法3: システムビープでテスト
+    const beepSuccess = await this.tryPlaySystemBeep();
+    
+    logger.info(`🔊 音声再生結果: aplay=${aplaySuccess}, ffplay=${ffplaySuccess}, beep=${beepSuccess}`);
+    return beepSuccess;
+    
+  } catch (error) {
+    logger.error('全ての音声再生方法が失敗:', error.message);
+    return false;
+  }
+}
+
+tryPlayAudioWithAplay(audioPath) {
+  if (!audioPath) {
+    logger.debug('音声ファイルパスが未設定');
+    return Promise.resolve(false);
+  }
+  
+  return new Promise((resolve) => {
+    logger.info(`🔊 aplay音声再生開始: ${audioPath}`);
+    
+    try {
+      const aplayProcess = spawn('aplay', [
+        '-D', 'default',  // デフォルトデバイス指定
+        '-f', 'cd',       // CD品質
+        '-q',             // クワイエットモード
+        audioPath
+      ]);
+      
+      let resolved = false;
+      
+      aplayProcess.on('close', (code) => {
+        if (!resolved) {
+          resolved = true;
+          const success = code === 0;
+          logger.info(`✅ aplay音声再生結果: ${success ? '成功' : '失敗'} (code: ${code})`);
+          resolve(success);
+        }
+      });
+      
+      aplayProcess.on('error', (error) => {
+        if (!resolved) {
+          resolved = true;
+          logger.debug(`aplayプロセスエラー: ${error.message}`);
+          resolve(false);
+        }
+      });
+      
+      // 15秒でタイムアウト
+      setTimeout(() => {
+        if (!resolved) {
+          resolved = true;
+          try {
+            aplayProcess.kill();
+          } catch (killError) {
+            // 無視
+          }
+          logger.warn('aplay音声再生タイムアウト');
+          resolve(false);
+        }
+      }, 15000);
+      
+    } catch (error) {
+      logger.error('aplay実行エラー:', error.message);
+      resolve(false);
+    }
+  });
+}
+
+async tryPlayWithAplay(audioPath) {
+  return new Promise((resolve) => {
+    logger.info(`🔊 aplay音声再生開始: ${audioPath}`);
+    
+    // ファイル存在確認
+    if (!require('fs').existsSync(audioPath)) {
+      logger.warn(`音声ファイルが存在しません: ${audioPath}`);
+      resolve(false);
+      return;
+    }
+    
+    const aplayProcess = spawn('aplay', [
+      '-D', 'default',  // デフォルトデバイス指定
+      '-f', 'cd',       // CD品質
+      '-q',             // クワイエットモード
+      audioPath
+    ]);
+    
+    let resolved = false;
+    
+    aplayProcess.on('close', (code) => {
+      if (!resolved) {
+        resolved = true;
+        const success = code === 0;
+        logger.info(`✅ aplay音声再生結果: ${success ? '成功' : '失敗'} (code: ${code})`);
+        resolve(success);
+      }
+    });
+    
+    aplayProcess.on('error', (error) => {
+      if (!resolved) {
+        resolved = true;
+        logger.debug(`aplayプロセスエラー: ${error.message}`);
+        resolve(false);
+      }
+    });
+    
+    setTimeout(() => {
+      if (!resolved) {
+        resolved = true;
+        try {
+          aplayProcess.kill();
+        } catch (killError) {
+          // 無視
+        }
+        logger.warn('aplay音声再生タイムアウト');
+        resolve(false);
+      }
+    }, 15000);
+  });
+}
+
+async tryPlayWithFFplay(audioPath) {
+  return new Promise((resolve) => {
+    logger.info(`🔊 ffplay音声再生開始: ${audioPath}`);
+    
+    const ffplayProcess = spawn('ffplay', [
+      '-nodisp',        // ディスプレイなし
+      '-autoexit',      // 再生終了時に自動終了
+      '-loglevel', 'quiet', // ログレベルをクワイエットに
+      '-volume', '100', // 音量100%
+      audioPath
+    ]);
+    
+    let resolved = false;
+    
+    ffplayProcess.on('close', (code) => {
+      if (!resolved) {
+        resolved = true;
+        const success = code === 0;
+        logger.info(`✅ ffplay音声再生結果: ${success ? '成功' : '失敗'} (code: ${code})`);
+        resolve(success);
+      }
+    });
+    
+    ffplayProcess.on('error', (error) => {
+      if (!resolved) {
+        resolved = true;
+        logger.debug(`ffplayプロセスエラー: ${error.message}`);
+        resolve(false);
+      }
+    });
+    
+    setTimeout(() => {
+      if (!resolved) {
+        resolved = true;
+        try {
+          ffplayProcess.kill();
+        } catch (killError) {
+          // 無視
+        }
+        logger.warn('ffplay音声再生タイムアウト');
+        resolve(false);
+      }
+    }, 15000);
+  });
+}
+
+async tryPlaySystemBeep() {
+  return new Promise((resolve) => {
+    logger.info('🔔 システムビープ音テスト開始');
+    
+    try {
+      const speakerTest = spawn('speaker-test', [
+        '-t', 'sine',     // サイン波
+        '-f', '1000',     // 1000Hz
+        '-l', '1',        // 1回のみ
+        '-s', '1'         // 1チャンネル
+      ]);
+      
+      let resolved = false;
+      
+      speakerTest.on('close', (code) => {
+        if (!resolved) {
+          resolved = true;
+          const success = code === 0;
+          logger.info(`✅ speaker-testビープ音結果: ${success ? '成功' : '失敗'}`);
+          resolve(success);
+        }
+      });
+      
+      speakerTest.on('error', (error) => {
+        if (!resolved) {
+          resolved = true;
+          logger.debug(`speaker-testエラー: ${error.message}`);
+          resolve(false);
+        }
+      });
+      
+      setTimeout(() => {
+        if (!resolved) {
+          resolved = true;
+          try {
+            speakerTest.kill();
+          } catch (killError) {
+            // 無視
+          }
+          resolve(false);
+        }
+      }, 5000);
+      
+    } catch (error) {
+      logger.debug('システムビープ音エラー:', error.message);
+      resolve(false);
+    }
+  });
+}
+
+enableRealAudioPlayback() {
+  logger.info('🔊 実音声再生モードを有効化します');
+  
+  // playAudioSimpleメソッドを実音声再生版に切り替え
+  this.playAudioSimple = this.playAudioSimpleReal;
+  
+  logger.info('✅ 実音声再生モードに切り替わりました');
+}
+
+playAudioSimpleReal(callId, campaignAudio) {
+  try {
+    if (!campaignAudio || campaignAudio.length === 0) {
+      logger.info(`音声ファイルなし: callId=${callId}`);
+      return;
+    }
+    
+    // 音声ファイルをタイプ別に整理
+    const audioMap = {};
+    campaignAudio.forEach(audio => {
+      if (audio && audio.audio_type) {
+        audioMap[audio.audio_type] = audio;
+      }
+    });
+    
+    logger.info(`🎵 実音声シーケンス開始: callId=${callId}, 音声タイプ: ${Object.keys(audioMap).join(', ')}`);
+    
+    // ウェルカムメッセージ（1秒後）
+    setTimeout(() => {
+      if (audioMap.welcome) {
+        logger.info(`🔊 [実音声再生] ウェルカムメッセージ: ${audioMap.welcome.name}`);
+        this.tryPlayAudioWithAplay(audioMap.welcome.path || audioMap.welcome.filename);
+      }
+    }, 1000);
+    
+    // メニュー案内（4秒後）
+    setTimeout(() => {
+      if (audioMap.menu) {
+        logger.info(`🔊 [実音声再生] メニュー案内: ${audioMap.menu.name}`);
+        this.tryPlayAudioWithAplay(audioMap.menu.path || audioMap.menu.filename);
+      }
+    }, 4000);
+    
+    // お別れメッセージ（15秒後）
+    setTimeout(() => {
+      if (audioMap.goodbye) {
+        logger.info(`🔊 [実音声再生] お別れメッセージ: ${audioMap.goodbye.name}`);
+        this.tryPlayAudioWithAplay(audioMap.goodbye.path || audioMap.goodbye.filename);
+      }
+    }, 15000);
+    
+  } catch (error) {
+    logger.warn('実音声再生処理エラー（継続）:', error.message);
   }
 }
 

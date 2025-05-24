@@ -8,6 +8,7 @@ const db = require('../services/database');
 const logger = require('../services/logger');
 const multer = require('multer');
 const storage = multer.memoryStorage();
+const ivrController = require('../controllers/ivrController');
 const upload = multer({ 
   storage,
   limits: { fileSize: 25 * 1024 * 1024 }, // 25MB制限
@@ -242,7 +243,199 @@ router.post('/campaigns/:id/deploy', async (req, res) => {
 });
 
 // backend/src/routes/ivr.js の test-call エンドポイントを修正
+// backend/src/routes/ivr.js への追加
+// 既存のコードの「router.post('/test-call/:id', ...」の前に以下を挿入
 
+// 🚀 IVRテスト発信 - フロントエンド互換エンドポイント
+// backend/src/routes/ivr.js への追加パッチ
+// 既存のファイルの適切な位置に以下のコードを挿入してください
+
+// 🚀 フロントエンド互換性のためのtest-callエンドポイント追加
+// router.post('/test-call/:id', ...) の前に以下を挿入
+
+router.post('/test-call', async (req, res) => {
+  try {
+    const { phoneNumber, campaignId, callerID } = req.body;
+    
+    logger.info(`🔥 IVR直接テスト発信: Campaign=${campaignId}, Phone=${phoneNumber}, CallerID=${callerID}`);
+    
+    // 必須パラメータチェック
+    if (!phoneNumber) {
+      return res.status(400).json({ message: '電話番号は必須です' });
+    }
+    
+    if (!campaignId) {
+      return res.status(400).json({ message: 'キャンペーンIDは必須です' });
+    }
+    
+    // 電話番号の正規化
+    const cleanPhoneNumber = phoneNumber.replace(/[^\d]/g, '');
+    if (cleanPhoneNumber.length < 8) {
+      return res.status(400).json({ message: '有効な電話番号を入力してください' });
+    }
+    
+    // キャンペーン情報を取得
+    const [campaigns] = await db.query('SELECT * FROM campaigns WHERE id = ?', [campaignId]);
+    
+    if (campaigns.length === 0) {
+      return res.status(404).json({ message: 'キャンペーンが見つかりません' });
+    }
+    
+    const campaign = campaigns[0];
+    logger.info(`✅ キャンペーン: ${campaign.name} (ID: ${campaign.id})`);
+    
+    // 発信者番号の決定
+    let callerIdData = null;
+    
+    if (callerID) {
+      // 明示的に指定された発信者番号
+      const [specified] = await db.query(
+        'SELECT * FROM caller_ids WHERE id = ? AND active = true',
+        [callerID]
+      );
+      if (specified.length > 0) {
+        callerIdData = specified[0];
+        logger.info(`✅ 指定発信者番号: ${callerIdData.number}`);
+      }
+    }
+    
+    if (!callerIdData && campaign.caller_id_id) {
+      // キャンペーンに紐付いた発信者番号
+      const [campaignCaller] = await db.query(
+        'SELECT * FROM caller_ids WHERE id = ? AND active = true',
+        [campaign.caller_id_id]
+      );
+      if (campaignCaller.length > 0) {
+        callerIdData = campaignCaller[0];
+        logger.info(`✅ キャンペーン発信者番号: ${callerIdData.number}`);
+      }
+    }
+    
+    if (!callerIdData) {
+      // デフォルト発信者番号
+      const [defaultCaller] = await db.query(
+        'SELECT * FROM caller_ids WHERE active = true ORDER BY created_at DESC LIMIT 1'
+      );
+      if (defaultCaller.length > 0) {
+        callerIdData = defaultCaller[0];
+        logger.info(`✅ デフォルト発信者番号: ${callerIdData.number}`);
+      } else {
+        return res.status(400).json({ message: '有効な発信者番号が見つかりません' });
+      }
+    }
+    
+    // キャンペーンの音声ファイル取得
+    let campaignAudio = [];
+    try {
+      campaignAudio = await audioService.getCampaignAudio(campaignId);
+      logger.info(`🎵 音声ファイル: ${campaignAudio ? campaignAudio.length : 0}件`);
+    } catch (audioError) {
+      logger.warn('音声ファイル取得エラー（続行）:', audioError.message);
+    }
+    
+    // IVRスクリプトの準備
+    try {
+      const scriptResult = await ivrService.generateIvrScript(campaignId);
+      logger.info(`📝 IVRスクリプト準備完了`);
+    } catch (scriptError) {
+      logger.warn(`IVRスクリプト準備警告: ${scriptError.message}`);
+    }
+    
+    // callServiceを使用して発信実行
+    const callService = require('../services/callService');
+    
+    const callParams = {
+      phoneNumber: cleanPhoneNumber,
+      callerID: `"${callerIdData.description || campaign.name}" <${callerIdData.number}>`,
+      context: 'autodialer',
+      exten: 's',
+      priority: 1,
+      callerIdData,
+      variables: {
+        CAMPAIGN_ID: campaignId,
+        CONTACT_ID: 'IVR_TEST',
+        CONTACT_NAME: 'IVRテストユーザー',
+        COMPANY: 'IVRテスト',
+        IVR_MODE: 'true',
+        TEST_CALL: 'true'
+      },
+      mockMode: false, // IVRテストは常に実発信
+      provider: 'sip',
+      campaignAudio // 音声ファイルを含める
+    };
+    
+    logger.info('🚀 IVR発信実行:', {
+      phoneNumber: callParams.phoneNumber,
+      callerID: callParams.callerID,
+      provider: callParams.provider,
+      audioCount: campaignAudio.length
+    });
+    
+    // 実際の発信を実行
+    const callResult = await callService.originate(callParams);
+    
+    logger.info('📞 callService結果:', {
+      ActionID: callResult.ActionID,
+      provider: callResult.provider,
+      Message: callResult.Message
+    });
+    
+    // 通話ログに記録
+    try {
+      await db.query(`
+        INSERT INTO call_logs 
+        (call_id, campaign_id, caller_id_id, phone_number, start_time, status, test_call, call_provider, has_audio, audio_file_count)
+        VALUES (?, ?, ?, ?, NOW(), 'ORIGINATING', 1, ?, ?, ?)
+      `, [
+        callResult.ActionID,
+        campaignId,
+        callerIdData.id,
+        cleanPhoneNumber,
+        callResult.provider || 'sip',
+        campaignAudio.length > 0 ? 1 : 0,
+        campaignAudio.length
+      ]);
+      
+      logger.info(`✅ 通話ログ記録: ${callResult.ActionID}`);
+    } catch (logError) {
+      logger.error('通話ログ記録エラー（発信は継続）:', logError);
+    }
+    
+    // 成功レスポンス
+    const responseData = {
+      success: true,
+      callId: callResult.ActionID,
+      message: 'IVRテスト発信を開始しました',
+      data: {
+        phoneNumber: cleanPhoneNumber,
+        campaignId: parseInt(campaignId),
+        campaignName: campaign.name,
+        callerNumber: callerIdData.number,
+        provider: callResult.provider || 'sip',
+        audioFilesCount: campaignAudio.length,
+        timestamp: new Date().toISOString()
+      }
+    };
+    
+    logger.info('✅ IVRテスト発信完了:', responseData);
+    res.json(responseData);
+    
+  } catch (error) {
+    logger.error('🔥 IVRテスト発信エラー:', error);
+    res.status(500).json({
+      success: false,
+      message: 'IVRテスト発信に失敗しました',
+      error: error.message
+    });
+  }
+});
+
+// 上記のコードを既存の router.post('/test-call/:id', ...) の前に挿入してください
+// ⚠️ 重要: callParams を callResult.originate() に渡す部分で変数名を修正: 
+// callResult = await callService.originate(callParams); に変更
+
+// 上記のエンドポイントを既存の router.post('/test-call/:id', ...) の**前**に追加してください
+router.post('/test-call', ivrController.ivrTestCall);
 // IVRスクリプトのテスト（既存のtest-callエンドポイントを置き換え）
 router.post('/test-call/:id', async (req, res) => {
   try {
