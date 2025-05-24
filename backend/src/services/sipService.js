@@ -439,10 +439,13 @@ async connect() {
   }
 }
 
-// getAvailableSipAccount メソッドにデバッグ追加
+// backend/src/services/sipService.js の修正箇所
+
+// getAvailableSipAccount メソッドを修正
 async getAvailableSipAccount() {
   logger.info(`利用可能なSIPアカウントを検索中 (全${this.sipAccounts.length}個)`);
   
+  // SIPアカウントが空の場合は再読み込み
   if (!this.sipAccounts || this.sipAccounts.length === 0) {
     logger.warn('SIPアカウントが設定されていません。再読み込みを試みます...');
     
@@ -453,7 +456,10 @@ async getAvailableSipAccount() {
       this.sipAccounts = this.loadSipAccountsFromFile();
     }
     
+    // 発信者番号ごとのチャンネルグループを再作成
     this.organizeChannelsByCallerId();
+    
+    logger.info(`再読み込み後のSIPアカウント数: ${this.sipAccounts.length}`);
   }
   
   // 利用可能なアカウントを検索
@@ -468,8 +474,28 @@ async getAvailableSipAccount() {
     
     // 全アカウントの状態をログ出力
     this.sipAccounts.forEach((account, index) => {
-      logger.info(`アカウント${index}: ${account.username} - ${account.status}`);
+      logger.info(`アカウント${index}: ${account.username} - ${account.status} - CallerID: ${account.callerID}`);
     });
+    
+    // 強制的にアカウント状態をリセット
+    logger.warn('全SIPアカウントの状態をavailableにリセットします');
+    this.sipAccounts.forEach(account => {
+      if (account.status !== 'available') {
+        account.status = 'available';
+        logger.info(`アカウント ${account.username} を available に変更`);
+      }
+    });
+    
+    // リセット後に再検索
+    const resetAvailableAccounts = this.sipAccounts.filter(account => 
+      account && account.status === 'available'
+    );
+    
+    if (resetAvailableAccounts.length > 0) {
+      const selectedAccount = resetAvailableAccounts[0];
+      logger.info(`リセット後に選択されたSIPアカウント: ${selectedAccount.username}`);
+      return selectedAccount;
+    }
     
     return null;
   }

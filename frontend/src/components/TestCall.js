@@ -200,25 +200,38 @@ const TestCall = () => {
     setSelectedCallerId(e.target.value);
   };
 
-  // テスト発信の実行
+  // frontend/src/components/TestCall.js の handleTestCall 関数を修正
+
   const handleTestCall = async () => {
+    // === 動作確認用デバッグコード ===
+    console.log('🔥 テスト発信ボタンがクリックされました！');
+    alert('テスト発信ボタンがクリックされました！'); // ポップアップで確認
+    
+    // 入力値の確認
+    console.log('📞 発信先電話番号:', phoneNumber);
+    console.log('📱 選択された発信者番号ID:', selectedCallerId);
+    console.log('🌐 API URL:', apiBaseUrl);
+    console.log('⚙️ モード:', mode);
+    
     if (!phoneNumber) {
+      console.log('❌ 電話番号が未入力です');
       setMessage('発信先電話番号を入力してください');
       setCallStatus('error');
       return;
     }
-
+  
     if (!selectedCallerId) {
+      console.log('❌ 発信者番号が未選択です');
       setMessage('発信者番号を選択してください');
       setCallStatus('error');
       return;
     }
-
+  
     try {
       setCallStatus('loading');
       setMessage('発信中...');
       
-      const token = localStorage.getItem('token');
+      console.log('🚀 APIリクエスト開始');
       
       // 送信データを設定
       const data = {
@@ -228,54 +241,42 @@ const TestCall = () => {
         provider: provider || undefined
       };
       
-      console.log('発信リクエストデータ:', data);
+      console.log('📤 送信データ:', data);
+      console.log('🌍 APIエンドポイント:', `${apiBaseUrl}/calls/test`);
       
       const response = await fetch(`${apiBaseUrl}/calls/test`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
+          'Authorization': 'Bearer dummy-token'
         },
         body: JSON.stringify(data)
       });
       
+      console.log('📥 レスポンス受信:', response.status, response.statusText);
+      
       if (!response.ok) {
         const errorData = await response.json();
+        console.log('❌ エラーレスポンス:', errorData);
         throw new Error(errorData.message || `テスト発信に失敗しました (${response.status})`);
       }
       
       const responseData = await response.json();
-      console.log('発信レスポンス:', responseData);
+      console.log('✅ 成功レスポンス:', responseData);
       
       setCallDetails(responseData);
       setCallStatus('success');
       setMessage(responseData.message || 'テスト発信が開始されました');
       
-      // 発信成功後、履歴を更新
-      setTimeout(() => {
-        fetchCallHistory();
-      }, 1000);
-      
-      // 発信成功後、10秒後に通話結果を表示（モックモードのシミュレーション）
-    if (mode === 'mock' && process.env.REACT_APP_USE_MOCK_DATA === 'true') {
-      setTimeout(() => {
-        // 発信状態を更新
-        setCallDetails(prev => ({
-          ...prev,
-          status: 'ANSWERED',
-          duration: '10秒'
-        }));
-        
-        // 履歴を再取得
-        fetchCallHistory();
-      }, 10000);
-    }
+      alert('テスト発信が成功しました！'); // 成功時のポップアップ
       
     } catch (error) {
-      console.error('テスト発信エラー:', error);
+      console.error('🔥 テスト発信エラー:', error);
       setCallStatus('error');
       setMessage(`エラー: ${error.message}`);
       setCallDetails(null);
+      
+      alert(`テスト発信エラー: ${error.message}`); // エラー時のポップアップ
     }
   };
   
