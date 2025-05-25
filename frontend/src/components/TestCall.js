@@ -97,7 +97,7 @@ const TestCall = () => {
       let response;
       try {
         // テスト用エンドポイントを試す
-        response = await fetch(`${apiBaseUrl}/test-caller-ids`);
+        response = await fetch(`${apiBaseUrl}/caller-ids`);
       } catch (fetchError) {
         console.error('テスト用エンドポイント呼び出しエラー:', fetchError);
         

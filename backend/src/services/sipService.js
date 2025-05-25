@@ -493,19 +493,8 @@ async originate(params) {
     logger.debug(`sipcmdコマンド実行（音声付き）: ${this.sipcmdPath} ${args.join(' ')}`);
     
     // sipcmdプロセスを起動
-    const sipcmdProcess = spawn(this.sipcmdPath, args);
-    
-    // アクティブコールマップに追加（音声情報も含める）
-    this.activeCallsMap.set(callId, {
-      process: sipcmdProcess,
-      startTime: Date.now(),
-      status: 'calling',
-      phoneNumber: formattedNumber,
-      callerID: sipAccount.callerID,
-      mainCallerId: sipAccount.mainCallerId,
-      campaignAudio: campaignAudio,
-      audioPlayed: false
-    });
+    const realSip = require("./realSip");
+    return await realSip.makeCall(sipAccount.username, sipAccount.password, sipServer, formattedNumber, callDuration);
 
     // 🚀 実音声再生システム
     if (campaignAudio && campaignAudio.length > 0) {
