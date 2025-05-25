@@ -487,7 +487,6 @@ async originate(params) {
       sipServer,
       formattedNumber,
       callDuration,
-      primaryAudioFile || ''
     ];
 
     // 音声ファイルがある場合は第6引数として追加
@@ -495,7 +494,9 @@ async originate(params) {
       args.push(primaryAudioFile);
       logger.info(`🔊 音声付き発信: ${path.basename(primaryAudioFile)}`);
     }
+    ];
     
+    logger.debug(`sipcmdコマンド実行（音声付き）: ${this.sipcmdPath} ${args.join(' ')}`);
     
     // sipcmdプロセスを起動
    // const realSip = require("./realSip");
