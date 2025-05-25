@@ -116,47 +116,42 @@ router.post('/upload', upload.single('file'), async (req, res) => {
       if (!phone) {
         console.warn(`行 ${i+1}: 電話番号が空のためスキップします`);
         continue;
-      }
-      
-      // 連絡先データ作成
-      const contact = {
-        phone,
-        name: nameCol >= 0 && cols[nameCol] ? cols[nameCol].trim() : null,
-        company: companyCol >= 0 && cols[companyCol] ? cols[companyCol].trim() : null,
-        campaign_id: campaignId,
-        status: 'pending',
-        created_at: new Date()
-      };
-      
-      contacts.push(contact);
-      importedCount++;
-    }
-    
     console.log(`${contacts.length}件の連絡先をインポート処理します`);
-    
-    // データベースに登録
-    const connection = await db.beginTransaction();
-    
-    try {
+
+    // データベースに登録（トランザクションなし）
+    let insertCount = 0;
+    for (const contact of contacts) {
+      try {
+        await db.query(
+          "INSERT IGNORE INTO contacts (phone, name, company, campaign_id, status, created_at) VALUES (?, ?, ?, ?, ?, NOW())",
+          [contact.phone, contact.name, contact.company, contact.campaign_id, contact.status]
+        );
+        insertCount++;
+      } catch (insertError) {
+        console.warn(`連絡先登録スキップ: ${contact.phone} - ${insertError.message}`);
+      }
+    }
+
+    console.log(`${insertCount}件の連絡先を登録しました`);
+
       // 各連絡先をデータベースに追加
       for (const contact of contacts) {
         await connection.query(
           'INSERT INTO contacts (phone, name, company, campaign_id, status, created_at) VALUES (?, ?, ?, ?, ?, NOW())',
-          [contact.phone, contact.name, contact.company, contact.campaign_id, contact.status]
-        );
-      }
-      
-      await db.commit(connection);
-      console.log(`${importedCount}件の連絡先を登録しました`);
-      
-      // 一時ファイルを削除
-      fs.unlinkSync(req.file.path);
-      
-      // 結果を返す
-      res.json({
-        message: `${importedCount}件の連絡先をインポートしました`,
-        total_count: processedRows,
-        imported_count: importedCount,
+    // 一時ファイルを削除
+    fs.unlinkSync(req.file.path);
+
+    // 結果を返す
+    res.json({
+      message: `${insertCount}件の連絡先をインポートしました`,
+      total_count: processedRows,
+      imported_count: insertCount,
+      updated_count: 0,
+      skipped_count: processedRows - insertCount,
+      error_count: 0,
+      errors: []
+    });
+
         updated_count: 0,
         skipped_count: processedRows - importedCount,
         error_count: 0,

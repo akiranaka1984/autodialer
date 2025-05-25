@@ -554,3 +554,98 @@ router.delete('/:id', async (req, res) => {
 });
 
 module.exports = router;
+// 連絡先サブルートを追加
+const multer = require('multer');
+const upload = multer({ dest: '/tmp/' });
+
+// キャンペーンの連絡先一覧取得
+router.get('/:id/contacts', async (req, res) => {
+  try {
+    const campaignId = req.params.id;
+    console.log(`連絡先一覧取得: Campaign=${campaignId}`);
+    
+    const [contacts] = await db.query(
+      'SELECT * FROM contacts WHERE campaign_id = ? ORDER BY id DESC LIMIT 20',
+      [campaignId]
+    );
+    
+    console.log(`連絡先取得成功: ${contacts.length}件`);
+    res.json({ contacts, total: contacts.length });
+  } catch (error) {
+    console.error('連絡先取得エラー:', error);
+    res.status(500).json({ message: error.message });
+  }
+});
+
+// CSVアップロード
+router.post('/:id/contacts/upload', upload.single('file'), async (req, res) => {
+  try {
+    const campaignId = req.params.id;
+    console.log(`CSVアップロード: Campaign=${campaignId}`);
+    
+    if (!req.file) {
+      return res.status(400).json({ message: 'ファイルが必要です' });
+    }
+    
+    // 簡易CSVパース
+    const fs = require('fs');
+    const fileContent = fs.readFileSync(req.file.path, 'utf8');
+    const rows = fileContent.split('\n').filter(row => row.trim());
+    
+    let insertCount = 0;
+    for (let i = 1; i < rows.length; i++) { // ヘッダースキップ
+      const cols = rows[i].split(',');
+      const phone = cols[0] ? cols[0].trim().replace(/"/g, '') : '';
+      
+      if (phone) {
+        try {
+          await db.query(
+            'INSERT IGNORE INTO contacts (campaign_id, phone, name, status, created_at) VALUES (?, ?, ?, "pending", NOW())',
+            [campaignId, phone, cols[1] || '']
+          );
+          insertCount++;
+        } catch (err) {
+          console.warn('連絡先登録スキップ:', phone, err.message);
+        }
+      }
+    }
+    
+    // 一時ファイル削除
+    fs.unlinkSync(req.file.path);
+    
+    res.json({
+      message: `${insertCount}件の連絡先をインポートしました`,
+      imported_count: insertCount,
+      total_count: rows.length - 1
+    });
+  } catch (error) {
+    console.error('アップロードエラー:', error);
+    res.status(500).json({ message: error.message });
+  }
+});
+
+// CSVアップロード - 簡単版
+router.post('/:id/contacts/upload', upload.single('file'), async (req, res) => {
+  const campaignId = req.params.id;
+  console.log('CSV Upload:', campaignId, req.file?.originalname);
+  
+  if (!req.file) {
+    return res.status(400).json({ message: 'ファイル必要' });
+  }
+  
+  const fs = require('fs');
+  const content = fs.readFileSync(req.file.path, 'utf8');
+  const lines = content.split('\n').filter(l => l.trim());
+  
+  let count = 0;
+  for (let i = 1; i < lines.length; i++) {
+    const phone = lines[i].split(',')[0]?.trim()?.replace(/"/g, '');
+    if (phone) {
+      await db.query('INSERT INTO contacts (campaign_id, phone, status) VALUES (?, ?, "pending")', [campaignId, phone]);
+      count++;
+    }
+  }
+  
+  fs.unlinkSync(req.file.path);
+  res.json({ message: `${count}件登録`, imported_count: count });
+});
