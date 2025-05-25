@@ -1615,7 +1615,7 @@ async tryPlaySystemBeep() {
       const now = Date.now();
       this.sipAccounts.forEach(account => {
         if (account.status === 'busy' && account.lastUsed) {
-          const usedForMs = now - account.lastUsed.getTime();
+          const usedForMs = account.lastUsed ? now - new Date(account.lastUsed).getTime() : 0;
           if (usedForMs > 15 * 60 * 1000) { // 15分
             logger.warn(`長時間使用中のSIPアカウントをリセット: ${account.username}, 使用時間: ${Math.round(usedForMs/1000/60)}分`);
             account.status = 'available';
@@ -1639,7 +1639,7 @@ async tryPlaySystemBeep() {
       activeCalls.forEach(callId => {
         const account = this.callToAccountMap.get(callId);
         if (account && account.lastUsed) {
-          const usedForMs = now - account.lastUsed.getTime();
+          const usedForMs = account.lastUsed ? now - new Date(account.lastUsed).getTime() : 0;
           if (usedForMs > 60 * 60 * 1000) { // 1時間
             logger.warn(`古い通話IDをクリーンアップ: ${callId}`);
             this.callToAccountMap.delete(callId);
