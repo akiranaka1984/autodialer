@@ -81,121 +81,6 @@ class SipService extends EventEmitter {
     }
   }
 
-  async loadSipAccountsFromDatabase() {
-    try {
-      logger.info('データベースからSIPチャンネル情報を読み込み中...');
-      
-      // より詳細なクエリでデバッグ情報を取得
-      const [channels] = await db.query(`
-        SELECT 
-          cc.id,
-          cc.caller_id_id,
-          cc.username,
-          cc.password,
-          cc.channel_type,
-          cc.status,
-          cc.last_used,
-          cc.created_at,
-          ci.number as caller_number, 
-          ci.description, 
-          ci.provider, 
-          ci.domain, 
-          ci.active as caller_active
-        FROM caller_channels cc
-        JOIN caller_ids ci ON cc.caller_id_id = ci.id
-        WHERE ci.active = true
-        ORDER BY cc.caller_id_id, cc.id
-      `);
-      
-      logger.info(`データベースクエリ結果: ${channels ? channels.length : 0}件のチャンネル`);
-      
-      if (!channels || channels.length === 0) {
-        logger.warn('データベースに有効なSIPチャンネルが見つかりません');
-        
-        // デバッグ: 関連テーブルの状況を確認
-        try {
-          const [callerIds] = await db.query('SELECT * FROM caller_ids WHERE active = true');
-          const [allChannels] = await db.query('SELECT * FROM caller_channels');
-          
-          logger.info(`発信者番号数: ${callerIds.length}件`);
-          logger.info(`全チャンネル数: ${allChannels.length}件`);
-          
-          if (callerIds.length === 0) {
-            logger.error('有効な発信者番号が登録されていません');
-          }
-          if (allChannels.length === 0) {
-            logger.error('チャンネルが1件も登録されていません');
-          }
-        } catch (debugError) {
-          logger.error('デバッグクエリエラー:', debugError);
-        }
-        
-        return [];
-      }
-      
-      const formattedAccounts = channels.map(channel => {
-        const account = {
-          username: channel.username,
-          password: channel.password,
-          callerID: channel.caller_number,
-          description: channel.description || '',
-          domain: channel.domain || 'ito258258.site',
-          provider: channel.provider || 'SIP Provider',
-          mainCallerId: channel.caller_id_id,
-          channelType: channel.channel_type || 'both',
-          status: channel.status || 'available',
-          lastUsed: channel.last_used || null,
-          failCount: 0,
-          channelId: channel.id
-        };
-        
-        logger.info(`チャンネル読み込み: ${account.username} (${account.callerID}) - ${account.status}`);
-        return account;
-      });
-      
-      logger.info(`合計${formattedAccounts.length}個のSIPチャンネルを読み込みました`);
-      
-      // 発信者番号ごとの統計
-      const stats = {};
-      formattedAccounts.forEach(account => {
-        if (!stats[account.mainCallerId]) {
-          stats[account.mainCallerId] = { total: 0, available: 0, callerID: account.callerID };
-        }
-        stats[account.mainCallerId].total++;
-        if (account.status === 'available') {
-          stats[account.mainCallerId].available++;
-        }
-      });
-      
-      Object.entries(stats).forEach(([callerId, stat]) => {
-        logger.info(`発信者番号 ${stat.callerID}: 全${stat.total}ch, 利用可能${stat.available}ch`);
-      });
-      
-      return formattedAccounts;
-    } catch (error) {
-      logger.error('データベースからのSIPチャンネル読み込みエラー:', error);
-      
-      // エラー時はデフォルトアカウントを返す
-      logger.warn('デフォルトSIPアカウントを使用します');
-      return [
-        {
-          username: '03080001',
-          password: '56110478',
-          callerID: '03-5946-8520',
-          description: 'デフォルトテスト',
-          domain: 'ito258258.site',
-          provider: 'Default SIP',
-          mainCallerId: 1,
-          channelType: 'both',
-          status: 'available',
-          lastUsed: null,
-          failCount: 0,
-          channelId: 999
-        }
-      ];
-    }
-  }
-  
   // 発信者番号ごとにチャンネルをグループ化
   organizeChannelsByCallerId() {
     this.callerIdToChannelsMap.clear();
@@ -491,10 +376,10 @@ async originate(params) {
     ];
 
     // 音声ファイルがある場合は第6引数として追加
-    if (primaryAudioFile) {
-      args.push(primaryAudioFile);
-      logger.info(`🔊 音声付き発信: ${path.basename(primaryAudioFile)}`);
-    }
+   // if (primaryAudioFile) {
+     // args.push(primaryAudioFile);
+     // logger.info(`🔊 音声付き発信: ${path.basename(primaryAudioFile)}`);
+   // }
     
     
     // sipcmdプロセスを起動
