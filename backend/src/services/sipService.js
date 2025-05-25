@@ -475,7 +475,7 @@ async originate(params) {
       if (welcomeAudio) {
         // 音声ファイルパスを構築
         primaryAudioFile = welcomeAudio.path || 
-                          `/app/audio-files/${welcomeAudio.filename}`;
+                          `/var/www/autodialer/backend/audio-files/${welcomeAudio.filename}`;
         logger.info(`🎵 Primary音声ファイル設定: ${welcomeAudio.filename}`);
       }
     }
@@ -487,7 +487,13 @@ async originate(params) {
       sipServer,
       formattedNumber,
       callDuration,
-      primaryAudioFile || ''  // 音声ファイルパスを第6引数として追加
+    ];
+
+    // 音声ファイルがある場合は第6引数として追加
+    if (primaryAudioFile) {
+      args.push(primaryAudioFile);
+      logger.info(`🔊 音声付き発信: ${path.basename(primaryAudioFile)}`);
+    }
     ];
     
     logger.debug(`sipcmdコマンド実行（音声付き）: ${this.sipcmdPath} ${args.join(' ')}`);
