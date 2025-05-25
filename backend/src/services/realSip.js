@@ -5,25 +5,28 @@ class RealSipService {
   async makeCall(username, password, server, targetNumber, duration = 30) {
     logger.info(`🔥 実SIP発信開始: ${targetNumber}`);
     
-    // OpenSIPSまたはFreeSwitch風のSIPコール
-    const callProcess = spawn('bash', ['-c', `
-      echo "SIP/2.0 INVITE sip:${targetNumber}@${server} SIP/2.0" | nc ${server} 5060
-      sleep ${duration}
-      echo "SIP通話シミュレーション完了"
-    `]);
-    
-    const callId = `real-sip-${Date.now()}`;
-    
-    return new Promise((resolve) => {
-      setTimeout(() => {
-        logger.info(`✅ 実SIP発信完了: ${callId}`);
+    return new Promise((resolve, reject) => {
+      // 実際のsipcmd実行
+      const sipProcess = spawn('/usr/local/bin/sipcmd', [
+        username, password, server, targetNumber, duration
+      ]);
+      
+      const callId = `real-sip-${Date.now()}`;
+      
+      sipProcess.on('close', (code) => {
+        logger.info(`✅ 実SIP発信完了: ${callId}, code=${code}`);
         resolve({
           ActionID: callId,
           Response: 'Success',
           Message: '実SIP発信実行',
           provider: 'real-sip'
         });
-      }, 2000);
+      });
+      
+      sipProcess.on('error', (error) => {
+        logger.error(`❌ SIP発信エラー: ${error.message}`);
+        reject(error);
+      });
     });
   }
 }
