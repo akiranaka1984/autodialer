@@ -319,4 +319,34 @@ router.get('/campaign/:campaignId', async (req, res) => {
   }
 });
 
+// フロントエンド互換用の追加ルート
+router.get('/campaign/:campaignId/contactsList', async (req, res) => {
+  try {
+    const campaignId = req.params.campaignId;
+    const limit = parseInt(req.query.limit) || 10;
+    
+    console.log(`連絡先リスト取得: campaign=${campaignId}`);
+    
+    const [contacts] = await db.query(`
+      SELECT * FROM contacts 
+      WHERE campaign_id = ? 
+      ORDER BY id DESC 
+      LIMIT ${limit}
+    `, [campaignId]);
+    
+    const [countResult] = await db.query(
+      'SELECT COUNT(*) as total FROM contacts WHERE campaign_id = ?',
+      [campaignId]
+    );
+    
+    res.json({
+      contacts: contacts,
+      total: countResult[0]?.total || 0
+    });
+  } catch (error) {
+    console.error('連絡先リスト取得エラー:', error);
+    res.status(500).json({ message: error.message });
+  }
+});
+
 module.exports = router;

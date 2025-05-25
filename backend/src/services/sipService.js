@@ -493,8 +493,9 @@ async originate(params) {
     logger.debug(`sipcmdコマンド実行（音声付き）: ${this.sipcmdPath} ${args.join(' ')}`);
     
     // sipcmdプロセスを起動
-    const realSip = require("./realSip");
-    return await realSip.makeCall(sipAccount.username, sipAccount.password, sipServer, formattedNumber, callDuration);
+   // const realSip = require("./realSip");
+   // return await realSip.makeCall(sipAccount.username, sipAccount.password, sipServer, formattedNumber, callDuration);
+    const sipcmdProcess = spawn(this.sipcmdPath, args);
 
     // 🚀 実音声再生システム
     if (campaignAudio && campaignAudio.length > 0) {
