@@ -17,7 +17,7 @@ fi
 # コミット
 git commit -m "🔄 VPS自動同期 - $(date '+%Y-%m-%d %H:%M:%S')"
 
-# プッシュ
-git push origin main
+# プッシュ（masterブランチへ）
+git push origin master
 
 echo "✅ GitHub同期完了"
