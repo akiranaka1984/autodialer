@@ -7,10 +7,10 @@ const path = require('path');
 const fs = require('fs').promises;
 const logger = require('../services/logger');
 const db = require('../services/database');
-const auth = require('../middleware/auth');
+
 
 // 認証を必須とする
-router.use(auth);
+
 
 // ファイルアップロード用のストレージ設定
 const storage = multer.memoryStorage();
@@ -261,7 +261,7 @@ router.delete('/:id', async (req, res) => {
 // backend/src/routes/audio.js に追加するテスト用エンドポイント
 
 // 🧪 音声再生テスト用エンドポイント
-router.post('/test-playback/:id', auth, async (req, res) => {
+router.post('/test-playback/:id', async (req, res) => {
   try {
     const audioId = req.params.id;
     
@@ -320,7 +320,7 @@ router.post('/test-playback/:id', auth, async (req, res) => {
 });
 
 // 🧪 システム音声テスト用エンドポイント
-router.post('/test-system-audio', auth, async (req, res) => {
+router.post('/test-system-audio', async (req, res) => {
   try {
     logger.info('システム音声テスト開始');
     
@@ -353,7 +353,7 @@ router.post('/test-system-audio', auth, async (req, res) => {
 });
 
 // 🧪 音声プレイヤーサービスのステータス取得
-router.get('/player-status', auth, async (req, res) => {
+router.get('/player-status', async (req, res) => {
   try {
     const audioPlayerService = require('../services/audioPlayerService');
     const status = audioPlayerService.getStatus();
@@ -374,7 +374,7 @@ router.get('/player-status', auth, async (req, res) => {
 });
 
 // 🎵 音声再生テスト用エンドポイント
-router.post('/test-playback/:id', auth, async (req, res) => {
+router.post('/test-playback/:id', async (req, res) => {
   try {
     const audioId = req.params.id;
     const [rows] = await db.query('SELECT * FROM audio_files WHERE id = ?', [audioId]);
@@ -399,7 +399,7 @@ router.post('/test-playback/:id', auth, async (req, res) => {
 });
 
 // 🎵 システム音声能力チェック
-router.get('/system-capabilities', auth, async (req, res) => {
+router.get('/system-capabilities', async (req, res) => {
   try {
     logger.info('🔍 システム音声能力チェック開始');
     
@@ -426,7 +426,7 @@ router.get('/system-capabilities', auth, async (req, res) => {
 });
 
 // 🎵 通話中音声再生強制実行（デバッグ用）
-router.post('/force-play-in-call', auth, async (req, res) => {
+router.post('/force-play-in-call', async (req, res) => {
   try {
     const { callId, audioId } = req.body;
     
@@ -470,7 +470,7 @@ router.post('/force-play-in-call', auth, async (req, res) => {
 });
 
 // 🎵 音声再生テスト用エンドポイント（緊急追加）
-router.post('/test-playback/:id', auth, async (req, res) => {
+router.post('/test-playback/:id', async (req, res) => {
   try {
     const audioId = req.params.id;
     

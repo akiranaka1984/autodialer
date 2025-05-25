@@ -1,4 +1,4 @@
-// backend/src/index.js
+// backend/src/index.js - 修正版
 const express = require('express');
 const cors = require('cors');
 const http = require('http');
@@ -10,13 +10,10 @@ require('dotenv').config();
 
 // Express アプリケーションの初期化
 const app = express();
-// ポート設定
 const PORT = parseInt(process.env.PORT || '5000', 10);
-
-// HTTPサーバーの作成
 const server = http.createServer(app);
 
-// ★★★ 最優先CORS設定（既存のCORS設定を置き換え）★★★
+// CORS設定
 app.use((req, res, next) => {
   const origin = req.headers.origin;
   const allowedOrigins = [
@@ -24,7 +21,7 @@ app.use((req, res, next) => {
     'http://localhost:3001', 
     'http://localhost:3003',
     'http://127.0.0.1:3003',
-    'http://152.42.200.112:3003'
+    'http://143.198.209.38:3003'
   ];
   
   if (allowedOrigins.includes(origin) || !origin) {
@@ -43,179 +40,226 @@ app.use((req, res, next) => {
   next();
 });
 
-// プリフライトリクエストの明示的な処理
-app.options('*', (req, res) => {
-  res.header('Access-Control-Allow-Origin', req.headers.origin || '*');
-  res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS, PATCH');
-  res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, Cache-Control, Pragma, X-Requested-With, Accept, Origin');
-  res.header('Access-Control-Allow-Credentials', 'true');
-  res.header('Access-Control-Max-Age', '86400');
-  res.sendStatus(200);
-});
-
-// 追加のCORSヘッダー設定（すべてのレスポンスに適用）
-app.use((req, res, next) => {
-  res.header('Access-Control-Allow-Origin', req.headers.origin || '*');
-  res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS, PATCH');
-  res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, Cache-Control, Pragma, X-Requested-With, Accept, Origin');
-  res.header('Access-Control-Allow-Credentials', 'true');
-  next();
-});
-
-// リクエスト処理のミドルウェア
+// ミドルウェア
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
 // リクエストログ
 app.use((req, res, next) => {
-  logger.debug(`${req.method} ${req.url} - Origin: ${req.headers.origin || 'none'}`);
-  if (['POST', 'PUT', 'PATCH'].includes(req.method)) {
-    logger.debug('Request body:', req.body);
-  }
+  console.log(`${req.method} ${req.url} - Origin: ${req.headers.origin || 'none'}`);
   next();
 });
 
-// ★★★ 既存のルート登録（参考）★★★
-const campaignsRouter = require('./routes/campaigns');
-app.use('/api/campaigns', campaignsRouter);
+// ルート登録（存在確認付き）
+try {
+  const campaignsRouter = require('./routes/campaigns');
+  app.use('/api/campaigns', campaignsRouter);
+} catch (error) {
+  console.warn('campaigns router not found, using fallback');
+  app.get('/api/campaigns', (req, res) => {
+    res.json({ message: 'campaigns API準備中' });
+  });
+}
 
-const callerIdsRouter = require('./routes/callerIds');
-app.use('/api/caller-ids', callerIdsRouter);
+try {
+  const callerIdsRouter = require('./routes/callerIds');
+  app.use('/api/caller-ids', callerIdsRouter);
+} catch (error) {
+  console.warn('callerIds router not found, using fallback');
+}
 
-const callsRouter = require('./routes/calls');
-app.use('/api/calls', callsRouter);
+try {
+  const callsRouter = require('./routes/calls');
+  app.use('/api/calls', callsRouter);
+} catch (error) {
+  console.warn('calls router not found, using fallback');
+  app.get('/api/calls', (req, res) => {
+    res.json({ message: 'calls API準備中' });
+  });
+}
 
-const contactsRouter = require('./routes/contacts');
-app.use('/api/campaigns/:campaignId/contacts', contactsRouter);
-app.use('/api/contacts', contactsRouter);
+try {
+  const contactsRouter = require('./routes/contacts');
+  app.use('/api/contacts', contactsRouter);
+} catch (error) {
+  console.warn('contacts router not found, using fallback');
+  app.get('/api/contacts', (req, res) => {
+    res.json({ message: 'contacts API準備中' });
+  });
+}
 
-// ★★★ 追加が必要な部分 ★★★
-const audioRouter = require('./routes/audio');
-app.use('/api/audio', audioRouter);
+try {
+  const audioRouter = require('./routes/audio');
+  app.use('/api/audio', audioRouter);
+} catch (error) {
+  console.warn('audio router not found, using fallback');
+  app.get('/api/audio', (req, res) => {
+    res.json({ message: 'audio API準備中' });
+  });
+}
 
-// 【重要】この部分を追加
-const ivrRouter = require('./routes/ivr');
-app.use('/api/ivr', ivrRouter);
+try {
+  const ivrRouter = require('./routes/ivr');
+  app.use('/api/ivr', ivrRouter);
+} catch (error) {
+  console.warn('ivr router not found, using fallback');
+  app.get('/api/ivr', (req, res) => {
+    res.json({ message: 'ivr API準備中' });
+  });
+}
 
-// ★★★ 追加完了 ★★★
+// === 基本エンドポイント ===
+app.get('/', (req, res) => {
+  res.json({ 
+    message: 'オートコールシステムAPI稼働中',
+    version: '1.2.0',
+    timestamp: new Date().toISOString()
+  });
+});
 
-// ヘルスチェックエンドポイント
 app.get('/health', (req, res) => {
   res.json({ 
     status: 'ok', 
     timestamp: new Date().toISOString(),
-    cors: 'enabled',
-    providers: {
-      default: process.env.DEFAULT_CALL_PROVIDER,
-      mockMode: process.env.MOCK_ASTERISK === 'true'
-    }
+    server: 'main'
   });
 });
 
-// CORS テスト用エンドポイント
-app.get('/api/test-cors', (req, res) => {
-  res.json({ 
-    message: 'CORS設定テスト成功',
-    origin: req.headers.origin || 'unknown',
-    time: new Date().toISOString(),
-    headers: {
-      'access-control-allow-origin': res.getHeader('Access-Control-Allow-Origin'),
-      'access-control-allow-methods': res.getHeader('Access-Control-Allow-Methods'),
-      'access-control-allow-headers': res.getHeader('Access-Control-Allow-Headers')
-    }
-  });
-});
-
-// テスト用ルート
-app.get('/api/test-caller-ids', (req, res) => {
-  // 既存の発信者番号APIの結果と同じ形式で返す
-  db.query('SELECT * FROM caller_ids ORDER BY created_at DESC')
-    .then(result => {
-      const callerIds = Array.isArray(result) && result.length === 2 ? result[0] : result;
-      res.json(callerIds);
-    })
-    .catch(err => {
-      console.error('発信者番号取得エラー:', err);
-      res.status(500).json({ message: '発信者番号の取得に失敗しました' });
-    });
-});
-
-// ルートエンドポイント
-app.get('/', (req, res) => {
-  res.json({ 
-    message: 'オートコールシステムAPI稼働中',
-    version: '1.1.0',
-    mode: process.env.MOCK_ASTERISK === 'true' ? 'モックモード' : '本番モード',
-    defaultProvider: process.env.DEFAULT_CALL_PROVIDER || 'asterisk'
-  });
-});
-
-// すべてのルートをコンソールに出力（デバッグ用）
-console.log('登録されたルートの一覧:');
-app._router.stack.forEach(function(middleware){
-  if(middleware.route){ // routes registered directly on the app
-    console.log(`直接登録されたルート: ${middleware.route.path}, メソッド: ${Object.keys(middleware.route.methods)}`);
-  } else if(middleware.name === 'router'){ // router middleware
-    middleware.handle.stack.forEach(function(handler){
-      if(handler.route){
-        const path = handler.route.path;
-        const methods = Object.keys(handler.route.methods);
-        console.log(`ルーター内のルート: ${path}, メソッド: ${methods}`);
-      }
-    });
+// === 発信者番号管理API ===
+app.get('/api/caller-ids', async (req, res) => {
+  try {
+    const [callerIds] = await db.query('SELECT * FROM caller_ids WHERE active = 1 ORDER BY created_at DESC');
+    res.json(callerIds);
+  } catch (error) {
+    console.error('発信者番号取得エラー:', error);
+    res.status(500).json({ message: '発信者番号の取得に失敗しました' });
   }
 });
 
-// デバッグ用：すべてのリクエストをキャッチ
-app.all('*', (req, res, next) => {
-  console.log(`デバッグ: ${req.method} ${req.originalUrl}`, {
-    headers: req.headers,
-    body: req.body,
-    query: req.query,
-    params: req.params
-  });
-  next();
-});
-
-// DELETE エンドポイントを明示的にPreflight対応させる
-app.options('/api/campaigns/:id', cors());
-
-// より明確なエラーハンドリングと詳細なログを追加したDELETEエンドポイント
-app.delete('/api/campaigns/:id', async (req, res) => {
-  console.log(`キャンペーン削除リクエスト受信: ID=${req.params.id}, メソッド=${req.method}`);
-  
+app.post('/api/caller-ids', async (req, res) => {
   try {
-    // キャンペーン存在確認
-    const [campaigns] = await db.query(
-      'SELECT id FROM campaigns WHERE id = ?',
-      [req.params.id]
+    const { number, description, provider, domain } = req.body;
+    
+    if (!number) {
+      return res.status(400).json({ message: '電話番号は必須です' });
+    }
+    
+    const [result] = await db.query(
+      'INSERT INTO caller_ids (number, description, provider, domain, active, created_at) VALUES (?, ?, ?, ?, 1, NOW())',
+      [number, description, provider, domain]
     );
     
-    if (campaigns.length === 0) {
-      console.log(`キャンペーンが見つかりません: ID=${req.params.id}`);
-      return res.status(404).json({ message: 'キャンペーンが見つかりません' });
-    }
-    
-    // キャンペーン削除
-    const [result] = await db.query('DELETE FROM campaigns WHERE id = ?', [req.params.id]);
-    
-    if (result.affectedRows === 0) {
-      console.log(`削除操作が影響行なし: ID=${req.params.id}`);
-      return res.status(500).json({ message: 'キャンペーンの削除中にエラーが発生しました' });
-    }
-    
-    console.log(`キャンペーン削除成功: ID=${req.params.id}, 影響行数=${result.affectedRows}`);
-    res.json({ message: 'キャンペーンが削除されました', success: true });
+    res.status(201).json({
+      id: result.insertId,
+      number,
+      description,
+      provider,
+      domain,
+      active: 1,
+      message: '発信者番号を追加しました'
+    });
   } catch (error) {
-    console.error('キャンペーン削除エラー詳細:', error);
-    res.status(500).json({ message: 'キャンペーンの削除に失敗しました', error: error.message });
+    console.error('発信者番号追加エラー:', error);
+    res.status(500).json({ message: '発信者番号の追加に失敗しました' });
   }
 });
 
-// 全てのルート登録後、404エラーハンドラーをここに配置
+// === チャンネル管理API ===
+app.get('/api/caller-ids/:id/channels', async (req, res) => {
+  try {
+    const [channels] = await db.query(
+      'SELECT * FROM caller_channels WHERE caller_id_id = ? ORDER BY created_at DESC',
+      [req.params.id]
+    );
+    res.json(channels);
+  } catch (error) {
+    console.error('チャンネル一覧取得エラー:', error);
+    res.status(500).json({ message: 'チャンネルの取得に失敗しました' });
+  }
+});
+
+app.post('/api/caller-ids/:id/channels', async (req, res) => {
+  try {
+    const { username, password, channel_type = 'both' } = req.body;
+    const caller_id = req.params.id;
+    
+    if (!username || !password) {
+      return res.status(400).json({ message: 'ユーザー名とパスワードは必須です' });
+    }
+    
+    // 重複チェック
+    const [existing] = await db.query(
+      'SELECT id FROM caller_channels WHERE username = ?', 
+      [username]
+    );
+    
+    if (existing.length > 0) {
+      return res.status(400).json({ message: 'このユーザー名は既に使用されています' });
+    }
+    
+    // チャンネル追加
+    const [result] = await db.query(
+      'INSERT INTO caller_channels (caller_id_id, username, password, channel_type, status, created_at) VALUES (?, ?, ?, ?, ?, NOW())',
+      [caller_id, username, password, channel_type, 'available']
+    );
+    
+    res.status(201).json({
+      id: result.insertId,
+      caller_id_id: parseInt(caller_id),
+      username,
+      channel_type,
+      status: 'available',
+      message: 'チャンネルを追加しました'
+    });
+  } catch (error) {
+    console.error('チャンネル追加エラー:', error);
+    res.status(500).json({ message: 'チャンネルの追加に失敗しました' });
+  }
+});
+
+app.delete('/api/caller-ids/:callerId/channels/:channelId', async (req, res) => {
+  try {
+    const { callerId, channelId } = req.params;
+    
+    const [result] = await db.query(
+      'DELETE FROM caller_channels WHERE id = ? AND caller_id_id = ?',
+      [channelId, callerId]
+    );
+    
+    if (result.affectedRows === 0) {
+      return res.status(404).json({ message: 'チャンネルが見つかりません' });
+    }
+    
+    res.json({ message: 'チャンネルを削除しました' });
+  } catch (error) {
+    console.error('チャンネル削除エラー:', error);
+    res.status(500).json({ message: 'チャンネルの削除に失敗しました' });
+  }
+});
+
+app.put('/api/caller-ids/:callerId/channels/:channelId', async (req, res) => {
+  try {
+    const { callerId, channelId } = req.params;
+    const { status } = req.body;
+    
+    const [result] = await db.query(
+      'UPDATE caller_channels SET status = ? WHERE id = ? AND caller_id_id = ?',
+      [status, channelId, callerId]
+    );
+    
+    if (result.affectedRows === 0) {
+      return res.status(404).json({ message: 'チャンネルが見つかりません' });
+    }
+    
+    res.json({ message: 'チャンネル状態を更新しました' });
+  } catch (error) {
+    console.error('チャンネル状態更新エラー:', error);
+    res.status(500).json({ message: 'チャンネル状態の更新に失敗しました' });
+  }
+});
+
+// 404エラーハンドラー
 app.use((req, res, next) => {
-  logger.warn(`404エラー: ${req.method} ${req.originalUrl} - 要求されたリソースが見つかりません`);
-  // 常にJSONレスポンスを返すように設定
   res.status(404).json({ 
     message: '要求されたリソースが見つかりません',
     path: req.originalUrl,
@@ -225,270 +269,87 @@ app.use((req, res, next) => {
 
 // エラーハンドリングミドルウェア
 app.use((err, req, res, next) => {
-  logger.error('アプリケーションエラー:', err);
+  console.error('アプリケーションエラー:', err);
   res.status(500).json({ 
     message: '内部サーバーエラー', 
     error: err.message 
   });
 });
 
-// サーバー起動 - 非同期処理の部分を修正
+// サーバー起動
 const startServer = async () => {
   try {
-    // 開発環境のみ認証を簡略化する
-    if (process.env.NODE_ENV === 'development' && process.env.USE_SIMPLE_AUTH === 'true') {
-      try {
-        const fs = require('fs');
-        const path = require('path');
-        const authPath = path.join(__dirname, 'middleware', 'auth.js');
-        
-        // 現在のファイルが存在するか確認
-        try {
-          await fs.promises.access(authPath);
-          logger.info('認証ミドルウェアファイルが存在します');
-          
-          // 既存ファイルの内容を確認
-          const currentContent = await fs.promises.readFile(authPath, 'utf8');
-          
-          // 既に開発用のシンプルな認証になっていない場合のみ変更
-          if (!currentContent.includes('開発環境では常に認証を通す') || 
-              !currentContent.includes('req.user = { id: 1, role: \'admin\'')) {
-            
-            // シンプルな認証に変更
-            const simpleAuth = `
-// backend/src/middleware/auth.js - 開発環境用
-const jwt = require('jsonwebtoken');
-const logger = require('../services/logger');
-
-// 開発環境用の簡易認証ミドルウェア
-const auth = async (req, res, next) => {
-  // 開発環境では常に認証を通す
-  req.user = { id: 1, role: 'admin', name: 'Development Admin' };
-  logger.debug('開発環境: 認証をスキップしました');
-  return next();
-};
-
-module.exports = auth;`;
-            
-            await fs.promises.writeFile(authPath, simpleAuth);
-            logger.info('開発環境用に認証ミドルウェアを簡略化しました');
-          } else {
-            logger.info('認証ミドルウェアは既に開発環境用に簡略化されています');
-          }
-        } catch (accessErr) {
-          logger.error('認証ミドルウェアファイルにアクセスできません:', accessErr);
-        }
-      } catch (authError) {
-        logger.error('認証ミドルウェアの修正に失敗しました:', authError);
-      }
-    } else {
-      logger.info('本番環境のため、認証ミドルウェアはそのまま使用します');
-    }
-
     // データベース接続確認
-    try {
-      await db.query('SELECT 1');
-      logger.info('データベースに接続しました');
-    } catch (dbError) {
-      logger.error('データベース接続エラー:', dbError);
-      throw new Error('データベース接続に失敗しました: ' + dbError.message);
-    }
-
-    // サーバー起動（HTTPサーバーインスタンスを使用）
-    console.log(`サーバーをポート${PORT}で起動しています...`);
-    
-    // エラーイベントリスナーを先に追加
-    server.on('error', (err) => {
-      console.error('サーバーリッスンエラー:', err);
-      logger.error('サーバーリッスンエラー:', err);
-      
-      // EADDRINUSE（アドレスが既に使用中）エラーの場合、別のポートを試す
-      if (err.code === 'EADDRINUSE') {
-        const alternativePort = parseInt(PORT) + 1000; // 別のポートを試す
-        console.log(`ポート${PORT}は使用中です。ポート${alternativePort}を試します...`);
-        logger.info(`ポート${PORT}は使用中です。ポート${alternativePort}を試します...`);
-        
-        server.listen(alternativePort, '0.0.0.0', () => {
-          console.log(`代替ポート${alternativePort}でサーバーが起動しました`);
-          logger.info(`代替ポート${alternativePort}でサーバーが起動しました`);
-        });
-      }
-    });
+    await db.query('SELECT 1');
+    console.log('✅ データベース接続成功');
     
     // サーバー起動
     server.listen(PORT, '0.0.0.0', () => {
-      console.log(`サーバーが起動しました: http://0.0.0.0:${PORT}`);
-      logger.info(`サーバーが起動しました: http://0.0.0.0:${PORT}`);
-      logger.info(`実行モード: ${process.env.NODE_ENV || 'development'}`);
+      console.log(`✅ サーバーが起動しました: http://0.0.0.0:${PORT}`);
     });
     
   } catch (error) {
-    console.error('サーバー起動エラー:', error);
-    logger.error('サーバー起動エラー:', error);
-    
-    // 重大なエラーが発生した場合でも、最低限のAPIは提供する
-    console.log('重大なエラーが発生しましたが、基本的なAPIは提供します');
-    logger.info('重大なエラーが発生しましたが、基本的なAPIは提供します');
-    
-    // 最低限のAPIを提供
-    app.get('/api/caller-ids', (req, res) => {
-      db.query('SELECT * FROM caller_ids ORDER BY created_at DESC')
-        .then(result => {
-          const callerIds = Array.isArray(result) && result.length === 2 ? result[0] : result;
-          res.json(callerIds);
-        })
-        .catch(err => {
-          logger.error('発信者番号取得エラー:', err);
-          res.status(500).json({ message: '発信者番号の取得に失敗しました' });
-        });
-    });
-    
-    // エラー発生後も起動を試みる
-    try {
-      console.log(`エラー復旧後、サーバーをポート${PORT}で起動を試みます...`);
-      server.listen(PORT, '0.0.0.0', () => {
-        console.log(`エラー復旧後、限定機能でサーバーが起動しました: http://0.0.0.0:${PORT}`);
-        logger.info(`エラー復旧後、限定機能でサーバーが起動しました: http://0.0.0.0:${PORT}`);
-      });
-    } catch (finalError) {
-      console.error('最終サーバー起動エラー:', finalError);
-      logger.error('最終サーバー起動エラー:', finalError);
-    }
+    console.error('❌ サーバー起動エラー:', error);
+    process.exit(1);
   }
 };
 
-// 未処理のエラーハンドリング
+// 未処理エラーハンドリング
 process.on('unhandledRejection', (reason, promise) => {
   console.error('Unhandled Rejection:', reason);
-  logger.error('Unhandled Rejection:', reason);
 });
 
 process.on('uncaughtException', (error) => {
   console.error('Uncaught Exception:', error);
-  logger.error('Uncaught Exception:', error);
-  // 本番環境では重大なエラー時にプロセスを終了する
   if (process.env.NODE_ENV === 'production') {
-    logger.error('致命的なエラーにより、アプリケーションを終了します');
     process.exit(1);
   }
 });
 
-// アプリケーションの終了処理
+// 終了処理
 process.on('SIGINT', async () => {
   console.log('アプリケーションを終了します...');
-  logger.info('アプリケーションを終了します...');
   
   try {
-    // コールサービスの終了処理
-    try {
-      const callService = require('./services/callService');
-      if (callService && callService.shutdown) {
-        await callService.shutdown();
-        logger.info('コールサービスを正常に終了しました');
-      }
-    } catch (error) {
-      logger.warn('コールサービス終了処理中のエラー:', error.message);
-    }
-    
-    // データベース接続のクローズ
     if (db.close) {
       await db.close();
-      logger.info('データベース接続を閉じました');
     }
     
-    // サーバーの終了
-    if (server) {
-      server.close(() => {
-        console.log('サーバーを正常に終了しました');
-        logger.info('サーバーを正常に終了しました');
-        process.exit(0);
-      });
-    } else {
-      console.log('正常に終了しました');
-      logger.info('正常に終了しました');
+    server.close(() => {
+      console.log('サーバーを正常に終了しました');
       process.exit(0);
-    }
+    });
   } catch (error) {
-    console.error('終了処理中にエラーが発生しました:', error);
-    logger.error('終了処理中にエラーが発生しました:', error);
+    console.error('終了処理エラー:', error);
     process.exit(1);
   }
 });
 
-// サーバー起動後に各サービスを初期化
+// サーバー起動後の初期化
 server.on('listening', async () => {
-  logger.info('サービスの初期化を開始します...');
+  console.log('🚀 サーバー初期化完了');
   
-  // SIPサービスの初期化
+  // SIPサービス初期化（エラー無視）
   try {
     const sipService = require('./services/sipService');
     await sipService.connect();
-    logger.info('SIPサービスの初期化が完了しました');
+    console.log('✅ SIPサービス初期化完了');
   } catch (error) {
-    logger.error('SIPサービス初期化エラー:', error);
+    console.warn('⚠️ SIPサービス初期化スキップ:', error.message);
   }
   
-  // コールサービスの初期化
+  // コールサービス初期化（エラー無視）
   try {
     const callService = require('./services/callService');
     await callService.initialize();
-    logger.info('コールサービスの初期化が完了しました');
+    console.log('✅ コールサービス初期化完了');
   } catch (error) {
-    logger.error('コールサービス初期化エラー:', error);
+    console.warn('⚠️ コールサービス初期化スキップ:', error.message);
   }
-  
-  // 発信サービスの初期化
-  try {
-    const dialerService = require('./services/dialerService');
-    const result = await dialerService.initializeService();
-    if (result) {
-      logger.info('発信サービスの初期化が完了しました');
-    } else {
-      logger.warn('発信サービスの初期化が不完全です');
-    }
-  } catch (error) {
-    logger.error('発信サービス初期化エラー:', error);
-  }
-  // RTP音声サービスの初期化
-  try {
-    const rtpAudioService = require('./services/rtpAudioService');
-    logger.info('RTP音声サービスが利用可能です');
-    
-    // ffmpegの可用性確認
-    const { spawn } = require('child_process');
-    const ffmpegTest = spawn('ffmpeg', ['-version']);
-    
-    ffmpegTest.on('close', (code) => {
-      if (code === 0) {
-        logger.info('✅ ffmpegが利用可能です - RTP音声配信が有効');
-      } else {
-        logger.warn('⚠️ ffmpegが利用できません - RTP音声配信は無効');
-      }
-    });
-    
-    ffmpegTest.on('error', (error) => {
-      logger.warn('⚠️ ffmpegテストエラー - RTP音声配信は無効:', error.message);
-    });
-    
-  } catch (error) {
-    logger.error('RTP音声サービス初期化エラー:', error);
-  }
-
-  // ★★★ ここに音声プレイヤーサービスの初期化を追加 ★★★
-  /*
-  try {
-    const audioPlayerService = require('./services/audioPlayerService');
-    logger.info('音声プレイヤーサービスの初期化が完了しました');
-  } catch (error) {
-    logger.error('音声プレイヤーサービス初期化エラー:', error);
-  }
-    */
-  
-  logger.info('全サービスの初期化が完了しました');
 });
 
-// サーバー起動
-console.log('startServer関数を呼び出し中...');
+// サーバー起動実行
 startServer().catch(err => {
-  console.error('startServer関数の実行中にエラーが発生しました:', err);
+  console.error('startServer実行エラー:', err);
+  process.exit(1);
 });

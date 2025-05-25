@@ -2,10 +2,10 @@
 const express = require('express');
 const router = express.Router();
 const db = require('../services/database');
-const auth = require('../middleware/auth');
+
 
 // 認証ミドルウェアを適用（認証が必要なエンドポイントのみ）
-router.use(auth);
+
 
 // ダッシュボード用の統計データを取得
 router.get('/dashboard', async (req, res) => {

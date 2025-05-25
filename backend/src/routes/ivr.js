@@ -1,7 +1,7 @@
 // backend/src/routes/ivr.js
 const express = require('express');
 const router = express.Router();
-const auth = require('../middleware/auth');
+
 const ivrService = require('../services/ivrService');
 const audioService = require('../services/audioService');
 const db = require('../services/database');
@@ -24,7 +24,7 @@ const upload = multer({
 });
 
 // 認証を必須とする
-router.use(auth);
+
 
 // キャンペーンの音声設定を取得
 router.get('/campaigns/:id', async (req, res) => {

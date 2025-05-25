@@ -1,13 +1,13 @@
 const express = require('express');
 const router = express.Router();
 const db = require('../services/database');
-const auth = require('../middleware/auth');
+
 const logger = require('../services/logger');
 // campaignsControllerをインポート
 const campaignsController = require('../controllers/campaignsController');
 
 // キャンペーン一覧取得
-router.get('/', auth, async (req, res) => {
+router.get('/', async (req, res) => {
   try {
     const [campaigns] = await db.query(`
       SELECT c.*, 
@@ -25,7 +25,7 @@ router.get('/', auth, async (req, res) => {
 });
 
 // キャンペーン詳細取得
-router.get('/:id', auth, async (req, res) => {
+router.get('/:id', async (req, res) => {
   try {
     const [campaigns] = await db.query(`
       SELECT c.*, 
@@ -47,7 +47,7 @@ router.get('/:id', auth, async (req, res) => {
 });
 
 // 新規キャンペーン作成
-router.post('/', auth, async (req, res) => {
+router.post('/', async (req, res) => {
   try {
     const { 
       name, description, caller_id_id, script, retry_attempts,
@@ -103,7 +103,7 @@ router.post('/', auth, async (req, res) => {
 });
 
 // キャンペーン更新
-router.put('/:id', auth, async (req, res) => {
+router.put('/:id', async (req, res) => {
   try {
     const { 
       name, description, caller_id_id, script, retry_attempts,
@@ -183,7 +183,7 @@ router.put('/:id', auth, async (req, res) => {
 });
 
 // キャンペーンステータス変更
-router.patch('/:id/status', auth, async (req, res) => {
+router.patch('/:id/status', async (req, res) => {
   try {
     const { status } = req.body;
     
@@ -242,7 +242,7 @@ router.patch('/:id/status', auth, async (req, res) => {
 });
 
 // キャンペーンの詳細情報を取得
-router.get('/:id/details', auth, async (req, res) => {
+router.get('/:id/details', async (req, res) => {
   try {
     const campaignId = req.params.id;
     
@@ -289,7 +289,7 @@ router.get('/:id/details', auth, async (req, res) => {
 });
 
 // キャンペーン開始エンドポイント - 修正版
-router.post('/:id/start', auth, async (req, res) => {
+router.post('/:id/start', async (req, res) => {
   try {
     const campaignId = parseInt(req.params.id, 10);
     logger.info(`キャンペーン開始リクエスト受信: ID=${campaignId}`);
@@ -443,7 +443,7 @@ router.post('/:id/start', auth, async (req, res) => {
 });
 
 // キャンペーン一時停止
-router.post('/:id/pause', auth, async (req, res) => {
+router.post('/:id/pause', async (req, res) => {
   try {
     const campaignId = req.params.id;
     
@@ -461,7 +461,7 @@ router.post('/:id/pause', auth, async (req, res) => {
 });
 
 // キャンペーン再開
-router.post('/:id/resume', auth, async (req, res) => {
+router.post('/:id/resume', async (req, res) => {
   try {
     const campaignId = req.params.id;
     
@@ -481,7 +481,7 @@ router.post('/:id/resume', auth, async (req, res) => {
 // backend/src/routes/campaigns.js のDELETEエンドポイントを修正
 
 // キャンペーン削除 - トランザクション処理を追加
-router.delete('/:id', auth, async (req, res) => {
+router.delete('/:id', async (req, res) => {
   // データベース接続をトランザクションで開始
   const connection = await db.beginTransaction();
   

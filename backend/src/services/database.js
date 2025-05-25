@@ -1,4 +1,4 @@
-// backend/src/services/database.js - 500エラー修正版
+// backend/src/services/database.js - 認証エラー修正版
 const mysql = require('mysql2/promise');
 const logger = require('./logger');
 
@@ -12,12 +12,12 @@ const initDb = async (retries = 5, delay = 5000) => {
     try {
       console.log(`データベース接続試行 ${attempt}/${retries}...`);
       
-      // Docker Composeの環境変数を適切に使用
-      pool = mysql.createPool({
-        host: process.env.MYSQL_HOST || 'mysql',
-        user: process.env.MYSQL_USER || 'root',
-        password: process.env.MYSQL_PASSWORD || 'password',
-        database: process.env.MYSQL_DATABASE || 'autodialer',
+      // 環境変数から設定を読み込み（rootではなくautodialerユーザーを使用）
+      const dbConfig = {
+        host: process.env.MYSQL_HOST || process.env.DB_HOST || 'localhost',
+        user: process.env.MYSQL_USER || process.env.DB_USER || 'autodialer',
+        password: process.env.MYSQL_PASSWORD || process.env.DB_PASSWORD || 'TestPassword123!',
+        database: process.env.MYSQL_DATABASE || process.env.DB_NAME || 'autodialer',
         waitForConnections: true,
         connectionLimit: 10,
         queueLimit: 0,
@@ -29,7 +29,16 @@ const initDb = async (retries = 5, delay = 5000) => {
         acquireTimeout: 60000,
         timeout: 60000,
         reconnect: true
+      };
+      
+      console.log(`データベース接続設定:`, {
+        host: dbConfig.host,
+        user: dbConfig.user,
+        database: dbConfig.database,
+        password: '***'
       });
+
+      pool = mysql.createPool(dbConfig);
 
       // 接続後に文字セットを設定する追加のクエリ
       await pool.query("SET NAMES utf8mb4");
@@ -37,14 +46,18 @@ const initDb = async (retries = 5, delay = 5000) => {
       await pool.query("SET character_set_connection=utf8mb4");
       
       // 接続テスト
-      const [rows] = await pool.query('SELECT 1 as test');
-      console.log('データベース接続テスト成功:', rows);
+      const [rows] = await pool.query('SELECT 1 as test, USER() as current_user, DATABASE() as current_db');
+      console.log('データベース接続テスト成功:', rows[0]);
       
       logger.info('データベース接続プールを作成しました');
       return pool;
     } catch (error) {
       lastError = error;
-      console.error(`データベース接続試行 ${attempt}/${retries} 失敗:`, error.message);
+      console.error(`データベース接続試行 ${attempt}/${retries} 失敗:`, {
+        message: error.message,
+        code: error.code,
+        errno: error.errno
+      });
       logger.warn(`データベース接続試行 ${attempt}/${retries} 失敗: ${error.message}、${delay}ms後に再試行します...`);
       
       // 最後の試行でなければ待機
@@ -105,22 +118,25 @@ const query = async (sql, params = []) => {
   }
 };
 
-// トランザクション関連の関数
-const beginTransaction = async () => {
-  const conn = await getPool();
-  const connection = await conn.getConnection();
-  await connection.beginTransaction();
-  return connection;
-};
-
-const commit = async (connection) => {
-  await connection.commit();
-  connection.release();
-};
-
-const rollback = async (connection) => {
-  await connection.rollback();
-  connection.release();
+// ヘルスチェック関数
+const healthCheck = async () => {
+  try {
+    const [rows] = await query('SELECT 1 as healthy, NOW() as timestamp, USER() as user, DATABASE() as db');
+    return {
+      healthy: true,
+      timestamp: rows[0].timestamp,
+      user: rows[0].user,
+      database: rows[0].db,
+      poolState: pool ? 'active' : 'inactive'
+    };
+  } catch (error) {
+    return {
+      healthy: false,
+      error: error.message,
+      code: error.code,
+      poolState: pool ? 'active' : 'inactive'
+    };
+  }
 };
 
 const close = async () => {
@@ -132,30 +148,9 @@ const close = async () => {
   }
 };
 
-// ヘルスチェック関数
-const healthCheck = async () => {
-  try {
-    const [rows] = await query('SELECT 1 as healthy, NOW() as timestamp');
-    return {
-      healthy: true,
-      timestamp: rows[0].timestamp,
-      poolState: pool ? 'active' : 'inactive'
-    };
-  } catch (error) {
-    return {
-      healthy: false,
-      error: error.message,
-      poolState: pool ? 'active' : 'inactive'
-    };
-  }
-};
-
 module.exports = {
   initDb,
   query,
-  beginTransaction,
-  commit,
-  rollback,
   close,
   getPool,
   healthCheck

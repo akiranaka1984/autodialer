@@ -22,7 +22,7 @@ const auth = (req, res, next) => {
 };
 
 // 発信者番号の取得（エラーハンドリング強化）
-router.get('/', auth, async (req, res) => {
+router.get('/', async (req, res) => {
   try {
     console.log('発信者番号一覧取得開始');
     
@@ -94,7 +94,7 @@ router.get('/', auth, async (req, res) => {
 });
 
 // 発信者番号の詳細取得
-router.get('/:id', auth, async (req, res) => {
+router.get('/:id', async (req, res) => {
   try {
     const callerId = req.params.id;
     console.log(`発信者番号詳細取得: ID=${callerId}`);
@@ -135,7 +135,7 @@ router.get('/:id', auth, async (req, res) => {
 });
 
 // 発信者番号の追加
-router.post('/', auth, async (req, res) => {
+router.post('/', async (req, res) => {
   try {
     const { number, description, provider, domain, active } = req.body;
     
@@ -189,7 +189,7 @@ router.post('/', auth, async (req, res) => {
 });
 
 // 発信者番号の更新
-router.put('/:id', auth, async (req, res) => {
+router.put('/:id', async (req, res) => {
   try {
     const callerId = req.params.id;
     const { number, description, provider, domain, active } = req.body;
@@ -261,7 +261,7 @@ router.put('/:id', auth, async (req, res) => {
 });
 
 // 発信者番号の削除
-router.delete('/:id', auth, async (req, res) => {
+router.delete('/:id', async (req, res) => {
   try {
     const callerId = req.params.id;
     console.log('発信者番号削除開始:', callerId);
@@ -313,7 +313,7 @@ router.delete('/:id', auth, async (req, res) => {
 });
 
 // チャンネル管理関連のルート
-router.get('/:id/channels', auth, async (req, res) => {
+router.get('/:id/channels', async (req, res) => {
   try {
     const callerId = req.params.id;
     console.log('チャンネル一覧取得:', callerId);
@@ -333,7 +333,7 @@ router.get('/:id/channels', auth, async (req, res) => {
   }
 });
 
-router.post('/:id/channels', auth, async (req, res) => {
+router.post('/:id/channels', async (req, res) => {
   try {
     const callerId = req.params.id;
     const { username, password, channel_type } = req.body;

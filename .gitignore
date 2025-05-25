@@ -1,36 +1,51 @@
-# 依存関係ディレクトリ
+# Dependencies
 node_modules/
-uploads/
+*/node_modules/
 
-# 環境設定ファイル
+# Environment variables
 .env
-.env.*
-*.env
-config/*
+.env.local
+.env.development
+.env.production
 
-# ログファイル
+# Logs
 logs/
 *.log
+npm-debug.log*
+pm2-error.log
+pm2-out.log
 
-# ビルドファイル
-build/
-dist/
-public/
+# Database
+*.sql.backup
+database.dump
 
-# 一時ファイル
-tmp/
-temp/
+# Audio files (if large)
+backend/audio-files/*.mp3
+backend/audio-files/*.wav
+backend/audio-files/*.ogg
+
+# PM2
+.pm2/
+ecosystem.config.js
+
+# OS generated files
 .DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
 Thumbs.db
 
-# 音声ファイルなどメディア
-*.wav
-*.mp3
-*.ogg
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
 
-# バックアップファイル
-*.bak
+# Temporary files
+tmp/
+temp/
+emergency-*.js
 *.backup
-
-# Docker関連
-docker-volumes/
+*.broken-backup

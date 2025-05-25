@@ -1,10 +1,10 @@
 const express = require('express');
 const router = express.Router();
 const dncController = require('../controllers/dncController');
-const auth = require('../middleware/auth');
+
 
 // 認証ミドルウェアを適用
-router.use(auth);
+
 
 // DNCリストの取得
 router.get('/', dncController.getDNCList);

@@ -3,7 +3,7 @@ const router = express.Router();
 const db = require('../services/database');
 const dialerService = require('../services/dialerService');
 const logger = require('../services/logger');
-const auth = require('../middleware/auth');
+
 
 // 通話開始通知（Asteriskから呼び出し）
 router.post('/start', async (req, res) => {
@@ -69,7 +69,7 @@ router.post('/end', async (req, res) => {
 });
 
 // 通話履歴の取得（管理画面用）
-router.get('/', auth, async (req, res) => {
+router.get('/', async (req, res) => {
   try {
     const { campaignId, limit = 100, offset = 0 } = req.query;
     
@@ -104,7 +104,7 @@ router.get('/', auth, async (req, res) => {
 });
 
 // 特定の通話の詳細取得
-router.get('/:id', auth, async (req, res) => {
+router.get('/:id', async (req, res) => {
   try {
     const [calls] = await db.query(`
       SELECT cl.*, 

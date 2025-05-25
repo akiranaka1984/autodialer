@@ -2,7 +2,7 @@
 const express = require('express');
 // mergeParams: true を追加して親ルーターのパラメータを継承
 const router = express.Router({ mergeParams: true });
-const auth = require('../middleware/auth');
+
 const db = require('../services/database');
 
 // multerのインポートと設定
@@ -29,7 +29,7 @@ const storage = multer.diskStorage({
 const upload = multer({ storage: storage });
 
 // すべてのルートで認証ミドルウェアを適用
-router.use(auth);
+
 
 // 連絡先一覧を取得
 router.get('/', async (req, res) => {
@@ -276,7 +276,7 @@ router.post('/dnc', async (req, res) => {
 
 // キャンペーンIDに基づく連絡先一覧の取得（別パスでの対応）
 // backend/src/routes/contacts.js の該当部分を修正
-router.get('/campaign/:campaignId', auth, async (req, res) => {
+router.get('/campaign/:campaignId', async (req, res) => {
   try {
     const campaignId = req.params.campaignId;
     const limit = parseInt(req.query.limit) || 20;

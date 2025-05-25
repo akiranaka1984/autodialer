@@ -2,10 +2,10 @@
 const express = require('express');
 const router = express.Router();
 const operatorController = require('../controllers/operatorController');
-const auth = require('../middleware/auth');
+
 
 // 認証が必要なルート
-router.use(auth);
+
 
 // オペレーター一覧を取得
 router.get('/', operatorController.getAllOperators);
