@@ -14,7 +14,7 @@ const initDb = async (retries = 5, delay = 5000) => {
       
       // 環境変数から設定を読み込み（rootではなくautodialerユーザーを使用）
       const dbConfig = {
-        host: '127.0.0.1',
+        host: process.env.MYSQL_HOST || process.env.DB_HOST || 'localhost',
         user: process.env.MYSQL_USER || process.env.DB_USER || 'autodialer',
         password: process.env.MYSQL_PASSWORD || process.env.DB_PASSWORD || 'TestPassword123!',
         database: process.env.MYSQL_DATABASE || process.env.DB_NAME || 'autodialer',
@@ -46,7 +46,7 @@ const initDb = async (retries = 5, delay = 5000) => {
       await pool.query("SET character_set_connection=utf8mb4");
       
       // 接続テスト
-      const [rows] = await pool.query('SELECT 1 as test, USER() as current_user_name_name, DATABASE() as current_db');
+      const [rows] = await pool.query('SELECT 1 as test, USER() as current_user, DATABASE() as current_db');
       console.log('データベース接続テスト成功:', rows[0]);
       
       logger.info('データベース接続プールを作成しました');
