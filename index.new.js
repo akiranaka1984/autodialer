@@ -147,6 +147,312 @@ app.get('/health', (req, res) => {
 });
 
 // === フォールバック用の基本API ===
+
+// ✅ 新規追加: キャンペーン詳細API（フォールバック）
+app.get('/api/campaigns/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    
+    console.log(`フォールバック キャンペーン詳細API呼び出し: ID=${id}`);
+    
+    const [campaigns] = await db.query(`
+      SELECT c.*, 
+             ci.number as caller_id_number,
+             ci.description as caller_id_description,
+             ci.provider as caller_id_provider,
+             (SELECT COUNT(*) FROM contacts WHERE campaign_id = c.id) as contact_count,
+             (SELECT COUNT(*) FROM contacts WHERE campaign_id = c.id AND status = 'pending') as pending_count,
+             (SELECT COUNT(*) FROM contacts WHERE campaign_id = c.id AND status = 'completed') as completed_count,
+             (SELECT COUNT(*) FROM contacts WHERE campaign_id = c.id AND status = 'failed') as failed_count,
+             (SELECT COUNT(*) FROM contacts WHERE campaign_id = c.id AND status = 'dnc') as dnc_count
+      FROM campaigns c
+      LEFT JOIN caller_ids ci ON c.caller_id_id = ci.id
+      WHERE c.id = ?
+    `, [id]);
+    
+    if (campaigns.length === 0) {
+      console.log(`フォールバック キャンペーンが見つかりません: ID=${id}`);
+      return res.status(404).json({ message: 'キャンペーンが見つかりません' });
+    }
+    
+    console.log('フォールバック キャンペーン詳細取得成功:', campaigns[0].name);
+    res.json(campaigns[0]);
+  } catch (error) {
+    console.error(`フォールバック キャンペーン詳細エラー: ID=${req.params.id}`, error);
+    res.status(500).json({ message: 'データの取得に失敗しました' });
+  }
+});
+
+// ✅ 新規追加: キャンペーン連絡先一覧API（フォールバック）
+app.get('/api/campaigns/:id/contacts', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { limit = 100, offset = 0, status, search } = req.query;
+    
+    console.log(`フォールバック キャンペーン連絡先API呼び出し: Campaign=${id}`);
+    
+    // キャンペーンの存在確認
+    const [campaigns] = await db.query('SELECT id, name FROM campaigns WHERE id = ?', [id]);
+    
+    if (campaigns.length === 0) {
+      return res.status(404).json({ message: 'キャンペーンが見つかりません' });
+    }
+    
+    let query = `
+      SELECT c.*
+      FROM contacts c
+      WHERE c.campaign_id = ?
+    `;
+    
+    let countQuery = `
+      SELECT COUNT(*) as total
+      FROM contacts c
+      WHERE c.campaign_id = ?
+    `;
+    
+    const params = [id];
+    const countParams = [id];
+    
+    // ステータスでフィルタ
+    if (status) {
+      query += ' AND c.status = ?';
+      countQuery += ' AND c.status = ?';
+      params.push(status);
+      countParams.push(status);
+    }
+    
+    // 検索フィルタ
+    if (search) {
+      query += ' AND (c.phone LIKE ? OR c.name LIKE ? OR c.company LIKE ?)';
+      countQuery += ' AND (c.phone LIKE ? OR c.name LIKE ? OR c.company LIKE ?)';
+      const searchParam = `%${search}%`;
+      params.push(searchParam, searchParam, searchParam);
+      countParams.push(searchParam, searchParam, searchParam);
+    }
+    
+    const queryOffset = parseInt(offset);
+    const queryLimit = parseInt(limit);
+    query += ` ORDER BY c.created_at DESC LIMIT ${queryLimit} OFFSET ${queryOffset}`;
+    
+    // クエリ実行
+    const [contacts] = await db.query(query, params);
+    const [totalResults] = await db.query(countQuery, countParams);
+    
+    const total = totalResults[0].total;
+    
+    console.log(`フォールバック キャンペーン ${id} の連絡先: ${contacts.length}件 (全体: ${total}件)`);
+    
+    res.json({
+      contacts: contacts || [],
+      total,
+      page: Math.floor(queryOffset / queryLimit) + 1,
+      limit: queryLimit,
+      totalPages: Math.ceil(total / queryLimit),
+      campaign: campaigns[0]
+    });
+  } catch (error) {
+    console.error(`フォールバック キャンペーン連絡先エラー: Campaign=${req.params.id}`, error);
+    res.status(500).json({ 
+      contacts: [],
+      total: 0,
+      message: 'データの取得に失敗しました' 
+    });
+  }
+});
+
+// ✅ 新規追加: キャンペーン統計API（フォールバック）
+app.get('/api/campaigns/:id/stats', async (req, res) => {
+  try {
+    const { id } = req.params;
+    
+    console.log(`フォールバック キャンペーン統計API呼び出し: Campaign=${id}`);
+    
+    // キャンペーンの存在確認
+    const [campaigns] = await db.query('SELECT * FROM campaigns WHERE id = ?', [id]);
+    
+    if (campaigns.length === 0) {
+      return res.status(404).json({ message: 'キャンペーンが見つかりません' });
+    }
+    
+    // 連絡先統計
+    const [contactStats] = await db.query(`
+      SELECT 
+        COUNT(*) as total,
+        SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END) as pending,
+        SUM(CASE WHEN status = 'called' THEN 1 ELSE 0 END) as called,
+        SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END) as completed,
+        SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) as failed,
+        SUM(CASE WHEN status = 'dnc' THEN 1 ELSE 0 END) as dnc
+      FROM contacts 
+      WHERE campaign_id = ?
+    `, [id]);
+    
+    // 通話統計
+    const [callStats] = await db.query(`
+      SELECT 
+        COUNT(*) as total_calls,
+        SUM(CASE WHEN status = 'ANSWERED' THEN 1 ELSE 0 END) as answered_calls,
+        SUM(CASE WHEN status = 'NO ANSWER' THEN 1 ELSE 0 END) as no_answer_calls,
+        SUM(CASE WHEN status = 'BUSY' THEN 1 ELSE 0 END) as busy_calls,
+        SUM(CASE WHEN status = 'FAILED' THEN 1 ELSE 0 END) as failed_calls,
+        AVG(duration) as avg_duration
+      FROM call_logs 
+      WHERE campaign_id = ?
+    `, [id]);
+    
+    const contactStat = contactStats[0];
+    const callStat = callStats[0];
+    
+    // 進捗率を計算
+    const progress = contactStat.total > 0 
+      ? Math.round(((contactStat.completed + contactStat.failed + contactStat.dnc) / contactStat.total) * 100) 
+      : 0;
+    
+    // 成功率を計算
+    const successRate = callStat.total_calls > 0 
+      ? Math.round((callStat.answered_calls / callStat.total_calls) * 100) 
+      : 0;
+    
+    console.log(`フォールバック キャンペーン統計取得: Campaign=${id}, Progress=${progress}%`);
+    
+    res.json({
+      campaignId: parseInt(id),
+      campaignName: campaigns[0].name,
+      campaignStatus: campaigns[0].status,
+      progress,
+      successRate,
+      contacts: {
+        total: contactStat.total,
+        pending: contactStat.pending,
+        called: contactStat.called,
+        completed: contactStat.completed,
+        failed: contactStat.failed,
+        dnc: contactStat.dnc
+      },
+      calls: {
+        total: callStat.total_calls || 0,
+        answered: callStat.answered_calls || 0,
+        noAnswer: callStat.no_answer_calls || 0,
+        busy: callStat.busy_calls || 0,
+        failed: callStat.failed_calls || 0,
+        avgDuration: callStat.avg_duration ? Math.round(callStat.avg_duration) : 0
+      }
+    });
+  } catch (error) {
+    console.error(`フォールバック キャンペーン統計エラー: Campaign=${req.params.id}`, error);
+    res.status(500).json({ message: 'データの取得に失敗しました' });
+  }
+});
+
+// ✅ 新規追加: キャンペーン管理API（フォールバック）
+app.get('/api/campaigns', async (req, res) => {
+  try {
+    console.log('フォールバック キャンペーン一覧API呼び出し');
+    
+    const [campaigns] = await db.query(`
+      SELECT c.id, c.name, c.description, c.status, c.created_at, c.updated_at, c.progress,
+             ci.number as caller_id_number,
+             (SELECT COUNT(*) FROM contacts WHERE campaign_id = c.id) as contact_count
+      FROM campaigns c
+      LEFT JOIN caller_ids ci ON c.caller_id_id = ci.id
+      ORDER BY c.created_at DESC
+    `);
+    
+    console.log('フォールバック キャンペーン取得結果:', campaigns ? campaigns.length : 0, '件');
+    
+    // 修正: 必ず配列を返す
+    const response = {
+      campaigns: campaigns || [],
+      total: campaigns ? campaigns.length : 0,
+      page: 1,
+      limit: 50,
+      totalPages: 1
+    };
+    
+    res.json(response);
+  } catch (error) {
+    console.error('フォールバック キャンペーン一覧エラー:', error);
+    res.status(500).json({ 
+      campaigns: [], 
+      total: 0, 
+      page: 1, 
+      limit: 50, 
+      totalPages: 0,
+      error: 'キャンペーンの取得に失敗しました' 
+    });
+  }
+});
+
+app.post('/api/campaigns/:id/start', async (req, res) => {
+  try {
+    const { id } = req.params;
+    
+    console.log(`フォールバック キャンペーン開始: ID=${id}`);
+    
+    const [result] = await db.query(
+      'UPDATE campaigns SET status = "active", updated_at = NOW() WHERE id = ? AND status != "active"',
+      [id]
+    );
+    
+    if (result.affectedRows === 0) {
+      return res.status(400).json({ message: 'キャンペーンが見つからないか既にアクティブです' });
+    }
+    
+    // 自動発信サービスを開始
+    try {
+      const autoDialer = require('./services/autoDialer');
+      await autoDialer.startCampaign(id);
+      console.log(`フォールバック 自動発信サービス開始: Campaign=${id}`);
+    } catch (dialerError) {
+      console.warn('フォールバック 自動発信サービス開始エラー:', dialerError.message);
+    }
+    
+    res.json({
+      success: true,
+      message: 'キャンペーンを開始しました',
+      campaignId: parseInt(id)
+    });
+  } catch (error) {
+    console.error(`フォールバック キャンペーン開始エラー: ID=${req.params.id}`, error);
+    res.status(500).json({ message: 'キャンペーンの開始に失敗しました' });
+  }
+});
+
+app.post('/api/campaigns/:id/stop', async (req, res) => {
+  try {
+    const { id } = req.params;
+    
+    console.log(`フォールバック キャンペーン停止: ID=${id}`);
+    
+    const [result] = await db.query(
+      'UPDATE campaigns SET status = "paused", updated_at = NOW() WHERE id = ? AND status = "active"',
+      [id]
+    );
+    
+    if (result.affectedRows === 0) {
+      return res.status(400).json({ message: 'キャンペーンが見つからないかアクティブではありません' });
+    }
+    
+    // 自動発信サービスを停止
+    try {
+      const autoDialer = require('./services/autoDialer');
+      autoDialer.stopCampaign(id);
+      console.log(`フォールバック 自動発信サービス停止: Campaign=${id}`);
+    } catch (dialerError) {
+      console.warn('フォールバック 自動発信サービス停止エラー:', dialerError.message);
+    }
+    
+    res.json({
+      success: true,
+      message: 'キャンペーンを停止しました',
+      campaignId: parseInt(id)
+    });
+  } catch (error) {
+    console.error(`フォールバック キャンペーン停止エラー: ID=${req.params.id}`, error);
+    res.status(500).json({ message: 'キャンペーンの停止に失敗しました' });
+  }
+});
+
 // 発信者番号管理API
 app.get('/api/caller-ids', async (req, res) => {
   try {
