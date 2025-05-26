@@ -1,346 +1,442 @@
-// backend/src/routes/contacts.js
+// backend/src/routes/contacts.js - 新規作成
 const express = require('express');
-// mergeParams: true を追加して親ルーターのパラメータを継承
-const router = express.Router({ mergeParams: true });
-
+const router = express.Router();
 const db = require('../services/database');
-
-// multerのインポートと設定
-const multer = require('multer');
-const fs = require('fs');
-const path = require('path');
-
-// アップロードディレクトリの確保
-const uploadDir = path.join(__dirname, '../../uploads');
-if (!fs.existsSync(uploadDir)) {
-  fs.mkdirSync(uploadDir, { recursive: true });
-}
-
-// ストレージ設定
-const storage = multer.diskStorage({
-  destination: function(req, file, cb) {
-    cb(null, uploadDir);
-  },
-  filename: function(req, file, cb) {
-    cb(null, Date.now() + '-' + file.originalname.replace(/\s+/g, '_'));
-  }
-});
-
-const upload = multer({ storage: storage });
-
-// すべてのルートで認証ミドルウェアを適用
-
+const logger = require('../services/logger');
 
 // 連絡先一覧を取得
 router.get('/', async (req, res) => {
   try {
-    const { campaignId } = req.params;
-    console.log(`連絡先一覧取得: キャンペーンID=${campaignId}`);
+    const { campaign_id, limit = 100, offset = 0, status, search } = req.query;
     
-    // データベースから連絡先を取得
-    const [contacts] = await db.query(
-      'SELECT * FROM contacts WHERE campaign_id = ? LIMIT 10',
-      [campaignId]
-    );
+    let query = `
+      SELECT c.*, 
+             ca.name as campaign_name
+      FROM contacts c
+      LEFT JOIN campaigns ca ON c.campaign_id = ca.id
+      WHERE 1=1
+    `;
     
-    res.json(contacts);
+    let countQuery = `
+      SELECT COUNT(*) as total
+      FROM contacts c
+      WHERE 1=1
+    `;
+    
+    const params = [];
+    const countParams = [];
+    
+    // キャンペーンIDでフィルタ
+    if (campaign_id) {
+      query += ' AND c.campaign_id = ?';
+      countQuery += ' AND c.campaign_id = ?';
+      params.push(campaign_id);
+      countParams.push(campaign_id);
+    }
+    
+    // ステータスでフィルタ
+    if (status) {
+      query += ' AND c.status = ?';
+      countQuery += ' AND c.status = ?';
+      params.push(status);
+      countParams.push(status);
+    }
+    
+    // 検索フィルタ
+    if (search) {
+      query += ' AND (c.phone LIKE ? OR c.name LIKE ? OR c.company LIKE ?)';
+      countQuery += ' AND (c.phone LIKE ? OR c.name LIKE ? OR c.company LIKE ?)';
+      const searchParam = `%${search}%`;
+      params.push(searchParam, searchParam, searchParam);
+      countParams.push(searchParam, searchParam, searchParam);
+    }
+    
+    const queryOffset = parseInt(offset);
+    const queryLimit = parseInt(limit);
+    query += ` ORDER BY c.created_at DESC LIMIT ${queryLimit} OFFSET ${queryOffset}`;
+    
+    // クエリ実行
+    const [contacts] = await db.query(query, params);
+    const [totalResults] = await db.query(countQuery, countParams);
+    
+    const total = totalResults[0].total;
+    
+    logger.info(`連絡先一覧取得: ${contacts.length}件 (全体: ${total}件)`);
+    
+    res.json({
+      contacts,
+      total,
+      page: Math.floor(queryOffset / queryLimit) + 1,
+      limit: queryLimit,
+      totalPages: Math.ceil(total / queryLimit)
+    });
   } catch (error) {
-    console.error('連絡先取得エラー:', error);
-    res.status(500).json({ message: error.message });
+    logger.error('連絡先一覧取得エラー:', error);
+    res.status(500).json({ message: 'データの取得に失敗しました' });
   }
 });
 
-// 連絡先をCSVアップロードするエンドポイント
-router.post('/upload', upload.single('file'), async (req, res) => {
+// 特定のキャンペーンの連絡先一覧を取得
+router.get('/campaign/:campaignId', async (req, res) => {
   try {
     const { campaignId } = req.params;
+    const { limit = 100, offset = 0, status, search } = req.query;
     
-    console.log(`連絡先アップロードリクエスト: キャンペーンID=${campaignId}`, {
-      file: req.file ? {
-        filename: req.file.filename,
-        originalname: req.file.originalname,
-        size: req.file.size
-      } : 'なし',
-      body: req.body
-    });
+    logger.info(`キャンペーン ${campaignId} の連絡先一覧を取得中`);
     
-    if (!req.file) {
-      return res.status(400).json({ message: 'ファイルがアップロードされていません' });
+    let query = `
+      SELECT c.*, 
+             ca.name as campaign_name
+      FROM contacts c
+      LEFT JOIN campaigns ca ON c.campaign_id = ca.id
+      WHERE c.campaign_id = ?
+    `;
+    
+    let countQuery = `
+      SELECT COUNT(*) as total
+      FROM contacts c
+      WHERE c.campaign_id = ?
+    `;
+    
+    const params = [campaignId];
+    const countParams = [campaignId];
+    
+    // ステータスでフィルタ
+    if (status) {
+      query += ' AND c.status = ?';
+      countQuery += ' AND c.status = ?';
+      params.push(status);
+      countParams.push(status);
     }
     
-    // リクエストボディからオプションを解析
-    const skipFirstRow = req.body.skipFirstRow === 'true';
-    const updateExisting = req.body.updateExisting === 'true';
-    const skipDnc = req.body.skipDnc === 'true';
-    
-    let mappings;
-    try {
-      mappings = JSON.parse(req.body.mappings || '{}');
-      console.log('マッピング情報:', mappings);
-    } catch (error) {
-      return res.status(400).json({ message: 'マッピング情報が無効です: ' + error.message });
+    // 検索フィルタ
+    if (search) {
+      query += ' AND (c.phone LIKE ? OR c.name LIKE ? OR c.company LIKE ?)';
+      countQuery += ' AND (c.phone LIKE ? OR c.name LIKE ? OR c.company LIKE ?)';
+      const searchParam = `%${search}%`;
+      params.push(searchParam, searchParam, searchParam);
+      countParams.push(searchParam, searchParam, searchParam);
     }
     
-    // CSVファイルを処理（簡易処理）
-    const fs = require('fs');
-    const fileContent = fs.readFileSync(req.file.path, 'utf8');
-    const rows = fileContent.split('\n');
+    const queryOffset = parseInt(offset);
+    const queryLimit = parseInt(limit);
+    query += ` ORDER BY c.created_at DESC LIMIT ${queryLimit} OFFSET ${queryOffset}`;
     
-    const contacts = [];
-    let headerRow = null;
-    let processedRows = 0;
-    let importedCount = 0;
+    // クエリ実行
+    const [contacts] = await db.query(query, params);
+    const [totalResults] = await db.query(countQuery, countParams);
     
-    // CSV処理ロジック
-    for (let i = 0; i < rows.length; i++) {
-      if (i === 0 && skipFirstRow) {
-        headerRow = rows[i];
-        continue;
-      }
-      
-      const row = rows[i].trim();
-      if (!row) continue;
-      
-      processedRows++;
-      
-      // カンマで分割（簡易的なCSVパース）
-      const cols = row.split(',');
-      
-      // マッピングに基づいてデータを取得
-      const phoneCol = mappings.phone || 0;
-      const nameCol = mappings.name >= 0 ? mappings.name : -1;
-      const companyCol = mappings.company >= 0 ? mappings.company : -1;
-      
-      const phone = cols[phoneCol] ? cols[phoneCol].trim() : '';
-      
-      if (!phone) {
-        console.warn(`行 ${i+1}: 電話番号が空のためスキップします`);
-        continue;
-    console.log(`${contacts.length}件の連絡先をインポート処理します`);
-
-    // データベースに登録（トランザクションなし）
-    let insertCount = 0;
-    for (const contact of contacts) {
-      try {
-        await db.query(
-          "INSERT IGNORE INTO contacts (phone, name, company, campaign_id, status, created_at) VALUES (?, ?, ?, ?, ?, NOW())",
-          [contact.phone, contact.name, contact.company, contact.campaign_id, contact.status]
-        );
-        insertCount++;
-      } catch (insertError) {
-        console.warn(`連絡先登録スキップ: ${contact.phone} - ${insertError.message}`);
-      }
-    }
-
-    console.log(`${insertCount}件の連絡先を登録しました`);
-
-      // 各連絡先をデータベースに追加
-      for (const contact of contacts) {
-        await connection.query(
-          'INSERT INTO contacts (phone, name, company, campaign_id, status, created_at) VALUES (?, ?, ?, ?, ?, NOW())',
-    // 一時ファイルを削除
-    fs.unlinkSync(req.file.path);
-
-    // 結果を返す
+    const total = totalResults[0].total;
+    
+    logger.info(`キャンペーン ${campaignId} の連絡先: ${contacts.length}件 (全体: ${total}件)`);
+    
     res.json({
-      message: `${insertCount}件の連絡先をインポートしました`,
-      total_count: processedRows,
-      imported_count: insertCount,
-      updated_count: 0,
-      skipped_count: processedRows - insertCount,
-      error_count: 0,
-      errors: []
+      contacts,
+      total,
+      page: Math.floor(queryOffset / queryLimit) + 1,
+      limit: queryLimit,
+      totalPages: Math.ceil(total / queryLimit),
+      campaignId: parseInt(campaignId)
     });
-
-        updated_count: 0,
-        skipped_count: processedRows - importedCount,
-        error_count: 0,
-        errors: []
-      });
-    } catch (dbError) {
-      // エラー時はロールバック
-      await db.rollback(connection);
-      console.error('データベース登録エラー:', dbError);
-      throw dbError;
-    }
   } catch (error) {
-    console.error('連絡先アップロードエラー:', error);
-    
-    // 一時ファイルのクリーンアップ
-    if (req.file && req.file.path) {
-      try {
-        fs.unlinkSync(req.file.path);
-      } catch (unlinkError) {
-        console.warn('一時ファイル削除エラー:', unlinkError);
-      }
-    }
-    
-    res.status(500).json({ message: 'アップロードエラー: ' + error.message });
+    logger.error(`キャンペーン ${req.params.campaignId} の連絡先取得エラー:`, error);
+    res.status(500).json({ message: 'データの取得に失敗しました' });
   }
 });
 
-// 連絡先詳細の取得
+// 連絡先の詳細を取得
 router.get('/:id', async (req, res) => {
   try {
-    const [contacts] = await db.query(
-      'SELECT * FROM contacts WHERE id = ?',
-      [req.params.id]
-    );
+    const { id } = req.params;
+    
+    const [contacts] = await db.query(`
+      SELECT c.*, 
+             ca.name as campaign_name,
+             ca.description as campaign_description
+      FROM contacts c
+      LEFT JOIN campaigns ca ON c.campaign_id = ca.id
+      WHERE c.id = ?
+    `, [id]);
     
     if (contacts.length === 0) {
       return res.status(404).json({ message: '連絡先が見つかりません' });
     }
     
+    logger.info(`連絡先詳細取得: ID=${id}`);
     res.json(contacts[0]);
   } catch (error) {
-    console.error('連絡先詳細取得エラー:', error);
-    res.status(500).json({ message: error.message });
+    logger.error(`連絡先詳細取得エラー: ID=${req.params.id}`, error);
+    res.status(500).json({ message: 'データの取得に失敗しました' });
   }
 });
 
-// 連絡先の更新
-router.put('/:id', async (req, res) => {
+// 連絡先を作成
+router.post('/', async (req, res) => {
   try {
-    const { name, phone, company, email, status } = req.body;
+    const { campaign_id, phone, name, company, notes } = req.body;
     
-    if (!phone) {
-      return res.status(400).json({ message: '電話番号は必須です' });
+    if (!campaign_id || !phone) {
+      return res.status(400).json({ message: 'キャンペーンIDと電話番号は必須です' });
     }
     
-    await db.query(
-      'UPDATE contacts SET name = ?, phone = ?, company = ?, email = ?, status = ? WHERE id = ?',
-      [name, phone, company, email, status, req.params.id]
+    // 電話番号の重複チェック（同一キャンペーン内）
+    const [existing] = await db.query(
+      'SELECT id FROM contacts WHERE campaign_id = ? AND phone = ?',
+      [campaign_id, phone]
     );
     
-    res.json({ message: '連絡先を更新しました', id: req.params.id });
+    if (existing.length > 0) {
+      return res.status(400).json({ message: 'この電話番号は既に登録されています' });
+    }
+    
+    // 連絡先を作成
+    const [result] = await db.query(`
+      INSERT INTO contacts (campaign_id, phone, name, company, notes, status, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, 'pending', NOW(), NOW())
+    `, [campaign_id, phone, name, company, notes]);
+    
+    logger.info(`連絡先作成: ID=${result.insertId}, Phone=${phone}`);
+    
+    res.status(201).json({
+      id: result.insertId,
+      campaign_id,
+      phone,
+      name,
+      company,
+      notes,
+      status: 'pending',
+      message: '連絡先を作成しました'
+    });
   } catch (error) {
-    console.error('連絡先更新エラー:', error);
-    res.status(500).json({ message: error.message });
+    logger.error('連絡先作成エラー:', error);
+    res.status(500).json({ message: '連絡先の作成に失敗しました' });
   }
 });
 
-// 連絡先の削除
-router.delete('/:id', async (req, res) => {
+// 連絡先を更新
+router.put('/:id', async (req, res) => {
   try {
-    const [result] = await db.query(
-      'DELETE FROM contacts WHERE id = ?',
-      [req.params.id]
-    );
+    const { id } = req.params;
+    const { phone, name, company, notes, status } = req.body;
     
-    if (result.affectedRows === 0) {
+    // 連絡先の存在確認
+    const [existing] = await db.query('SELECT id FROM contacts WHERE id = ?', [id]);
+    
+    if (existing.length === 0) {
       return res.status(404).json({ message: '連絡先が見つかりません' });
     }
     
-    res.json({ message: '連絡先を削除しました' });
+    // 更新
+    const [result] = await db.query(`
+      UPDATE contacts 
+      SET phone = ?, name = ?, company = ?, notes = ?, status = ?, updated_at = NOW()
+      WHERE id = ?
+    `, [phone, name, company, notes, status, id]);
+    
+    logger.info(`連絡先更新: ID=${id}`);
+    
+    res.json({
+      id: parseInt(id),
+      phone,
+      name,
+      company,
+      notes,
+      status,
+      message: '連絡先を更新しました'
+    });
   } catch (error) {
-    console.error('連絡先削除エラー:', error);
-    res.status(500).json({ message: error.message });
+    logger.error(`連絡先更新エラー: ID=${req.params.id}`, error);
+    res.status(500).json({ message: '連絡先の更新に失敗しました' });
   }
 });
 
-// DNCリスト（発信拒否リスト）に登録
-router.post('/dnc', async (req, res) => {
+// 連絡先を削除
+router.delete('/:id', async (req, res) => {
   try {
-    const { phone, reason } = req.body;
+    const { id } = req.params;
     
-    if (!phone) {
-      return res.status(400).json({ message: '電話番号は必須です' });
+    // 連絡先の存在確認
+    const [existing] = await db.query('SELECT id FROM contacts WHERE id = ?', [id]);
+    
+    if (existing.length === 0) {
+      return res.status(404).json({ message: '連絡先が見つかりません' });
     }
     
-    // DNリストに追加
-    await db.query(
-      'INSERT INTO dnc_list (phone, reason, created_at) VALUES (?, ?, NOW())',
-      [phone, reason || 'ユーザー指定']
-    );
+    // 削除
+    await db.query('DELETE FROM contacts WHERE id = ?', [id]);
     
-    // 該当する連絡先のステータスを更新
-    await db.query(
-      'UPDATE contacts SET status = ? WHERE phone = ?',
-      ['dnc', phone]
-    );
+    logger.info(`連絡先削除: ID=${id}`);
     
-    res.json({ message: '発信拒否リストに追加しました' });
+    res.json({ message: '連絡先を削除しました' });
   } catch (error) {
-    console.error('DNC登録エラー:', error);
-    res.status(500).json({ message: error.message });
+    logger.error(`連絡先削除エラー: ID=${req.params.id}`, error);
+    res.status(500).json({ message: '連絡先の削除に失敗しました' });
   }
 });
 
-// backend/src/routes/contacts.js に以下のルートを追加する
-// 既存のコードはそのまま残し、これを追加します
-
-// キャンペーンIDに基づく連絡先一覧の取得（別パスでの対応）
-// backend/src/routes/contacts.js の該当部分を修正
-router.get('/campaign/:campaignId', async (req, res) => {
+// CSVファイルから連絡先を一括インポート
+router.post('/import', async (req, res) => {
   try {
-    const campaignId = req.params.campaignId;
-    const limit = parseInt(req.query.limit) || 20;
-    const offset = parseInt(req.query.offset) || 0;
+    const { campaign_id, contacts } = req.body;
     
-    console.log(`連絡先データを検索: campaign_id=${campaignId}, limit=${limit}, offset=${offset}`);
+    if (!campaign_id || !Array.isArray(contacts) || contacts.length === 0) {
+      return res.status(400).json({ message: 'キャンペーンIDと連絡先データは必須です' });
+    }
     
-    // ===== 修正部分：LIMIT と OFFSET を直接クエリ文字列に埋め込む =====
-    const [contacts] = await db.query(`
-      SELECT * FROM contacts 
-      WHERE campaign_id = ? 
-      ORDER BY id DESC 
-      LIMIT ${limit} OFFSET ${offset}
-    `, [campaignId]);
+    // キャンペーンの存在確認
+    const [campaigns] = await db.query('SELECT id FROM campaigns WHERE id = ?', [campaign_id]);
     
-    // 総件数を取得
-    const [countResult] = await db.query(
-      'SELECT COUNT(*) as total FROM contacts WHERE campaign_id = ?',
-      [campaignId]
-    );
+    if (campaigns.length === 0) {
+      return res.status(400).json({ message: 'キャンペーンが見つかりません' });
+    }
     
-    // countResultは配列形式なので最初の要素のtotalプロパティを取得
-    const total = countResult[0]?.total || 0;
+    let successCount = 0;
+    let errorCount = 0;
+    const errors = [];
     
-    res.json({
-      contacts: contacts, // 配列を返す
-      total: total,
-      page: Math.floor(offset / limit) + 1,
-      totalPages: Math.ceil(total / limit) || 1
-    });
+    // トランザクション開始
+    await db.query('START TRANSACTION');
+    
+    try {
+      for (const [index, contact] of contacts.entries()) {
+        try {
+          const { phone, name, company, notes } = contact;
+          
+          if (!phone) {
+            errors.push(`行${index + 1}: 電話番号が必要です`);
+            errorCount++;
+            continue;
+          }
+          
+          // 重複チェック
+          const [existing] = await db.query(
+            'SELECT id FROM contacts WHERE campaign_id = ? AND phone = ?',
+            [campaign_id, phone]
+          );
+          
+          if (existing.length > 0) {
+            errors.push(`行${index + 1}: 電話番号 ${phone} は既に登録されています`);
+            errorCount++;
+            continue;
+          }
+          
+          // 連絡先を挿入
+          await db.query(`
+            INSERT INTO contacts (campaign_id, phone, name, company, notes, status, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, 'pending', NOW(), NOW())
+          `, [campaign_id, phone, name, company, notes]);
+          
+          successCount++;
+        } catch (contactError) {
+          errors.push(`行${index + 1}: ${contactError.message}`);
+          errorCount++;
+        }
+      }
+      
+      // トランザクションコミット
+      await db.query('COMMIT');
+      
+      logger.info(`連絡先一括インポート完了: 成功=${successCount}, 失敗=${errorCount}`);
+      
+      res.json({
+        message: '連絡先の一括インポートが完了しました',
+        successCount,
+        errorCount,
+        errors: errors.length > 0 ? errors : null
+      });
+      
+    } catch (transactionError) {
+      // トランザクションロールバック
+      await db.query('ROLLBACK');
+      throw transactionError;
+    }
+    
   } catch (error) {
-    console.error('連絡先取得エラー詳細:', error);
-    
-    // エラー情報を詳細に返す
-    res.status(500).json({ 
-      message: 'データの取得に失敗しました', 
-      error: error.message,
-      stack: error.stack
-    });
+    logger.error('連絡先一括インポートエラー:', error);
+    res.status(500).json({ message: '連絡先の一括インポートに失敗しました' });
   }
 });
 
-// フロントエンド互換用の追加ルート
-router.get('/campaign/:campaignId/contactsList', async (req, res) => {
+// 連絡先のステータス統計を取得
+router.get('/stats/status', async (req, res) => {
   try {
-    const campaignId = req.params.campaignId;
-    const limit = parseInt(req.query.limit) || 10;
+    const { campaign_id } = req.query;
     
-    console.log(`連絡先リスト取得: campaign=${campaignId}`);
+    let query = `
+      SELECT status, COUNT(*) as count
+      FROM contacts
+    `;
     
-    const [contacts] = await db.query(`
-      SELECT * FROM contacts 
-      WHERE campaign_id = ? 
-      ORDER BY id DESC 
-      LIMIT ${limit}
-    `, [campaignId]);
+    const params = [];
     
-    const [countResult] = await db.query(
-      'SELECT COUNT(*) as total FROM contacts WHERE campaign_id = ?',
-      [campaignId]
-    );
+    if (campaign_id) {
+      query += ' WHERE campaign_id = ?';
+      params.push(campaign_id);
+    }
+    
+    query += ' GROUP BY status';
+    
+    const [stats] = await db.query(query, params);
+    
+    // ステータス別の統計をオブジェクト形式に変換
+    const statusStats = {
+      pending: 0,
+      called: 0,
+      completed: 0,
+      failed: 0,
+      dnc: 0
+    };
+    
+    stats.forEach(stat => {
+      statusStats[stat.status] = stat.count;
+    });
+    
+    logger.info(`連絡先ステータス統計取得: campaign_id=${campaign_id || 'all'}`);
     
     res.json({
-      contacts: contacts,
-      total: countResult[0]?.total || 0
+      stats: statusStats,
+      total: Object.values(statusStats).reduce((sum, count) => sum + count, 0),
+      campaignId: campaign_id ? parseInt(campaign_id) : null
     });
   } catch (error) {
-    console.error('連絡先リスト取得エラー:', error);
-    res.status(500).json({ message: error.message });
+    logger.error('連絡先ステータス統計取得エラー:', error);
+    res.status(500).json({ message: 'データの取得に失敗しました' });
+  }
+});
+
+// 連絡先のステータスを一括更新
+router.put('/bulk/status', async (req, res) => {
+  try {
+    const { ids, status } = req.body;
+    
+    if (!Array.isArray(ids) || ids.length === 0 || !status) {
+      return res.status(400).json({ message: '連絡先IDリストとステータスは必須です' });
+    }
+    
+    const validStatuses = ['pending', 'called', 'completed', 'failed', 'dnc'];
+    if (!validStatuses.includes(status)) {
+      return res.status(400).json({ message: '無効なステータスです' });
+    }
+    
+    // プレースホルダーを生成
+    const placeholders = ids.map(() => '?').join(',');
+    
+    const [result] = await db.query(`
+      UPDATE contacts 
+      SET status = ?, updated_at = NOW()
+      WHERE id IN (${placeholders})
+    `, [status, ...ids]);
+    
+    logger.info(`連絡先ステータス一括更新: ${result.affectedRows}件をステータス${status}に更新`);
+    
+    res.json({
+      message: `${result.affectedRows}件の連絡先ステータスを更新しました`,
+      updatedCount: result.affectedRows,
+      status
+    });
+  } catch (error) {
+    logger.error('連絡先ステータス一括更新エラー:', error);
+    res.status(500).json({ message: 'ステータスの更新に失敗しました' });
   }
 });
 
