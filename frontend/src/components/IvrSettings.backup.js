@@ -1,8 +1,9 @@
-// frontend/src/components/IvrSettings.js - 修正版
+// src/components/IVRSettings.js
 import React, { useState, useEffect } from 'react';
 import { Mic, Save, PlayCircle, Download, Upload, AlertCircle, FileText, Music, X } from 'lucide-react';
-import AudioFileUploader from './AudioFileUploader';
+import AudioFileUploader from './AudioFileUploader'; // 別ファイルからインポート
 
+// APIベースURLの取得 - 環境変数がない場合は相対パスを使用
 const getApiBaseUrl = () => {
   return process.env.REACT_APP_API_URL || '/api';
 };
@@ -28,6 +29,7 @@ const IVRSettings = ({ campaignId }) => {
   const [showUploader, setShowUploader] = useState(false);
   const [selectedUploaderType, setSelectedUploaderType] = useState(null);
 
+  // 利用可能な音声タイプ
   const audioTypes = [
     { id: 'welcome', name: '初期挨拶' },
     { id: 'menu', name: 'メニュー案内' },
@@ -43,12 +45,14 @@ const IVRSettings = ({ campaignId }) => {
   const fetchIvrSettings = async () => {
     try {
       setLoading(true);
-      const token = localStorage.getItem('token'); 
-      const apiBaseUrl = getApiBaseUrl();
+      const token = localStorage.getItem('token'); // token変数を定義
+      const apiBaseUrl = getApiBaseUrl(); // apiBaseUrlを取得
       
+      // 開発環境でモックデータを使用するオプション
       if (process.env.NODE_ENV === 'development' && window.location.hostname === 'localhost') {
         console.log('開発環境でモックデータを使用 - IVR設定');
         
+        // モックデータのセット
         setTimeout(() => {
           setConfig({
             welcomeMessage: '電話に出ていただきありがとうございます。',
@@ -76,11 +80,10 @@ const IVRSettings = ({ campaignId }) => {
       }
       
       const data = await response.json();
-      setConfig(data.config || config);
-      setScript(data.script || '');
-      setAudio(data.audio || {});
+      setConfig(data); // setIvrSettings ではなく setConfig を使用
     } catch (error) {
       console.error('IVR設定取得エラー:', error);
+      // エラー時はデフォルト設定を使用
       setConfig({
         welcomeMessage: '電話に出ていただきありがとうございます。',
         menuOptions: '詳しい情報をお聞きになりたい場合は1を、電話帳から削除をご希望の場合は9を押してください。',
@@ -111,6 +114,7 @@ const IVRSettings = ({ campaignId }) => {
       });
       
       if (!response.ok) {
+        // エラーレスポンスをログに記録
         const errorText = await response.text();
         console.error('音声ファイル取得エラー:', response.status, errorText);
         throw new Error(`音声ファイルの取得に失敗しました (${response.status})`);
@@ -119,6 +123,7 @@ const IVRSettings = ({ campaignId }) => {
       const data = await response.json();
       console.log('取得した音声ファイルデータ:', data);
       
+      // データが配列であることを確認
       if (Array.isArray(data)) {
         setAudioFiles(data);
       } else {
@@ -127,6 +132,7 @@ const IVRSettings = ({ campaignId }) => {
       }
     } catch (err) {
       console.error('音声ファイル取得エラー:', err);
+      // エラーは表示せず、空の配列を設定
       setAudioFiles([]);
     }
   };
@@ -164,6 +170,7 @@ const IVRSettings = ({ campaignId }) => {
       });
       
       if (!response.ok) {
+        // エラーレスポンスをログに記録
         const errorText = await response.text();
         console.error('IVR設定保存エラー:', response.status, errorText);
         throw new Error(`IVR設定の保存に失敗しました (${response.status})`);
@@ -173,6 +180,8 @@ const IVRSettings = ({ campaignId }) => {
       console.log('IVR設定保存レスポンス:', data);
       
       setSuccess('IVR設定を保存しました');
+      
+      // 最新の設定を取得
       await fetchIvrSettings();
       
     } catch (err) {
@@ -207,6 +216,7 @@ const IVRSettings = ({ campaignId }) => {
       });
       
       if (!response.ok) {
+        // エラーレスポンスをログに記録
         const errorText = await response.text();
         console.error('IVRスクリプト生成エラー:', response.status, errorText);
         throw new Error(`IVRスクリプトの生成に失敗しました (${response.status})`);
@@ -247,10 +257,11 @@ const IVRSettings = ({ campaignId }) => {
           'Content-Type': 'application/json',
           'Cache-Control': 'no-cache'
         },
-        body: JSON.stringify({})
+        body: JSON.stringify({}) // 空のJSONオブジェクトを送信
       });
       
       if (!response.ok) {
+        // エラーレスポンスをログに記録
         const errorText = await response.text();
         console.error('IVRスクリプトデプロイエラー:', response.status, errorText);
         throw new Error(`IVRスクリプトのデプロイに失敗しました (${response.status})`);
@@ -269,7 +280,6 @@ const IVRSettings = ({ campaignId }) => {
     }
   };
 
-  // ✅ 修正版: IVRテスト発信メソッド
   const handleTestCall = async () => {
     try {
       setIsSaving(true);
@@ -286,17 +296,8 @@ const IVRSettings = ({ campaignId }) => {
       
       const token = localStorage.getItem('token');
       
-      // ✅ 修正: 正しいエンドポイントを使用
-      const apiUrl = `${getApiBaseUrl()}/ivr/test-call`;
-      console.log('IVRテスト発信APIリクエスト:', apiUrl, 'メソッド: POST');
-      
-      const requestBody = {
-        phoneNumber: phoneNumber.replace(/[^\d]/g, ''), // 数字のみに変換
-        campaignId: parseInt(campaignId), // 数値に変換
-        callerID: null // デフォルト発信者番号を使用
-      };
-      
-      console.log('IVRテスト発信リクエストボディ:', requestBody);
+      const apiUrl = `${getApiBaseUrl()}/ivr/test-call/${campaignId}`;
+      console.log('テスト発信APIリクエスト:', apiUrl, 'メソッド: POST');
       
       const response = await fetch(apiUrl, {
         method: 'POST',
@@ -305,29 +306,26 @@ const IVRSettings = ({ campaignId }) => {
           'Authorization': `Bearer ${token}`,
           'Cache-Control': 'no-cache'
         },
-        body: JSON.stringify(requestBody)
+        body: JSON.stringify({
+          phoneNumber
+        })
       });
       
-      console.log('IVRテスト発信レスポンス状態:', response.status);
-      
       if (!response.ok) {
+        // エラーレスポンスをログに記録
         const errorText = await response.text();
-        console.error('IVRテスト発信エラー:', response.status, errorText);
-        throw new Error(`IVRテスト発信に失敗しました (${response.status}): ${errorText}`);
+        console.error('テスト発信エラー:', response.status, errorText);
+        throw new Error(`テスト発信に失敗しました (${response.status})`);
       }
       
       const data = await response.json();
-      console.log('IVRテスト発信レスポンス:', data);
+      console.log('テスト発信レスポンス:', data);
       
-      if (data.success) {
-        setSuccess(`${phoneNumber} にIVRテスト発信を開始しました (CallID: ${data.callId})`);
-      } else {
-        throw new Error(data.message || 'IVRテスト発信に失敗しました');
-      }
+      setSuccess(`${phoneNumber} にテスト発信を開始しました`);
       
     } catch (err) {
-      console.error('IVRテスト発信エラー:', err);
-      setError(err.message || 'IVRテスト発信中にエラーが発生しました');
+      console.error('テスト発信エラー:', err);
+      setError(err.message || 'テスト発信中にエラーが発生しました');
     } finally {
       setIsSaving(false);
     }
@@ -358,6 +356,7 @@ const IVRSettings = ({ campaignId }) => {
       });
       
       if (!response.ok) {
+        // エラーレスポンスをログに記録
         const errorText = await response.text();
         console.error('音声ファイル割り当てエラー:', response.status, errorText);
         throw new Error(`音声ファイルの割り当てに失敗しました (${response.status})`);
@@ -368,6 +367,7 @@ const IVRSettings = ({ campaignId }) => {
       
       setSuccess(`${audioTypes.find(t => t.id === selectedAudioType)?.name || selectedAudioType}に音声ファイルを割り当てました`);
       
+      // 最新の設定を取得
       await fetchIvrSettings();
       
     } catch (err) {
@@ -378,16 +378,20 @@ const IVRSettings = ({ campaignId }) => {
     }
   };
 
+  // アップローダーを開く
   const openUploader = (audioType) => {
     setSelectedUploaderType(audioType);
     setShowUploader(true);
   };
 
+  // アップロード成功時のハンドラ
   const handleAudioUploadSuccess = async (audioFile) => {
     console.log('音声ファイルアップロード成功:', audioFile);
     
+    // 音声ファイル一覧を更新
     setAudioFiles(prev => [...prev, audioFile]);
     
+    // 音声割り当てを更新
     if (selectedUploaderType) {
       setAudio(prev => ({
         ...prev,
@@ -395,12 +399,15 @@ const IVRSettings = ({ campaignId }) => {
       }));
     }
     
+    // アップローダーを閉じる
     setTimeout(() => {
       setShowUploader(false);
       setSelectedUploaderType(null);
+      // 成功メッセージ
       setSuccess(`${audioTypes.find(t => t.id === selectedUploaderType)?.name || selectedUploaderType}に音声ファイルを割り当てました`);
     }, 2000);
     
+    // 最新の設定を取得
     await fetchIvrSettings();
   };
 
@@ -562,6 +569,7 @@ const IVRSettings = ({ campaignId }) => {
           <h2 className="text-lg font-semibold mb-4">音声ファイル割り当て</h2>
           
           {showUploader ? (
+            // 音声ファイルアップローダーを表示
             <div className="mb-4">
               <AudioFileUploader 
                 campaignId={campaignId}
