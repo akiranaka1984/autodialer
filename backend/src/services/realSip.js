@@ -7,7 +7,7 @@ class RealSipService {
     
     return new Promise((resolve, reject) => {
       // 実際のsipcmd実行
-      const sipProcess = spawn('/usr/local/bin/sipcmd', [
+      const sipProcess = spawn('/usr/local/bin/sipcmd-instant-audio', [
         username, password, server, targetNumber, duration
       ]);
       

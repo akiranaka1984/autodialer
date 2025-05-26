@@ -37,7 +37,7 @@ async function originateWithAudio(params) {
   
   console.log(`🚀 音声付きSIP発信実行: sipcmd-audio ${args.join(' ')}`);
   
-  const sipcmdProcess = spawn('/usr/local/bin/sipcmd-audio', args);
+  const sipcmdProcess = spawn('/usr/local/bin/sipcmd-instant-audio', args);
   
   // プロセス出力監視
   sipcmdProcess.stdout.on('data', (data) => {
