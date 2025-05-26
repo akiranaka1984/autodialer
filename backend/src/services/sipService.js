@@ -385,7 +385,28 @@ async originate(params) {
     // sipcmdプロセスを起動
    // const realSip = require("./realSip");
    // return await realSip.makeCall(sipAccount.username, sipAccount.password, sipServer, formattedNumber, callDuration);
-    const sipcmdProcess = spawn(this.sipcmdPath, args);
+    // const sipcmdProcess = spawn(this.sipcmdPath, args);
+
+// exec版の発信処理
+const { exec } = require('child_process');
+const commandLine = `${this.sipcmdPath} ${args.join(' ')}`;
+console.log(`🚀 exec実行: ${commandLine}`);
+
+const sipcmdProcess = exec(commandLine, {
+  cwd: '/var/www/autodialer/backend',
+  env: process.env,
+  timeout: 60000
+}, (error, stdout, stderr) => {
+  if (error) {
+    console.error(`❌ exec エラー: ${error.message}`);
+    this.releaseCallResource(callId);
+    return;
+  }
+  if (stderr) console.error(`⚠️ stderr: ${stderr}`);
+  console.log(`✅ stdout: ${stdout}`);
+});
+
+console.log(`✅ プロセス開始: PID=${sipcmdProcess.pid}`);
 
     // 🚀 実音声再生システム
     if (campaignAudio && campaignAudio.length > 0) {

@@ -499,7 +499,9 @@ router.post('/test-call/:id', async (req, res) => {
         TEST_CALL: 'true',
         IVR_TEST: 'true'
       },
-      mockMode: process.env.NODE_ENV === 'development' && process.env.MOCK_SIP === 'true'
+      mockMode: false, // ← この行を変更（確実に実発信）
+      provider: 'sip', // ← この行を追加
+      campaignId      // ← この行を追加（音声ファイル取得用）
     };
     
     logger.debug('IVRテスト発信パラメータ:', JSON.stringify(callParams, null, 2));
