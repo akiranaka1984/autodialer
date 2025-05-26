@@ -1,0 +1,21 @@
+// IVRテスト発信の修正
+const express = require('express');
+const router = express.Router();
+const callController = require('../controllers/callController');
+
+router.post('/test-call/:id', async (req, res) => {
+  const campaignId = req.params.id;
+  const { phoneNumber } = req.body;
+  
+  req.body = {
+    phoneNumber,
+    callerID: undefined,
+    mockMode: false,
+    provider: 'sip',
+    campaignId
+  };
+  
+  return await callController.testCall(req, res);
+});
+
+module.exports = router;
