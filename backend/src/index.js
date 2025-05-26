@@ -1,4 +1,4 @@
-// backend/src/index.js - 修正版
+// backend/src/index.js - ルーター登録修正版
 const express = require('express');
 const cors = require('cors');
 const http = require('http');
@@ -48,18 +48,59 @@ app.use((req, res, next) => {
   next();
 });
 
-// ✅ 修正版: ルート登録（存在確認付き）
+// ✅ 修正版: 正しいルート登録順序
+console.log('🚀 ルーター登録開始...');
+
+// 1. 連絡先ルーター（最重要）
+try {
+  const contactsRouter = require('./routes/contacts');
+  app.use('/api', contactsRouter);  // ← 重要：/api 直下に登録
+  console.log('✅ contacts router 登録成功: /api/campaigns/:id/contacts/*');
+} catch (error) {
+  console.error('❌ contacts router 登録失敗:', error.message);
+  
+  // フォールバック用エンドポイント
+  app.post('/api/campaigns/:campaignId/contacts/upload', async (req, res) => {
+    console.log('🔄 フォールバック CSV アップロード:', req.params.campaignId);
+    res.status(503).json({ 
+      message: 'contacts router not loaded, using fallback',
+      error: 'Service temporarily unavailable'
+    });
+  });
+}
+
+// 2. キャンペーンルーター
 try {
   const campaignsRouter = require('./routes/campaigns');
   app.use('/api/campaigns', campaignsRouter);
   console.log('✅ campaigns router 登録成功');
 } catch (error) {
   console.warn('⚠️ campaigns router not found, using fallback');
-  app.get('/api/campaigns', (req, res) => {
-    res.json({ message: 'campaigns API準備中', status: 'fallback' });
+  app.get('/api/campaigns', async (req, res) => {
+    try {
+      const [campaigns] = await db.query(`
+        SELECT c.id, c.name, c.description, c.status, c.created_at, c.updated_at, c.progress,
+               ci.number as caller_id_number,
+               (SELECT COUNT(*) FROM contacts WHERE campaign_id = c.id) as contact_count
+        FROM campaigns c
+        LEFT JOIN caller_ids ci ON c.caller_id_id = ci.id
+        ORDER BY c.created_at DESC
+      `);
+      
+      res.json({
+        campaigns: campaigns || [],
+        total: campaigns ? campaigns.length : 0,
+        page: 1,
+        limit: 50,
+        totalPages: 1
+      });
+    } catch (dbError) {
+      res.status(500).json({ message: 'キャンペーンの取得に失敗しました' });
+    }
   });
 }
 
+// 3. 発信者番号ルーター
 try {
   const callerIdsRouter = require('./routes/callerIds');
   app.use('/api/caller-ids', callerIdsRouter);
@@ -76,29 +117,59 @@ try {
   });
 }
 
+// 4. 通話ルーター
 try {
   const callsRouter = require('./routes/calls');
   app.use('/api/calls', callsRouter);
   console.log('✅ calls router 登録成功');
 } catch (error) {
   console.warn('⚠️ calls router not found, using fallback');
-  app.get('/api/calls', (req, res) => {
-    res.json({ message: 'calls API準備中', status: 'fallback' });
+  app.post('/api/calls/test', async (req, res) => {
+    try {
+      const { phoneNumber, callerID, mockMode, provider } = req.body;
+      
+      if (!phoneNumber) {
+        return res.status(400).json({ message: '発信先電話番号は必須です' });
+      }
+      
+      const sipService = require('./services/sipService');
+      
+      const params = {
+        phoneNumber,
+        callerID: callerID || process.env.DEFAULT_CALLER_ID || '"Auto Dialer" <03-5946-8520>',
+        context: 'autodialer',
+        exten: 's',
+        priority: 1,
+        variables: {
+          CAMPAIGN_ID: 'TEST',
+          CONTACT_ID: 'TEST',
+          CONTACT_NAME: 'テストユーザー',
+          COMPANY: 'テスト会社'
+        },
+        mockMode,
+        provider
+      };
+      
+      const result = await sipService.originate(params);
+      
+      res.json({
+        success: true,
+        callId: result.ActionID,
+        message: `テスト発信が開始されました（${result.provider}${mockMode ? 'モード' : ''}）`,
+        data: result
+      });
+      
+    } catch (error) {
+      console.error('🔥 フォールバック テスト発信エラー:', error);
+      res.status(500).json({ 
+        message: 'テスト発信に失敗しました', 
+        error: error.message
+      });
+    }
   });
 }
 
-// ✅ 新規追加: 連絡先ルーター
-try {
-  const contactsRouter = require('./routes/contacts');
-  app.use('/api/contacts', contactsRouter);
-  console.log('✅ contacts router 登録成功');
-} catch (error) {
-  console.warn('⚠️ contacts router not found, using fallback');
-  app.get('/api/contacts', (req, res) => {
-    res.json({ message: 'contacts API準備中', status: 'fallback' });
-  });
-}
-
+// 5. 音声ルーター
 try {
   const audioRouter = require('./routes/audio');
   app.use('/api/audio', audioRouter);
@@ -110,6 +181,7 @@ try {
   });
 }
 
+// 6. IVRルーター
 try {
   const ivrRouter = require('./routes/ivr');
   app.use('/api/ivr', ivrRouter);
@@ -121,17 +193,20 @@ try {
   });
 }
 
+console.log('✅ 全ルーター登録完了');
+
 // === 基本エンドポイント ===
 app.get('/', (req, res) => {
   res.json({ 
     message: 'オートコールシステムAPI稼働中',
-    version: '1.3.0',
+    version: '1.3.1',
     timestamp: new Date().toISOString(),
     endpoints: [
       '/api/campaigns',
+      '/api/campaigns/:id/contacts',
+      '/api/campaigns/:id/contacts/upload',
       '/api/caller-ids', 
       '/api/calls',
-      '/api/contacts',
       '/api/audio',
       '/api/ivr'
     ]
@@ -148,7 +223,7 @@ app.get('/health', (req, res) => {
 
 // === フォールバック用の基本API ===
 
-// ✅ 新規追加: キャンペーン詳細API（フォールバック）
+// ✅ キャンペーン詳細API（フォールバック）
 app.get('/api/campaigns/:id', async (req, res) => {
   try {
     const { id } = req.params;
@@ -183,84 +258,7 @@ app.get('/api/campaigns/:id', async (req, res) => {
   }
 });
 
-// ✅ 新規追加: キャンペーン連絡先一覧API（フォールバック）
-app.get('/api/campaigns/:id/contacts', async (req, res) => {
-  try {
-    const { id } = req.params;
-    const { limit = 100, offset = 0, status, search } = req.query;
-    
-    console.log(`フォールバック キャンペーン連絡先API呼び出し: Campaign=${id}`);
-    
-    // キャンペーンの存在確認
-    const [campaigns] = await db.query('SELECT id, name FROM campaigns WHERE id = ?', [id]);
-    
-    if (campaigns.length === 0) {
-      return res.status(404).json({ message: 'キャンペーンが見つかりません' });
-    }
-    
-    let query = `
-      SELECT c.*
-      FROM contacts c
-      WHERE c.campaign_id = ?
-    `;
-    
-    let countQuery = `
-      SELECT COUNT(*) as total
-      FROM contacts c
-      WHERE c.campaign_id = ?
-    `;
-    
-    const params = [id];
-    const countParams = [id];
-    
-    // ステータスでフィルタ
-    if (status) {
-      query += ' AND c.status = ?';
-      countQuery += ' AND c.status = ?';
-      params.push(status);
-      countParams.push(status);
-    }
-    
-    // 検索フィルタ
-    if (search) {
-      query += ' AND (c.phone LIKE ? OR c.name LIKE ? OR c.company LIKE ?)';
-      countQuery += ' AND (c.phone LIKE ? OR c.name LIKE ? OR c.company LIKE ?)';
-      const searchParam = `%${search}%`;
-      params.push(searchParam, searchParam, searchParam);
-      countParams.push(searchParam, searchParam, searchParam);
-    }
-    
-    const queryOffset = parseInt(offset);
-    const queryLimit = parseInt(limit);
-    query += ` ORDER BY c.created_at DESC LIMIT ${queryLimit} OFFSET ${queryOffset}`;
-    
-    // クエリ実行
-    const [contacts] = await db.query(query, params);
-    const [totalResults] = await db.query(countQuery, countParams);
-    
-    const total = totalResults[0].total;
-    
-    console.log(`フォールバック キャンペーン ${id} の連絡先: ${contacts.length}件 (全体: ${total}件)`);
-    
-    res.json({
-      contacts: contacts || [],
-      total,
-      page: Math.floor(queryOffset / queryLimit) + 1,
-      limit: queryLimit,
-      totalPages: Math.ceil(total / queryLimit),
-      campaign: campaigns[0]
-    });
-  } catch (error) {
-    console.error(`フォールバック キャンペーン連絡先エラー: Campaign=${req.params.id}`, error);
-    res.status(500).json({ 
-      contacts: [],
-      total: 0,
-      message: 'データの取得に失敗しました' 
-    });
-  }
-});
-
-// ✅ 新規追加: キャンペーン統計API（フォールバック）
+// ✅ キャンペーン統計API（フォールバック）
 app.get('/api/campaigns/:id/stats', async (req, res) => {
   try {
     const { id } = req.params;
@@ -344,7 +342,7 @@ app.get('/api/campaigns/:id/stats', async (req, res) => {
   }
 });
 
-// ✅ 新規追加: キャンペーン管理API（フォールバック）
+// ✅ キャンペーン管理API（フォールバック）
 app.get('/api/campaigns', async (req, res) => {
   try {
     console.log('フォールバック キャンペーン一覧API呼び出し');
@@ -360,7 +358,6 @@ app.get('/api/campaigns', async (req, res) => {
     
     console.log('フォールバック キャンペーン取得結果:', campaigns ? campaigns.length : 0, '件');
     
-    // 修正: 必ず配列を返す
     const response = {
       campaigns: campaigns || [],
       total: campaigns ? campaigns.length : 0,
@@ -383,6 +380,7 @@ app.get('/api/campaigns', async (req, res) => {
   }
 });
 
+// キャンペーン開始・停止
 app.post('/api/campaigns/:id/start', async (req, res) => {
   try {
     const { id } = req.params;
@@ -396,15 +394,6 @@ app.post('/api/campaigns/:id/start', async (req, res) => {
     
     if (result.affectedRows === 0) {
       return res.status(400).json({ message: 'キャンペーンが見つからないか既にアクティブです' });
-    }
-    
-    // 自動発信サービスを開始
-    try {
-      const autoDialer = require('./services/autoDialer');
-      await autoDialer.startCampaign(id);
-      console.log(`フォールバック 自動発信サービス開始: Campaign=${id}`);
-    } catch (dialerError) {
-      console.warn('フォールバック 自動発信サービス開始エラー:', dialerError.message);
     }
     
     res.json({
@@ -433,15 +422,6 @@ app.post('/api/campaigns/:id/stop', async (req, res) => {
       return res.status(400).json({ message: 'キャンペーンが見つからないかアクティブではありません' });
     }
     
-    // 自動発信サービスを停止
-    try {
-      const autoDialer = require('./services/autoDialer');
-      autoDialer.stopCampaign(id);
-      console.log(`フォールバック 自動発信サービス停止: Campaign=${id}`);
-    } catch (dialerError) {
-      console.warn('フォールバック 自動発信サービス停止エラー:', dialerError.message);
-    }
-    
     res.json({
       success: true,
       message: 'キャンペーンを停止しました',
@@ -464,213 +444,6 @@ app.get('/api/caller-ids', async (req, res) => {
   }
 });
 
-app.post('/api/caller-ids', async (req, res) => {
-  try {
-    const { number, description, provider, domain } = req.body;
-    
-    if (!number) {
-      return res.status(400).json({ message: '電話番号は必須です' });
-    }
-    
-    const [result] = await db.query(
-      'INSERT INTO caller_ids (number, description, provider, domain, active, created_at) VALUES (?, ?, ?, ?, 1, NOW())',
-      [number, description, provider, domain]
-    );
-    
-    res.status(201).json({
-      id: result.insertId,
-      number,
-      description,
-      provider,
-      domain,
-      active: 1,
-      message: '発信者番号を追加しました'
-    });
-  } catch (error) {
-    console.error('発信者番号追加エラー:', error);
-    res.status(500).json({ message: '発信者番号の追加に失敗しました' });
-  }
-});
-
-// チャンネル管理API
-app.get('/api/caller-ids/:id/channels', async (req, res) => {
-  try {
-    const [channels] = await db.query(
-      'SELECT * FROM caller_channels WHERE caller_id_id = ? ORDER BY created_at DESC',
-      [req.params.id]
-    );
-    res.json(channels);
-  } catch (error) {
-    console.error('チャンネル一覧取得エラー:', error);
-    res.status(500).json({ message: 'チャンネルの取得に失敗しました' });
-  }
-});
-
-app.post('/api/caller-ids/:id/channels', async (req, res) => {
-  try {
-    const { username, password, channel_type = 'both' } = req.body;
-    const caller_id = req.params.id;
-    
-    if (!username || !password) {
-      return res.status(400).json({ message: 'ユーザー名とパスワードは必須です' });
-    }
-    
-    const [existing] = await db.query(
-      'SELECT id FROM caller_channels WHERE username = ?', 
-      [username]
-    );
-    
-    if (existing.length > 0) {
-      return res.status(400).json({ message: 'このユーザー名は既に使用されています' });
-    }
-    
-    const [result] = await db.query(
-      'INSERT INTO caller_channels (caller_id_id, username, password, channel_type, status, created_at) VALUES (?, ?, ?, ?, ?, NOW())',
-      [caller_id, username, password, channel_type, 'available']
-    );
-    
-    res.status(201).json({
-      id: result.insertId,
-      caller_id_id: parseInt(caller_id),
-      username,
-      channel_type,
-      status: 'available',
-      message: 'チャンネルを追加しました'
-    });
-  } catch (error) {
-    console.error('チャンネル追加エラー:', error);
-    res.status(500).json({ message: 'チャンネルの追加に失敗しました' });
-  }
-});
-
-app.delete('/api/caller-ids/:callerId/channels/:channelId', async (req, res) => {
-  try {
-    const { callerId, channelId } = req.params;
-    
-    const [result] = await db.query(
-      'DELETE FROM caller_channels WHERE id = ? AND caller_id_id = ?',
-      [channelId, callerId]
-    );
-    
-    if (result.affectedRows === 0) {
-      return res.status(404).json({ message: 'チャンネルが見つかりません' });
-    }
-    
-    res.json({ message: 'チャンネルを削除しました' });
-  } catch (error) {
-    console.error('チャンネル削除エラー:', error);
-    res.status(500).json({ message: 'チャンネルの削除に失敗しました' });
-  }
-});
-
-app.put('/api/caller-ids/:callerId/channels/:channelId', async (req, res) => {
-  try {
-    const { callerId, channelId } = req.params;
-    const { status } = req.body;
-    
-    const [result] = await db.query(
-      'UPDATE caller_channels SET status = ? WHERE id = ? AND caller_id_id = ?',
-      [status, channelId, callerId]
-    );
-    
-    if (result.affectedRows === 0) {
-      return res.status(404).json({ message: 'チャンネルが見つかりません' });
-    }
-    
-    res.json({ message: 'チャンネル状態を更新しました' });
-  } catch (error) {
-    console.error('チャンネル状態更新エラー:', error);
-    res.status(500).json({ message: 'チャンネル状態の更新に失敗しました' });
-  }
-});
-
-// ✅ 新規追加: テスト発信エンドポイント（フォールバック）
-app.post('/api/calls/test', async (req, res) => {
-  try {
-    const { phoneNumber, callerID, mockMode, provider } = req.body;
-    
-    console.log('🔥 フォールバック テスト発信リクエスト受信:', {
-      phoneNumber,
-      callerID,
-      mockMode,
-      provider
-    });
-    
-    if (!phoneNumber) {
-      return res.status(400).json({ message: '発信先電話番号は必須です' });
-    }
-    
-    // 発信者番号の検証
-    let callerIdData = null;
-    if (callerID) {
-      const [callerIds] = await db.query('SELECT * FROM caller_ids WHERE id = ? AND active = true', [callerID]);
-      
-      if (callerIds.length === 0) {
-        return res.status(400).json({ message: '選択された発信者番号が見つからないか無効です' });
-      }
-      
-      callerIdData = callerIds[0];
-    }
-    
-    // SIPサービスで発信
-    const sipService = require('./services/sipService');
-    
-    const params = {
-      phoneNumber,
-      callerID: callerIdData 
-        ? `"${callerIdData.description || ''}" <${callerIdData.number}>` 
-        : process.env.DEFAULT_CALLER_ID || '"Auto Dialer" <03-5946-8520>',
-      context: 'autodialer',
-      exten: 's',
-      priority: 1,
-      variables: {
-        CAMPAIGN_ID: 'TEST',
-        CONTACT_ID: 'TEST',
-        CONTACT_NAME: 'テストユーザー',
-        COMPANY: 'テスト会社'
-      },
-      callerIdData,
-      mockMode,
-      provider
-    };
-    
-    console.log('🚀 SIP発信パラメータ:', params);
-    
-    const result = await sipService.originate(params);
-    
-    // 通話ログに記録
-    try {
-      await db.query(`
-        INSERT INTO call_logs 
-        (call_id, caller_id_id, phone_number, start_time, status, test_call, call_provider)
-        VALUES (?, ?, ?, NOW(), 'ORIGINATING', 1, ?)
-      `, [result.ActionID, callerIdData ? callerIdData.id : null, phoneNumber, result.provider]);
-    } catch (logError) {
-      console.error('通話ログ記録エラー:', logError);
-    }
-    
-    const responseData = {
-      success: true,
-      callId: result.ActionID,
-      message: `テスト発信が開始されました（${result.provider}${mockMode ? 'モード' : ''}）`,
-      data: result
-    };
-    
-    if (result.SipAccount) {
-      responseData.sipAccount = result.SipAccount;
-    }
-    
-    res.json(responseData);
-    
-  } catch (error) {
-    console.error('🔥 フォールバック テスト発信エラー:', error);
-    res.status(500).json({ 
-      message: 'テスト発信に失敗しました', 
-      error: error.message
-    });
-  }
-});
-
 // 404エラーハンドラー
 app.use((req, res, next) => {
   console.log(`❌ 404 Not Found: ${req.method} ${req.originalUrl}`);
@@ -678,7 +451,16 @@ app.use((req, res, next) => {
     message: '要求されたリソースが見つかりません',
     path: req.originalUrl,
     method: req.method,
-    timestamp: new Date().toISOString()
+    timestamp: new Date().toISOString(),
+    availableEndpoints: [
+      '/api/campaigns',
+      '/api/campaigns/:id/contacts',
+      '/api/campaigns/:id/contacts/upload',
+      '/api/caller-ids', 
+      '/api/calls/test',
+      '/api/audio',
+      '/api/ivr'
+    ]
   });
 });
 
@@ -703,9 +485,11 @@ const startServer = async () => {
       console.log(`✅ サーバーが起動しました: http://0.0.0.0:${PORT}`);
       console.log('🔗 利用可能なエンドポイント:');
       console.log('  - GET  /api/campaigns');
+      console.log('  - GET  /api/campaigns/:id');
+      console.log('  - GET  /api/campaigns/:id/contacts');
+      console.log('  - POST /api/campaigns/:id/contacts/upload');
       console.log('  - GET  /api/caller-ids');
       console.log('  - POST /api/calls/test');
-      console.log('  - GET  /api/contacts');
       console.log('  - GET  /api/audio');
       console.log('  - POST /api/ivr/test-call');
     });
@@ -744,29 +528,6 @@ process.on('SIGINT', async () => {
   } catch (error) {
     console.error('終了処理エラー:', error);
     process.exit(1);
-  }
-});
-
-// サーバー起動後の初期化
-server.on('listening', async () => {
-  console.log('🚀 サーバー初期化完了');
-  
-  // SIPサービス初期化（エラー無視）
-  try {
-    const sipService = require('./services/sipService');
-    await sipService.connect();
-    console.log('✅ SIPサービス初期化完了');
-  } catch (error) {
-    console.warn('⚠️ SIPサービス初期化スキップ:', error.message);
-  }
-  
-  // コールサービス初期化（エラー無視）
-  try {
-    const callService = require('./services/callService');
-    await callService.initialize();
-    console.log('✅ コールサービス初期化完了');
-  } catch (error) {
-    console.warn('⚠️ コールサービス初期化スキップ:', error.message);
   }
 });
 
