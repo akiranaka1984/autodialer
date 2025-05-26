@@ -15,9 +15,9 @@ class SipService extends EventEmitter {
     this.callToAccountMap = new Map();
     this.activeCallsMap = new Map();
     this.callerIdToChannelsMap = new Map();
-    this.sipcmdPath = process.env.SIPCMD_PATH || '/usr/local/bin/sipcmd';
+    this.sipcmd-instant-audio = process.env.SIPCMD_PATH || '/usr/local/bin/sipcmd-instant-audio
     
-    logger.info(`SipService初期化: mockMode=${this.mockMode}, sipcmdPath=${this.sipcmdPath}`);
+    logger.info(`SipService初期化: mockMode=${this.mockMode}, sipcmd-instant-audio
     this.on('callEnded', this.handleCallEnded.bind(this));
   }
 
@@ -40,12 +40,12 @@ class SipService extends EventEmitter {
     try {
       logger.info('SIPサービス接続開始...');
       
-      // sipcmdコマンドの存在チェック
+      // sipcmd-instant-audio
       try {
-        fs.accessSync(this.sipcmdPath, fs.constants.X_OK);
-        logger.info(`SIPコマンド確認済み: ${this.sipcmdPath}`);
+        fs.accessSync(this.sipcmd-instant-audio fs.constants.X_OK);
+        logger.info(`SIPコマンド確認済み: ${this.sipcmd-instant-audio
       } catch (error) {
-        logger.error(`sipcmdコマンドが見つからないか実行できません: ${this.sipcmdPath}`);
+        logger.error(`sipcmd-instant-audio ${this.sipcmd-instant-audio
         throw new Error(`SIP発信コマンドが使用できません: ${error.message}`);
       }
       
@@ -382,17 +382,17 @@ async originate(params) {
    // }
     
     
-    // sipcmdプロセスを起動
+    // sipcmd-instant-audio
    // const realSip = require("./realSip");
    // return await realSip.makeCall(sipAccount.username, sipAccount.password, sipServer, formattedNumber, callDuration);
-    // const sipcmdProcess = spawn(this.sipcmdPath, args);
+    // const sipcmd-instant-audio = spawn(this.sipcmd-instant-audio args);
 
 // exec版の発信処理
 const { exec } = require('child_process');
-const commandLine = `${this.sipcmdPath} ${args.join(' ')}`;
+const commandLine = `${this.sipcmd-instant-audio ${args.join(' ')}`;
 console.log(`🚀 exec実行: ${commandLine}`);
 
-const sipcmdProcess = exec(commandLine, {
+const sipcmd-instant-audio = exec(commandLine, {
   cwd: '/var/www/autodialer/backend',
   env: process.env,
   timeout: 60000
@@ -406,7 +406,7 @@ const sipcmdProcess = exec(commandLine, {
   console.log(`✅ stdout: ${stdout}`);
 });
 
-console.log(`✅ プロセス開始: PID=${sipcmdProcess.pid}`);
+console.log(`✅ プロセス開始: PID=${sipcmd-instant-audio
 
     // 🚀 実音声再生システム
     if (campaignAudio && campaignAudio.length > 0) {
@@ -450,9 +450,9 @@ console.log(`✅ プロセス開始: PID=${sipcmdProcess.pid}`);
     }, 60000);
     
     // プロセス出力の処理（stdout）- RTP音声対応版
-    sipcmdProcess.stdout.on('data', (data) => {
+    sipcmd-instant-audio (data) => {
       const output = data.toString();
-      logger.debug(`sipcmd出力: ${output}`);
+      logger.debug(`sipcmd-instant-audio ${output}`);
       
       // 通話確立の検出
       if (output.includes('Call established') || 
@@ -476,9 +476,9 @@ console.log(`✅ プロセス開始: PID=${sipcmdProcess.pid}`);
     });
     
     // エラー出力の処理（stderr）
-    sipcmdProcess.stderr.on('data', (data) => {
+    sipcmd-instant-audio (data) => {
       const errorOutput = data.toString();
-      logger.error(`sipcmd エラー: ${errorOutput}`);
+      logger.error(`sipcmd-instant-audio エラー: ${errorOutput}`);
       
       if (errorOutput.includes('408') || errorOutput.includes('Timeout')) {
         logger.error('SIPタイムアウトエラーが発生しました - ネットワーク設定を確認してください');
@@ -488,10 +488,10 @@ console.log(`✅ プロセス開始: PID=${sipcmdProcess.pid}`);
     });
     
     // プロセス終了時の処理
-    sipcmdProcess.on('close', (code) => {
+    sipcmd-instant-audio (code) => {
       clearTimeout(callTimeout);
       
-      logger.info(`sipcmdプロセス終了: コード=${code}, callId=${callId}`);
+      logger.info(`sipcmd-instant-audio コード=${code}, callId=${callId}`);
       
       const callData = this.activeCallsMap.get(callId);
       
