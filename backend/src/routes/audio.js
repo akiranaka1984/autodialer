@@ -520,5 +520,58 @@ router.post('/test-playback/:id', async (req, res) => {
     });
   }
 });
+router.post('/unassign', async (req, res) => {
+  try {
+    const { campaignId, audioType } = req.body;
+    
+    logger.info(`音声ファイル割り当て削除: Campaign=${campaignId}, Type=${audioType}`);
+    
+    if (!campaignId || !audioType) {
+      return res.status(400).json({ 
+        message: 'キャンペーンIDと音声タイプは必須です' 
+      });
+    }
+    
+    // キャンペーンの存在確認
+    const [campaigns] = await db.query(
+      'SELECT id FROM campaigns WHERE id = ?',
+      [campaignId]
+    );
+    
+    if (campaigns.length === 0) {
+      return res.status(404).json({ 
+        message: 'キャンペーンが見つかりません' 
+      });
+    }
+    
+    // 割り当て削除
+    const [result] = await db.query(
+      'DELETE FROM campaign_audio WHERE campaign_id = ? AND audio_type = ?',
+      [campaignId, audioType]
+    );
+    
+    if (result.affectedRows === 0) {
+      return res.status(404).json({ 
+        message: '削除対象の音声ファイル割り当てが見つかりません' 
+      });
+    }
+    
+    logger.info(`音声ファイル割り当て削除完了: Campaign=${campaignId}, Type=${audioType}`);
+    
+    res.json({
+      success: true,
+      message: '音声ファイルの割り当てを削除しました',
+      campaignId: parseInt(campaignId),
+      audioType
+    });
+    
+  } catch (error) {
+    logger.error('音声ファイル割り当て削除エラー:', error);
+    res.status(500).json({ 
+      message: '音声ファイル削除処理に失敗しました',
+      error: error.message 
+    });
+  }
+});
 
 module.exports = router;

@@ -383,6 +383,49 @@ const IVRSettings = ({ campaignId }) => {
     setShowUploader(true);
   };
 
+  const handleRemoveAudio = async (audioType) => {
+  try {
+    setIsSaving(true);
+    setError(null);
+    
+    const token = localStorage.getItem('token');
+    
+    const response = await fetch(`${getApiBaseUrl()}/audio/unassign`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${token}`,
+        'Cache-Control': 'no-cache'
+      },
+      body: JSON.stringify({
+        campaignId,
+        audioType
+      })
+    });
+    
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(`音声ファイルの削除に失敗しました (${response.status})`);
+    }
+    
+    // 音声割り当て状態を更新
+    setAudio(prev => ({
+      ...prev,
+      [audioType]: null
+    }));
+    
+    setSuccess(`${audioTypes.find(t => t.id === audioType)?.name || audioType}の音声ファイルを削除しました`);
+    
+    setTimeout(() => setSuccess(null), 3000);
+    
+  } catch (err) {
+    console.error('音声ファイル削除エラー:', err);
+    setError(err.message || '音声ファイルの削除中にエラーが発生しました');
+  } finally {
+    setIsSaving(false);
+  }
+};
+
   const handleAudioUploadSuccess = async (audioFile) => {
     console.log('音声ファイルアップロード成功:', audioFile);
     
@@ -584,15 +627,27 @@ const IVRSettings = ({ campaignId }) => {
                 {audioTypes.map(type => (
                   <div key={type.id} className="bg-gray-50 rounded-lg p-3 border border-gray-200">
                     <div className="flex justify-between items-center">
-                      <div>
+                      <div className="flex-1">
                         <h3 className="text-sm font-medium text-gray-700">{type.name}</h3>
                         <div className="mt-1">
                           {audio[type.id] ? (
-                            <div className="flex items-center">
-                              <Music className="h-4 w-4 text-blue-500 mr-1" />
-                              <span className="text-sm text-gray-600">
-                                {audioFiles.find(f => f.id === audio[type.id])?.name || '不明なファイル'}
-                              </span>
+                            <div className="flex items-center justify-between">
+                              <div className="flex items-center">
+                                <Music className="h-4 w-4 text-blue-500 mr-1" />
+                                <span className="text-sm text-gray-600">
+                                  {audioFiles.find(f => f.id === audio[type.id])?.name || '不明なファイル'}
+                                </span>
+                              </div>
+                              <div className="flex items-center space-x-2">
+                                <button
+                                  onClick={() => handleRemoveAudio(type.id)}
+                                  disabled={isSaving}
+                                  className="px-2 py-1 bg-red-100 text-red-700 rounded hover:bg-red-200 text-xs disabled:opacity-50"
+                                  title="削除"
+                                >
+                                  <X className="h-3 w-3" />
+                                </button>
+                              </div>
                             </div>
                           ) : (
                             <span className="text-sm text-gray-500">割り当てなし</span>
@@ -601,9 +656,10 @@ const IVRSettings = ({ campaignId }) => {
                       </div>
                       <button
                         onClick={() => openUploader(type.id)}
-                        className="px-3 py-1 bg-blue-100 text-blue-700 rounded hover:bg-blue-200 text-sm"
+                        disabled={isSaving}
+                        className="px-3 py-1 bg-blue-100 text-blue-700 rounded hover:bg-blue-200 text-sm disabled:opacity-50"
                       >
-                        アップロード
+                        {audio[type.id] ? '変更' : 'アップロード'}
                       </button>
                     </div>
                   </div>
