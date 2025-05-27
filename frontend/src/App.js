@@ -26,6 +26,7 @@ import OperatorLayout from './components/OperatorInterface/OperatorLayout';
 import OperatorMainDashboard from './components/OperatorInterface/OperatorDashboard';
 import OperatorHistory from './components/OperatorInterface/OperatorHistory';
 import OperatorPerformance from './components/OperatorInterface/OperatorPerformance';
+import DialerDashboard from './components/DialerDashboard';
 
 // スタイルシートのインポート
 import './App.css';
@@ -136,6 +137,7 @@ function App() {
                 <Route path="settings" element={<SystemSettings />} />
                 <Route path="*" element={<NotFound />} />
                 <Route path="/audio-files" element={<AudioFileManager />} />
+		<Route path="/dashboard" element={<DialerDashboard />} />
               </Route>
             )}
             
