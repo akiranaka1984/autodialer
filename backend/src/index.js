@@ -479,6 +479,10 @@ const startServer = async () => {
     // データベース接続確認
     await db.query('SELECT 1');
     console.log('✅ データベース接続成功');
+
+    const dialerService = require('./services/dialerService');
+    await dialerService.initialize();
+    console.log('✅ DialerService初期化完了');
     
     // サーバー起動
     server.listen(PORT, '0.0.0.0', () => {

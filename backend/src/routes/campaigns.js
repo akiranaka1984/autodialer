@@ -1,4 +1,5 @@
 // backend/src/routes/campaigns.js - キャンペーン削除機能追加版
+const dialerService = require('../services/dialerService');
 const express = require('express');
 const router = express.Router();
 const db = require('../services/database');
@@ -437,6 +438,115 @@ router.get('/:id/stats', async (req, res) => {
   } catch (error) {
     logger.error(`キャンペーン統計取得エラー: ID=${req.params.id}`, error);
     res.status(500).json({ message: 'データの取得に失敗しました' });
+  }
+});
+
+// 🚀 キャンペーン開始API（既存コードの後に追加）
+router.post('/:id/start', async (req, res) => {
+  try {
+    const campaignId = parseInt(req.params.id);
+    
+    logger.info(`🚀 キャンペーン開始リクエスト: ${campaignId}`);
+    
+    // キャンペーンの存在と状態確認
+    const [campaigns] = await db.query(
+      'SELECT * FROM campaigns WHERE id = ?',
+      [campaignId]
+    );
+    
+    if (campaigns.length === 0) {
+      return res.status(404).json({ message: 'キャンペーンが見つかりません' });
+    }
+    
+    const campaign = campaigns[0];
+    
+    if (campaign.status === 'active') {
+      return res.status(400).json({ message: 'キャンペーンは既にアクティブです' });
+    }
+    
+    // 発信対象の連絡先数をチェック
+    const [contactCount] = await db.query(
+      'SELECT COUNT(*) as count FROM contacts WHERE campaign_id = ? AND status = "pending"',
+      [campaignId]
+    );
+    
+    if (contactCount[0].count === 0) {
+      return res.status(400).json({ 
+        message: '発信対象の連絡先がありません。連絡先を追加してからキャンペーンを開始してください。' 
+      });
+    }
+    
+    // dialerServiceでキャンペーン開始
+    const result = await dialerService.startCampaign(campaignId);
+    
+    if (!result) {
+      return res.status(500).json({ message: 'キャンペーンの開始に失敗しました' });
+    }
+    
+    logger.info(`✅ キャンペーン開始成功: ${campaignId}`);
+    
+    res.json({
+      success: true,
+      message: `キャンペーン「${campaign.name}」を開始しました`,
+      campaign: {
+        id: campaignId,
+        name: campaign.name,
+        totalContacts: contactCount[0].count
+      }
+    });
+    
+  } catch (error) {
+    logger.error(`キャンペーン開始エラー: ${req.params.id}`, error);
+    res.status(500).json({ 
+      message: 'キャンペーンの開始に失敗しました',
+      error: error.message 
+    });
+  }
+});
+
+// 🛑 キャンペーン停止API（上記の後に追加）
+router.post('/:id/stop', async (req, res) => {
+  try {
+    const campaignId = parseInt(req.params.id);
+    
+    logger.info(`🛑 キャンペーン停止リクエスト: ${campaignId}`);
+    
+    // キャンペーンの存在確認
+    const [campaigns] = await db.query(
+      'SELECT * FROM campaigns WHERE id = ?',
+      [campaignId]
+    );
+    
+    if (campaigns.length === 0) {
+      return res.status(404).json({ message: 'キャンペーンが見つかりません' });
+    }
+    
+    const campaign = campaigns[0];
+    
+    // dialerServiceでキャンペーン停止
+    const result = await dialerService.pauseCampaign(campaignId);
+    
+    if (!result) {
+      return res.status(500).json({ message: 'キャンペーンの停止に失敗しました' });
+    }
+    
+    logger.info(`✅ キャンペーン停止成功: ${campaignId}`);
+    
+    res.json({
+      success: true,
+      message: `キャンペーン「${campaign.name}」を停止しました`,
+      campaign: {
+        id: campaignId,
+        name: campaign.name
+      }
+    });
+    
+  } catch (error) {
+    logger.error(`キャンペーン停止エラー: ${req.params.id}`, error);
+    res.status(500).json({ 
+      message: 'キャンペーンの停止に失敗しました',
+      error: error.message 
+    });
   }
 });
 

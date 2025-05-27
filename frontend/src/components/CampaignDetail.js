@@ -89,6 +89,32 @@ const CampaignDetail = () => {
     }
   }, [activeTab, searchTerm, statusFilter, currentPage]);
 
+// 既存のuseEffect群の後に追加
+useEffect(() => {
+  // アクティブなキャンペーンの場合、5秒ごとに進捗を更新
+  let progressInterval = null;
+  
+  if (campaign && campaign.status === 'active') {
+    progressInterval = setInterval(async () => {
+      try {
+        const statsResponse = await fetch(`${apiBaseUrl}/campaigns/${id}/stats`);
+        if (statsResponse.ok) {
+          const statsData = await statsResponse.json();
+          setStats(statsData);
+        }
+      } catch (error) {
+        console.warn('進捗更新エラー:', error);
+      }
+    }, 5000);
+  }
+  
+  return () => {
+    if (progressInterval) {
+      clearInterval(progressInterval);
+    }
+  };
+}, [campaign?.status, id]);
+
   // キャンペーンデータ取得
   const fetchCampaignData = async () => {
     try {
@@ -239,21 +265,56 @@ const CampaignDetail = () => {
 
   // キャンペーン開始/停止
   const handleCampaignToggle = async () => {
-    try {
-      const action = campaign.status === 'active' ? 'stop' : 'start';
-      const response = await fetch(`${apiBaseUrl}/campaigns/${id}/${action}`, {
-        method: 'POST'
-      });
-
-      if (!response.ok) {
-        throw new Error(`キャンペーンの${action === 'start' ? '開始' : '停止'}に失敗しました`);
+  try {
+    setLoading(true);
+    setError(null);
+    
+    const action = campaign.status === 'active' ? 'stop' : 'start';
+    const token = localStorage.getItem('token');
+    
+    console.log(`🎯 キャンペーン${action}リクエスト:`, {
+      url: `${apiBaseUrl}/campaigns/${id}/${action}`,
+      method: 'POST'
+    });
+    
+    const response = await fetch(`${apiBaseUrl}/campaigns/${id}/${action}`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${token || 'dummy-token'}`
       }
-
-      await fetchCampaignData();
-    } catch (err) {
-      setError(err.message);
+    });
+    
+    console.log(`📥 ${action}レスポンス:`, {
+      status: response.status,
+      statusText: response.statusText,
+      ok: response.ok
+    });
+    
+    if (!response.ok) {
+      const errorData = await response.json();
+      throw new Error(errorData.message || `キャンペーンの${action === 'start' ? '開始' : '停止'}に失敗しました`);
     }
-  };
+    
+    const result = await response.json();
+    console.log(`✅ ${action}成功:`, result);
+    
+    // 成功メッセージを表示
+    setUploadSuccess(result.message || `キャンペーンを${action === 'start' ? '開始' : '停止'}しました`);
+    
+    // データを再読み込み
+    await fetchCampaignData();
+    
+    // 成功メッセージを3秒後に消去
+    setTimeout(() => setUploadSuccess(null), 3000);
+    
+  } catch (err) {
+    console.error(`❌ キャンペーン${campaign.status === 'active' ? '停止' : '開始'}エラー:`, err);
+    setError(err.message);
+  } finally {
+    setLoading(false);
+  }
+};
 
   // ステータス表示
   const getStatusColor = (status) => {
@@ -336,28 +397,32 @@ const CampaignDetail = () => {
         </div>
         
         <div className="flex space-x-3">
-          <button
-            onClick={handleCampaignToggle}
-            disabled={campaign.status === 'completed'}
-            className={`flex items-center px-4 py-2 rounded-md text-sm font-medium ${
-              campaign.status === 'active'
-                ? 'bg-red-600 hover:bg-red-700 text-white'
-                : 'bg-green-600 hover:bg-green-700 text-white'
-            } disabled:opacity-50 disabled:cursor-not-allowed`}
-          >
-            {campaign.status === 'active' ? (
-              <>
-                <Pause className="h-4 w-4 mr-2" />
-                停止
-              </>
-            ) : (
-              <>
-                <Play className="h-4 w-4 mr-2" />
-                開始
-              </>
-            )}
-          </button>
-          
+<button
+  onClick={handleCampaignToggle}
+  disabled={loading || campaign.status === 'completed'}
+  className={`flex items-center px-4 py-2 rounded-md text-sm font-medium ${
+    campaign.status === 'active'
+      ? 'bg-red-600 hover:bg-red-700 text-white'
+      : 'bg-green-600 hover:bg-green-700 text-white'
+  } disabled:opacity-50 disabled:cursor-not-allowed`}
+>
+  {loading ? (
+    <>
+      <div className="animate-spin h-4 w-4 mr-2 border-2 border-white border-opacity-30 border-t-white rounded-full"></div>
+      {campaign.status === 'active' ? '停止中...' : '開始中...'}
+    </>
+  ) : campaign.status === 'active' ? (
+    <>
+      <Pause className="h-4 w-4 mr-2" />
+      停止
+    </>
+  ) : (
+    <>
+      <Play className="h-4 w-4 mr-2" />
+      開始
+    </>
+  )}
+</button>          
           <button
             onClick={() => navigate(`/campaigns/${id}/edit`)}
             className="flex items-center px-4 py-2 border border-gray-300 rounded-md text-sm font-medium text-gray-700 bg-white hover:bg-gray-50"
