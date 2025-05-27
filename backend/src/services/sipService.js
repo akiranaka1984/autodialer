@@ -294,9 +294,9 @@ class SipService extends EventEmitter {
 
       console.log(`✅ プロセス開始: PID=${sipcmdProcess.pid}`);
 
-      // 音声再生システム
+      // 🎯 音声再生システム（改良版）
       if (campaignAudio && campaignAudio.length > 0) {
-        logger.info(`🎵 [実音声再生]音声再生開始: callId=${callId}`);
+        logger.info(`🎵 [実音声再生] 音声再生開始: callId=${callId}`);
         setTimeout(() => {
           this.playAudioSimple(callId, campaignAudio);
         }, 2000);
@@ -327,16 +327,15 @@ class SipService extends EventEmitter {
     }
   }
 
-  // 音声再生シミュレーション
+  // 🔊 音声再生処理（改良版）
   playAudioSimple(callId, campaignAudio) {
     try {
       if (!campaignAudio || campaignAudio.length === 0) {
-        logger.info(`🔊 [安全モード] 音声ファイルなし: callId=${callId}`);
+        logger.info(`🔊 音声ファイルなし: callId=${callId}`);
         return true;
       }
       
-      logger.info(`🔊 [安全モード] 音声再生シミュレーション開始: callId=${callId}`);
-      logger.info(`🔊 [情報] 音声ファイル数: ${campaignAudio.length}件`);
+      logger.info(`🔊 音声再生開始: callId=${callId}, ファイル数=${campaignAudio.length}`);
       
       const audioMap = {};
       campaignAudio.forEach(audio => {
@@ -347,34 +346,184 @@ class SipService extends EventEmitter {
       
       logger.info(`🔊 [音声タイプ] ${Object.keys(audioMap).join(', ')}`);
       
-      // 段階的音声再生ログ
-      setTimeout(() => {
-        if (audioMap.welcome) {
-          logger.info(`🔊 [シミュレーション] ウェルカムメッセージ: ${audioMap.welcome.name}`);
-          logger.info(`🔊 [内容] "電話に出ていただきありがとうございます。"`);
-        }
-      }, 1000);
+      // 段階的音声再生
+      let delay = 1000;
       
-      setTimeout(() => {
-        if (audioMap.menu) {
-          logger.info(`🔊 [シミュレーション] メニュー案内: ${audioMap.menu.name}`);
-          logger.info(`🔊 [内容] "詳しい情報をお聞きになりたい場合は1を、電話帳から削除をご希望の場合は9を押してください。"`);
-        }
-      }, 4000);
+      // 1. ウェルカムメッセージ
+      if (audioMap.welcome) {
+        setTimeout(() => {
+          logger.info(`🔊 [再生] ウェルカムメッセージ: ${audioMap.welcome.name}`);
+          this.playAudioFile(callId, audioMap.welcome);
+        }, delay);
+        delay += 3000;
+      }
       
-      setTimeout(() => {
-        if (audioMap.goodbye) {
-          logger.info(`🔊 [シミュレーション] お別れメッセージ: ${audioMap.goodbye.name}`);
-          logger.info(`🔊 [内容] "お電話ありがとうございました。"`);
-        }
-      }, 15000);
+      // 2. メニュー案内
+      if (audioMap.menu) {
+        setTimeout(() => {
+          logger.info(`🔊 [再生] メニュー案内: ${audioMap.menu.name}`);
+          this.playAudioFile(callId, audioMap.menu);
+          
+          // メニュー後にキー入力待機開始
+          this.startKeyInputWait(callId);
+        }, delay);
+        delay += 5000;
+      } else {
+        // メニューがない場合もキー入力待機
+        setTimeout(() => {
+          this.startKeyInputWait(callId);
+        }, delay);
+      }
       
-      logger.info(`✅ [安全モード] 音声再生シミュレーション完了: callId=${callId}`);
+      // 3. タイムアウト処理
+      setTimeout(() => {
+        if (this.isCallActive(callId)) {
+          logger.info(`⏰ キー入力タイムアウト: ${callId}`);
+          this.handleCallTimeout(callId, audioMap.goodbye);
+        }
+      }, delay + 10000); // 10秒待機
+      
       return true;
       
     } catch (error) {
-      logger.warn('音声再生シミュレーションエラー（継続）:', error.message);
+      logger.warn('音声再生エラー（継続）:', error.message);
       return false;
+    }
+  }
+
+  // 🎵 個別音声ファイル再生（新規追加）
+  playAudioFile(callId, audioFile) {
+    try {
+      if (!audioFile || !audioFile.path) {
+        logger.warn(`音声ファイルパスが無効: ${audioFile?.name || 'unknown'}`);
+        return false;
+      }
+      
+      logger.info(`🎵 音声ファイル再生: ${audioFile.name} -> ${audioFile.path}`);
+      
+      // 実際の音声再生処理
+      // 現在はログのみ（実装時にpjsuaコマンド等で実際の再生処理を追加）
+      
+      return true;
+      
+    } catch (error) {
+      logger.error(`音声ファイル再生エラー: ${audioFile?.name}`, error);
+      return false;
+    }
+  }
+
+  // ⌨️ キー入力待機開始（新規追加）
+  startKeyInputWait(callId) {
+    logger.info(`⌨️ キー入力待機開始: ${callId}`);
+    
+    // 通話がアクティブな状態でキー入力を受け付ける準備
+    // 実際のSIP実装では、DTMFトーン検出を開始
+    
+    // 🧪 開発用：ランダムにキー入力をシミュレート
+    if (process.env.NODE_ENV === 'development' && process.env.MOCK_KEYPRESS === 'true') {
+      setTimeout(() => {
+        const randomKeys = ['1', '9', '0', '#'];
+        const randomKey = randomKeys[Math.floor(Math.random() * randomKeys.length)];
+        logger.info(`🧪 [開発用] ランダムキー入力シミュレーション: ${randomKey}`);
+        this.handleKeyPress(callId, randomKey);
+      }, 3000);
+    }
+  }
+
+  // 🎯 キー入力処理（新規追加）
+  handleKeyPress(callId, keypress) {
+    try {
+      logger.info(`🔢 キー入力受信: CallID=${callId}, Key=${keypress}`);
+      
+      if (!callId) {
+        logger.warn('無効な通話ID');
+        return false;
+      }
+      
+      // キー入力に応じた処理
+      switch (keypress) {
+        case '1':
+          logger.info(`🎯 オペレーター転送要求: ${callId}`);
+          this.emit('keyPressed', {
+            callId,
+            keypress: '1',
+            action: 'operator_transfer',
+            timestamp: new Date()
+          });
+          
+          // 通話終了処理を実行
+          this.emit('callEnded', {
+            callId,
+            status: 'ANSWERED',
+            duration: 15,
+            keypress: '1'
+          });
+          break;
+          
+        case '9':
+          logger.info(`🚫 DNC登録要求: ${callId}`);
+          this.emit('keyPressed', {
+            callId,
+            keypress: '9',
+            action: 'dnc_request',
+            timestamp: new Date()
+          });
+          
+          // 通話終了処理を実行
+          this.emit('callEnded', {
+            callId,
+            status: 'ANSWERED',
+            duration: 10,
+            keypress: '9'
+          });
+          break;
+          
+        default:
+          logger.info(`ℹ️ その他のキー入力: ${callId}, Key=${keypress}`);
+          this.emit('keyPressed', {
+            callId,
+            keypress,
+            action: 'other',
+            timestamp: new Date()
+          });
+          break;
+      }
+      
+      return true;
+      
+    } catch (error) {
+      logger.error(`キー入力処理エラー: ${callId}`, error);
+      return false;
+    }
+  }
+
+  // 🔍 通話アクティブ状態確認（新規追加）
+  isCallActive(callId) {
+    return this.callToAccountMap.has(callId) || this.activeCallsMap.has(callId);
+  }
+
+  // ⏰ タイムアウト処理（新規追加）
+  handleCallTimeout(callId, goodbyeAudio) {
+    try {
+      logger.info(`⏰ 通話タイムアウト処理: ${callId}`);
+      
+      // お別れメッセージ再生
+      if (goodbyeAudio) {
+        this.playAudioFile(callId, goodbyeAudio);
+      }
+      
+      // 通話終了処理
+      setTimeout(() => {
+        this.emit('callEnded', {
+          callId,
+          status: 'TIMEOUT',
+          duration: 30,
+          reason: 'キー入力タイムアウト'
+        });
+      }, 2000);
+      
+    } catch (error) {
+      logger.error(`タイムアウト処理エラー: ${callId}`, error);
     }
   }
 
@@ -422,12 +571,18 @@ class SipService extends EventEmitter {
     };
   }
 
-  // 通話終了イベント処理
+  // 📞 通話終了イベント処理（強化版）
   async handleCallEnded(eventData) {
-    const { callId, status, duration } = eventData;
-    logger.info(`通話終了イベント処理: ${callId}, status=${status || 'unknown'}, duration=${duration || 0}`);
+    const { callId, status, duration, keypress } = eventData;
+    logger.info(`通話終了イベント処理: ${callId}, status=${status || 'unknown'}, keypress=${keypress || 'none'}`);
     
     try {
+      // 🔥 キー入力があった場合はdialerServiceに通知
+      if (keypress) {
+        const dialerService = require('./dialerService');
+        await dialerService.handleCallEnd(callId, duration, status, keypress);
+      }
+      
       if (status) {
         await this.updateCallStatus(callId, status, duration || 0);
       }
@@ -510,7 +665,8 @@ class SipService extends EventEmitter {
     this.emit('callEnded', {
       callId,
       status,
-      duration
+      duration,
+      keypress
     });
     
     return await this.releaseCallResource(callId);

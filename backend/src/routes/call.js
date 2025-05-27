@@ -129,4 +129,17 @@ router.get('/:id', async (req, res) => {
   }
 });
 
+// 最後に追加
+router.post('/callback/call-end', async (req, res) => {
+  try {
+    const { callId, duration, disposition, keypress } = req.body;
+    const dialerService = require('../services/dialerService');
+    
+    await dialerService.handleCallEnd(callId, duration, disposition, keypress);
+    res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 module.exports = router;
