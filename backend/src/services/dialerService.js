@@ -457,146 +457,138 @@ class DialerService {
     };
   }
 
-  // 🚨 緊急停止
-  emergencyStopAll() {
-    logger.warn('🚨 緊急停止実行');
+  // 🔍 ヘルスステータス取得
+  getHealthStatus() {
+    const now = new Date();
     
-    for (const campaignId of this.activeCampaigns.keys()) {
-      this.pauseCampaign(campaignId);
-    }
-  }
-}
-
-getHealthStatus() {
-  const now = new Date();
-  
-  const healthData = {
-    timestamp: now.toISOString(),
-    initialized: this.initialized,
-    dialerJobRunning: this.dialerJobRunning,
-    activeCampaigns: {
-      count: this.activeCampaigns.size,
-      details: Array.from(this.activeCampaigns.entries()).map(([id, campaign]) => ({
-        id: id,
-        name: campaign.name,
-        status: campaign.status,
-        activeCalls: campaign.activeCalls,
-        maxConcurrentCalls: campaign.maxConcurrentCalls,
-        lastDialTime: campaign.lastDialTime
-      }))
-    },
-    activeCalls: {
-      count: this.activeCalls.size,
-      details: Array.from(this.activeCalls.entries()).map(([callId, call]) => ({
-        callId: callId,
-        contactId: call.contactId,
-        campaignId: call.campaignId,
-        startTime: call.startTime,
-        status: call.status,
-        duration: Math.floor((now - new Date(call.startTime)) / 1000)
-      }))
-    },
-    systemHealth: {
-      memoryUsage: process.memoryUsage(),
-      uptime: process.uptime(),
-      nodeVersion: process.version
-    }
-  };
-
-  return healthData;
-}
-
-// 🔧 自動発信ジョブの動作状況確認
-getDialerJobStatus() {
-  const jobStatus = {
-    isRunning: this.dialerJobRunning,
-    lastExecutionTime: this.lastJobExecution || null,
-    totalExecutions: this.jobExecutionCount || 0,
-    errors: this.jobErrors || []
-  };
-
-  return jobStatus;
-}
-
-// 🔄 発信ジョブの強制実行（デバッグ用）
-async executeDialerJobManually() {
-  logger.info('🔧 手動発信ジョブ実行開始');
-  
-  try {
-    const startTime = new Date();
-    await this.processDialerQueue();
-    const endTime = new Date();
-    const duration = endTime - startTime;
-    
-    logger.info(`✅ 手動発信ジョブ完了: 実行時間=${duration}ms`);
-    
-    return {
-      success: true,
-      executionTime: duration,
-      timestamp: startTime.toISOString(),
-      activeCampaigns: this.activeCampaigns.size,
-      activeCalls: this.activeCalls.size
-    };
-  } catch (error) {
-    logger.error('❌ 手動発信ジョブエラー:', error);
-    throw error;
-  }
-}
-
-// 🚨 緊急停止機能の強化
-async emergencyStopAll(reason = '手動停止') {
-  logger.warn(`🚨 緊急停止実行: ${reason}`);
-  
-  const stopResults = {
-    timestamp: new Date().toISOString(),
-    reason: reason,
-    stoppedCampaigns: [],
-    terminatedCalls: [],
-    errors: []
-  };
-  
-  try {
-    // 1. 全キャンペーンを停止
-    for (const [campaignId, campaign] of this.activeCampaigns.entries()) {
-      try {
-        await this.pauseCampaign(campaignId);
-        stopResults.stoppedCampaigns.push({
-          id: campaignId,
+    const healthData = {
+      timestamp: now.toISOString(),
+      initialized: this.initialized,
+      dialerJobRunning: this.dialerJobRunning,
+      activeCampaigns: {
+        count: this.activeCampaigns.size,
+        details: Array.from(this.activeCampaigns.entries()).map(([id, campaign]) => ({
+          id: id,
           name: campaign.name,
-          activeCalls: campaign.activeCalls
-        });
-      } catch (error) {
-        stopResults.errors.push({
-          type: 'campaign_stop',
-          campaignId: campaignId,
-          error: error.message
+          status: campaign.status,
+          activeCalls: campaign.activeCalls,
+          maxConcurrentCalls: campaign.maxConcurrentCalls,
+          lastDialTime: campaign.lastDialTime
+        }))
+      },
+      activeCalls: {
+        count: this.activeCalls.size,
+        details: Array.from(this.activeCalls.entries()).map(([callId, call]) => ({
+          callId: callId,
+          contactId: call.contactId,
+          campaignId: call.campaignId,
+          startTime: call.startTime,
+          status: call.status,
+          duration: Math.floor((now - new Date(call.startTime)) / 1000)
+        }))
+      },
+      systemHealth: {
+        memoryUsage: process.memoryUsage(),
+        uptime: process.uptime(),
+        nodeVersion: process.version
+      }
+    };
+
+    return healthData;
+  }
+
+  // 🔧 自動発信ジョブの動作状況確認
+  getDialerJobStatus() {
+    const jobStatus = {
+      isRunning: this.dialerJobRunning,
+      lastExecutionTime: this.lastJobExecution || null,
+      totalExecutions: this.jobExecutionCount || 0,
+      errors: this.jobErrors || []
+    };
+
+    return jobStatus;
+  }
+
+  // 🔄 発信ジョブの強制実行（デバッグ用）
+  async executeDialerJobManually() {
+    logger.info('🔧 手動発信ジョブ実行開始');
+    
+    try {
+      const startTime = new Date();
+      await this.processDialerQueue();
+      const endTime = new Date();
+      const duration = endTime - startTime;
+      
+      logger.info(`✅ 手動発信ジョブ完了: 実行時間=${duration}ms`);
+      
+      return {
+        success: true,
+        executionTime: duration,
+        timestamp: startTime.toISOString(),
+        activeCampaigns: this.activeCampaigns.size,
+        activeCalls: this.activeCalls.size
+      };
+    } catch (error) {
+      logger.error('❌ 手動発信ジョブエラー:', error);
+      throw error;
+    }
+  }
+
+  // 🚨 緊急停止機能の強化
+  async emergencyStopAll(reason = '手動停止') {
+    logger.warn(`🚨 緊急停止実行: ${reason}`);
+    
+    const stopResults = {
+      timestamp: new Date().toISOString(),
+      reason: reason,
+      stoppedCampaigns: [],
+      terminatedCalls: [],
+      errors: []
+    };
+    
+    try {
+      // 1. 全キャンペーンを停止
+      for (const [campaignId, campaign] of this.activeCampaigns.entries()) {
+        try {
+          await this.pauseCampaign(campaignId);
+          stopResults.stoppedCampaigns.push({
+            id: campaignId,
+            name: campaign.name,
+            activeCalls: campaign.activeCalls
+          });
+        } catch (error) {
+          stopResults.errors.push({
+            type: 'campaign_stop',
+            campaignId: campaignId,
+            error: error.message
+          });
+        }
+      }
+      
+      // 2. アクティブな通話を記録
+      for (const [callId, call] of this.activeCalls.entries()) {
+        stopResults.terminatedCalls.push({
+          callId: callId,
+          campaignId: call.campaignId,
+          contactId: call.contactId,
+          duration: Math.floor((new Date() - new Date(call.startTime)) / 1000)
         });
       }
-    }
-    
-    // 2. アクティブな通話を記録
-    for (const [callId, call] of this.activeCalls.entries()) {
-      stopResults.terminatedCalls.push({
-        callId: callId,
-        campaignId: call.campaignId,
-        contactId: call.contactId,
-        duration: Math.floor((new Date() - new Date(call.startTime)) / 1000)
+      
+      // 3. 発信ジョブ停止
+      this.dialerJobRunning = false;
+      
+      logger.warn(`🚨 緊急停止完了: ${stopResults.stoppedCampaigns.length}キャンペーン, ${stopResults.terminatedCalls.length}通話`);
+      
+      return stopResults;
+    } catch (error) {
+      logger.error('緊急停止処理エラー:', error);
+      stopResults.errors.push({
+        type: 'system_error',
+        error: error.message
       });
+      return stopResults;
     }
-    
-    // 3. 発信ジョブ停止
-    this.dialerJobRunning = false;
-    
-    logger.warn(`🚨 緊急停止完了: ${stopResults.stoppedCampaigns.length}キャンペーン, ${stopResults.terminatedCalls.length}通話`);
-    
-    return stopResults;
-  } catch (error) {
-    logger.error('緊急停止処理エラー:', error);
-    stopResults.errors.push({
-      type: 'system_error',
-      error: error.message
-    });
-    return stopResults;
   }
 }
 
