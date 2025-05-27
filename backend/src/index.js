@@ -11,6 +11,9 @@ const app = express();
 const PORT = parseInt(process.env.PORT || '5000', 10);
 const server = http.createServer(app);
 
+const systemRouter = require('./routes/system');
+app.use('/api/system', systemRouter);
+
 // CORS設定
 app.use((req, res, next) => {
   const origin = req.headers.origin;
