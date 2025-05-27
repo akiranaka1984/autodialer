@@ -243,8 +243,9 @@ class SipService extends EventEmitter {
       // 発信準備
       const formattedNumber = this.formatPhoneNumber(params.phoneNumber);
       const sipServer = process.env.SIP_SERVER || 'ito258258.site';
-      const callDuration = '30';
       const callId = 'sip-' + Date.now() + '-' + Math.floor(Math.random() * 10000);
+      
+      logger.info(`📞 SIP発信詳細: Account=${sipAccount.username}, Server=${sipServer}, Number=${formattedNumber}`);
       
       // SIPアカウントを使用中にマーク
       sipAccount.status = 'busy';
@@ -253,50 +254,75 @@ class SipService extends EventEmitter {
       // 通話IDとSIPアカウントを関連付け
       this.callToAccountMap.set(callId, sipAccount);
       
-      // 音声ファイルの準備
-      let primaryAudioFile = null;
-      if (campaignAudio && campaignAudio.length > 0) {
-        const welcomeAudio = campaignAudio.find(audio => audio.audio_type === 'welcome');
-        if (welcomeAudio) {
-          primaryAudioFile = welcomeAudio.path || 
-                            `/var/www/autodialer/backend/audio-files/${welcomeAudio.filename}`;
-          logger.info(`🎵 Primary音声ファイル設定: ${welcomeAudio.filename}`);
-        }
-      }
-      
-      // pjsua用の引数を生成
+      // 🔥 修正版: 安全なコマンド実行
       const args = [
         sipAccount.username,
         sipAccount.password,
         sipServer,
         formattedNumber,
-        callDuration,
-        primaryAudioFile || ''
+        '30' // 固定通話時間
       ];
-
-      // exec版の発信処理
-      const commandLine = `${this.sipcmdPath} ${args.join(' ')}`;
-      console.log(`🚀 exec実行: ${commandLine}`);
-
+      
+      const commandLine = `${this.sipcmdPath} ${args.map(arg => `"${arg}"`).join(' ')}`;
+      logger.info(`🚀 SIPコマンド実行: ${this.sipcmdPath} [引数は安全のため省略]`);
+      
+      // プロセス実行（エラーハンドリング強化）
       const sipcmdProcess = exec(commandLine, {
         cwd: '/var/www/autodialer/backend',
-        env: process.env,
-        timeout: 60000
-      }, (error, stdout, stderr) => {
-        if (error) {
-          console.error(`❌ exec エラー: ${error.message}`);
-          this.releaseCallResource(callId);
-          return;
-        }
-        if (stderr) console.error(`⚠️ stderr: ${stderr}`);
-        console.log(`✅ stdout: ${stdout}`);
+        env: {
+          ...process.env,
+          LANG: 'C',
+          LC_ALL: 'C'
+        },
+        timeout: 45000, // 45秒でタイムアウト
+        killSignal: 'SIGTERM',
+        maxBuffer: 1024 * 1024 // 1MB buffer
       });
-
-      console.log(`✅ プロセス開始: PID=${sipcmdProcess.pid}`);
-
-      // 🎯 音声再生システム（改良版）
+      
+      // プロセス開始確認
+      if (!sipcmdProcess.pid) {
+        throw new Error('SIP発信プロセスの開始に失敗しました');
+      }
+      
+      logger.info(`✅ SIPプロセス開始: PID=${sipcmdProcess.pid}`);
+      
+      // 🎯 プロセス完了を Promise で管理
+      const processPromise = new Promise((resolve, reject) => {
+        sipcmdProcess.on('exit', (code, signal) => {
+          logger.info(`SIPプロセス終了: code=${code}, signal=${signal}`);
+          
+          if (code === 0) {
+            resolve({ success: true, code });
+          } else {
+            reject(new Error(`SIPプロセス異常終了: code=${code}, signal=${signal}`));
+          }
+        });
+        
+        sipcmdProcess.on('error', (error) => {
+          logger.error(`SIPプロセスエラー: ${error.message}`);
+          reject(error);
+        });
+        
+        sipcmdProcess.stdout?.on('data', (data) => {
+          const output = data.toString().trim();
+          if (output) {
+            logger.info(`SIP stdout: ${output}`);
+          }
+        });
+        
+        sipcmdProcess.stderr?.on('data', (data) => {
+          const error = data.toString().trim();
+          if (error) {
+            logger.warn(`SIP stderr: ${error}`);
+          }
+        });
+      });
+      
+      // 🎵 音声再生システム（非同期で開始）
       if (campaignAudio && campaignAudio.length > 0) {
-        logger.info(`🎵 [実音声再生] 音声再生開始: callId=${callId}`);
+        logger.info(`🎵 音声再生開始: callId=${callId}`);
+        
+        // 2秒後に音声再生開始（SIP接続確立を待つ）
         setTimeout(() => {
           this.playAudioSimple(callId, campaignAudio);
         }, 2000);
@@ -312,6 +338,8 @@ class SipService extends EventEmitter {
         hasAudio: campaignAudio ? true : false
       });
       
+      // プロセス完了を待たずに成功レスポンスを返す
+      // 実際の通話結果は後でイベントで通知される
       return {
         ActionID: callId,
         Response: 'Success',
@@ -319,10 +347,18 @@ class SipService extends EventEmitter {
         SipAccount: sipAccount.username,
         mainCallerId: sipAccount.mainCallerId,
         provider: 'sip',
-        audioFilesCount: campaignAudio ? campaignAudio.length : 0
+        audioFilesCount: campaignAudio ? campaignAudio.length : 0,
+        processId: sipcmdProcess.pid
       };
+      
     } catch (error) {
       logger.error('SIP発信エラー:', error);
+      
+      // エラー時はリソースを解放
+      if (typeof callId !== 'undefined' && this.callToAccountMap.has(callId)) {
+        await this.releaseCallResource(callId);
+      }
+      
       throw error;
     }
   }
