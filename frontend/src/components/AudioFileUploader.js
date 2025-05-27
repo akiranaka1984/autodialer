@@ -29,7 +29,7 @@ const AudioFileUploader = ({ campaignId, audioType, onUploadSuccess }) => {
     const selectedFile = e.target.files[0];
     if (selectedFile) {
       // ファイルタイプチェック
-      const validTypes = ['audio/wav', 'audio/mpeg', 'audio/mp3', 'audio/ogg'];
+      const validTypes = ['audio/wav'];
       if (!validTypes.includes(selectedFile.type)) {
         setError('サポートされていないファイル形式です。WAV、MP3、OGGのみ対応しています。');
         return;
@@ -207,13 +207,13 @@ const AudioFileUploader = ({ campaignId, audioType, onUploadSuccess }) => {
                 <p className="mb-1 text-sm text-gray-500">
                   クリックでファイルを選択
                 </p>
-                <p className="text-xs text-gray-500">WAV, MP3, OGG (最大: 25MB)</p>
+		<p className="text-xs text-gray-500">WAV (最大: 25MB)</p>
               </div>
               <input
                 id={`audio-upload-${audioType}`}
                 type="file"
                 className="hidden"
-                accept=".wav,.mp3,.ogg,audio/wav,audio/mpeg,audio/mp3,audio/ogg"
+                accept=".wav,audio/wav"
                 onChange={handleFileChange}
               />
             </label>

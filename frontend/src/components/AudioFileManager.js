@@ -132,9 +132,9 @@ const AudioFileManager = () => {
     if (!file) return;
     
     // ファイルタイプのチェック
-    const validTypes = ['audio/wav', 'audio/mpeg', 'audio/mp3', 'audio/ogg'];
+    const validTypes = ['audio/wav'];
     if (!validTypes.includes(file.type)) {
-      setError('サポートされていないファイル形式です。WAV、MP3、OGGのみアップロードできます。');
+      setError('サポートされていないファイル形式です。WAVのみアップロードできます。');
       return;
     }
     
