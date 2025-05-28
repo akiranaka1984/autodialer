@@ -476,20 +476,45 @@ app.use((err, req, res, next) => {
   });
 });
 
-// サーバー起動
+// サーバー起動（修正版）
 const startServer = async () => {
   try {
-    // データベース接続確認
+    console.log('🚀 サーバー初期化開始...');
+    
+    // 1. データベース接続確認
     await db.query('SELECT 1');
     console.log('✅ データベース接続成功');
 
+    // 2. SIPサービス初期化（最優先）
+    console.log('🔧 SIPサービス初期化中...');
+    const sipService = require('./services/sipService');
+    const sipResult = await sipService.connect();
+    console.log('📞 SIP初期化結果:', sipResult);
+    console.log('📞 SIPアカウント数:', sipService.getAvailableSipAccountCount());
+
+    // 3. CallService初期化
+    console.log('🔧 CallService初期化中...');
+    const callService = require('./services/callService');
+    const callResult = await callService.initialize();
+    console.log('📞 CallService初期化結果:', callResult);
+
+    // 4. DialerService初期化
+    console.log('🔧 DialerService初期化中...');
     const dialerService = require('./services/dialerService');
-    await dialerService.initialize();
-    console.log('✅ DialerService初期化完了');
+    const dialerResult = await dialerService.initialize();
+    console.log('🚀 DialerService初期化結果:', dialerResult);
     
-    // サーバー起動
+    // 5. 最終確認
+    console.log('📊 初期化完了状態:');
+    console.log('- SIP接続:', sipService.connected);
+    console.log('- SIPアカウント:', sipService.getAvailableSipAccountCount());
+    console.log('- Dialer初期化:', dialerService.initialized);
+    console.log('- Dialerジョブ:', dialerService.dialerJobRunning);
+    
+    // 6. サーバー起動
     server.listen(PORT, '0.0.0.0', () => {
       console.log(`✅ サーバーが起動しました: http://0.0.0.0:${PORT}`);
+      console.log('🎯 自動発信システム準備完了');
       console.log('🔗 利用可能なエンドポイント:');
       console.log('  - GET  /api/campaigns');
       console.log('  - GET  /api/campaigns/:id');
