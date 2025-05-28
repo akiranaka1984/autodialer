@@ -55,7 +55,7 @@ class DialerService {
           [campaign.id], 3000
         );
         
-	if (contactCount && contactCount.length > 0 && contactCount[0] && contactCount[0].count > 0) {
+        if (contactCount[0].count > 0) {
           this.activeCampaigns.set(campaign.id, {
             id: campaign.id,
             name: campaign.name,
