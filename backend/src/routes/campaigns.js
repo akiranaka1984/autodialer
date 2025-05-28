@@ -400,10 +400,17 @@ router.get('/:id/stats', async (req, res) => {
     const callStat = callStats[0];
     
     // 進捗率を計算
-    const progress = contactStat.total > 0 
-      ? Math.round(((contactStat.completed + contactStat.failed + contactStat.dnc) / contactStat.total) * 100) 
-      : 0;
-    
+    // 進捗率を計算（修正版）
+   const totalContacts = contactStat.total || 0;
+   const processedContacts = (contactStat.completed || 0) + (contactStat.failed || 0) + (contactStat.dnc || 0);
+
+   let progress = 0;
+   if (totalContacts > 0) {
+    progress = Math.round((processedContacts / totalContacts) * 100);
+    progress = Math.min(Math.max(progress, 0), 100); // 0-100%に制限
+   }
+
+   console.log(`進捗計算デバッグ: total=${totalContacts}, processed=${processedContacts}, progress=${progress}%`);
     // 成功率を計算
     const successRate = callStat.total_calls > 0 
       ? Math.round((callStat.answered_calls / callStat.total_calls) * 100) 
