@@ -102,76 +102,47 @@ class SipService extends EventEmitter {
   
   // データベースからSIPアカウント読み込み
   async loadSipAccountsFromDatabase() {
-    try {
-      logger.info('データベースからSIPチャンネル情報を読み込み中...');
-      
-      const [channels] = await db.query(`
-        SELECT 
-          cc.id,
-          cc.caller_id_id,
-          cc.username,
-          cc.password,
-          cc.channel_type,
-          cc.status,
-          cc.last_used,
-          cc.created_at,
-          ci.number as caller_number, 
-          ci.description, 
-          ci.provider, 
-          ci.domain, 
-          ci.active as caller_active
-        FROM caller_channels cc
-        JOIN caller_ids ci ON cc.caller_id_id = ci.id
-        WHERE ci.active = true
-        ORDER BY cc.caller_id_id, cc.id
-      `);
-      
-      logger.info(`データベースクエリ結果: ${channels ? channels.length : 0}件のチャンネル`);
-      
-      if (!channels || channels.length === 0) {
-        logger.warn('データベースに有効なSIPチャンネルが見つかりません');
-        return [{
-          username: '03080001',
-          password: '56110478',
-          callerID: '03-5946-8520',
-          description: 'デフォルトテスト',
-          domain: 'ito258258.site',
-          provider: 'Default SIP',
-          mainCallerId: 1,
-          channelType: 'both',
-          status: 'available',
-          lastUsed: null,
-          failCount: 0,
-          channelId: 999
-        }];
-      }
-      
-      const formattedAccounts = channels.map(channel => ({
-        username: channel.username,
-        password: channel.password,
-        callerID: channel.caller_number,
-        description: channel.description || '',
-        domain: channel.domain || 'ito258258.site',
-        provider: channel.provider || 'SIP Provider',
-        mainCallerId: channel.caller_id_id,
-        channelType: channel.channel_type || 'both',
-        status: channel.status || 'available',
-        lastUsed: channel.last_used || null,
-        failCount: 0,
-        channelId: channel.id
-      }));
-      
-      logger.info(`合計${formattedAccounts.length}個のSIPチャンネルを読み込みました`);
-      return formattedAccounts;
-    } catch (error) {
-      logger.error('データベースからのSIPチャンネル読み込みエラー:', error);
+  try {
+    logger.info('🔧 データベースからSIPチャンネル情報を読み込み中...');
+    
+    const [channels] = await db.query(`
+      SELECT 
+        cc.id,
+        cc.caller_id_id,
+        cc.username,
+        cc.password,
+        cc.channel_type,
+        cc.status,
+        cc.last_used,
+        cc.created_at,
+        ci.number as caller_number, 
+        ci.description, 
+        ci.provider, 
+        ci.domain, 
+        ci.active as caller_active
+      FROM caller_channels cc
+      JOIN caller_ids ci ON cc.caller_id_id = ci.id
+      WHERE ci.active = true
+      ORDER BY cc.caller_id_id, cc.id
+    `);
+    
+    // 🔥 デバッグログ追加
+    console.log('🔍 SipService データベースクエリ結果:');
+    console.log('  - 取得件数:', channels ? channels.length : 'undefined');
+    console.log('  - データ型:', typeof channels);
+    console.log('  - 配列チェック:', Array.isArray(channels));
+    
+    if (!channels) {
+      console.log('❌ channels が null/undefined');
+      logger.error('SIPチャンネルクエリ結果がnull');
+      // フォールバック用のデフォルトアカウント
       return [{
         username: '03080001',
         password: '56110478',
         callerID: '03-5946-8520',
-        description: 'デフォルトテスト',
+        description: 'フォールバック SIP',
         domain: 'ito258258.site',
-        provider: 'Default SIP',
+        provider: 'Emergency SIP',
         mainCallerId: 1,
         channelType: 'both',
         status: 'available',
@@ -180,8 +151,90 @@ class SipService extends EventEmitter {
         channelId: 999
       }];
     }
+    
+    if (channels.length === 0) {
+      console.log('⚠️ channels.length === 0');
+      logger.warn('データベースに有効なSIPチャンネルが見つかりません');
+      // フォールバック用のデフォルトアカウント
+      return [{
+        username: '03080001',
+        password: '56110478',
+        callerID: '03-5946-8520',
+        description: 'フォールバック SIP',
+        domain: 'ito258258.site',
+        provider: 'Emergency SIP',
+        mainCallerId: 1,
+        channelType: 'both',
+        status: 'available',
+        lastUsed: null,
+        failCount: 0,
+        channelId: 999
+      }];
+    }
+    
+    // 🔥 各レコードのデバッグ出力
+    console.log('📋 取得したSIPチャンネル:');
+    channels.forEach((channel, index) => {
+      console.log(`  [${index + 1}] ${channel.username} -> ${channel.caller_number} (${channel.status})`);
+    });
+    
+    // 🔥 フォーマット処理（エラーハンドリング強化）
+    const formattedAccounts = [];
+    
+    for (let i = 0; i < channels.length; i++) {
+      const channel = channels[i];
+      
+      try {
+        const formattedAccount = {
+          username: channel.username || 'unknown',
+          password: channel.password || 'unknown',
+          callerID: channel.caller_number || '03-5946-8520',
+          description: channel.description || '',
+          domain: channel.domain || 'ito258258.site',
+          provider: channel.provider || 'SIP Provider',
+          mainCallerId: channel.caller_id_id || 1,
+          channelType: channel.channel_type || 'both',
+          status: channel.status || 'available',
+          lastUsed: channel.last_used || null,
+          failCount: 0,
+          channelId: channel.id || i + 1
+        };
+        
+        formattedAccounts.push(formattedAccount);
+        console.log(`✅ SIPアカウント[${i + 1}]フォーマット成功:`, formattedAccount.username);
+        
+      } catch (formatError) {
+        console.error(`❌ SIPアカウント[${i + 1}]フォーマットエラー:`, formatError);
+        logger.error(`SIPアカウントフォーマットエラー[${i}]:`, formatError);
+      }
+    }
+    
+    console.log(`🎯 最終結果: ${formattedAccounts.length}個のSIPアカウントを処理`);
+    logger.info(`合計${formattedAccounts.length}個のSIPチャンネルを読み込みました`);
+    
+    return formattedAccounts;
+    
+  } catch (error) {
+    console.error('❌ SIPチャンネル読み込みエラー:', error);
+    logger.error('データベースからのSIPチャンネル読み込みエラー:', error);
+    
+    // 🔥 エラー時のフォールバック（確実に動作するデフォルトアカウント）
+    return [{
+      username: '03080001',
+      password: '56110478',
+      callerID: '03-5946-8520',
+      description: 'エラー時フォールバック',
+      domain: 'ito258258.site',
+      provider: 'Fallback SIP',
+      mainCallerId: 1,
+      channelType: 'both',
+      status: 'available',
+      lastUsed: null,
+      failCount: 0,
+      channelId: 999
+    }];
   }
-
+}
   // 利用可能なSIPアカウント取得
   async getAvailableSipAccount() {
     logger.info(`利用可能なSIPアカウントを検索中 (全${this.sipAccounts.length}個)`);
