@@ -1,9 +1,9 @@
-// backend/src/services/dialerService-self-healing.js - 自己回復機能付き
+// backend/src/services/dialerService.js - 完全自動連動版
 const db = require('./database');
 const logger = require('./logger');
 const { EventEmitter } = require('events');
 
-class SelfHealingDialerService extends EventEmitter {
+class DialerService extends EventEmitter {
   constructor() {
     super();
     this.activeCampaigns = new Map();
@@ -11,42 +11,35 @@ class SelfHealingDialerService extends EventEmitter {
     this.isProcessing = false;
     this.dialerIntervalId = null;
     this.campaignWatcherIntervalId = null;
-    this.healthCheckIntervalId = null;
     
     // 設定
     this.dialInterval = 5000; // 5秒間隔
     this.campaignCheckInterval = 10000; // 10秒ごとにキャンペーン状態チェック
-    this.healthCheckInterval = 30000; // 30秒ごとに自己診断
     this.enabled = process.env.DISABLE_AUTO_DIALER !== 'true';
     
-    // 自己回復統計
-    this.healingStats = {
-      totalHeals: 0,
-      lastHealTime: null,
-      consecutiveFailures: 0,
-      maxConsecutiveFailures: 3
-    };
+    logger.info(`🚀 DialerService初期化: 自動連動システム=${this.enabled ? '有効' : '無効'}`);
     
-    logger.info(`🚀 自己回復機能付きDialerService初期化: システム=${this.enabled ? '有効' : '無効'}`);
-    
-    // 🔥 完全自動開始 + 自己回復機能
+    // 🔥 完全自動開始
     if (this.enabled) {
-      this.startAutoSystemWithHealing();
+      this.startAutoSystem();
     }
   }
 
-  // 🎯 自己回復機能付き自動システム開始
-  async startAutoSystemWithHealing() {
+  // 🎯 完全自動システム開始
+  async startAutoSystem() {
     try {
-      logger.info('🎯 自己回復機能付き自動システム開始...');
+      logger.info('🎯 完全自動連動システム開始...');
       
-      // 1. 基本システム開始
-      await this.startAutoSystem();
+      // 1. 初期キャンペーンロード
+      await this.loadActiveCampaigns();
       
-      // 2. 自己診断・回復機能開始
-      this.startHealthCheck();
+      // 2. キャンペーン監視開始（データベース変更を自動検知）
+      this.startCampaignWatcher();
       
-      logger.info('✅ 自己回復機能付きシステム起動完了');
+      // 3. 自動発信システム開始
+      this.startAutoDialer();
+      
+      logger.info('✅ 完全自動連動システム起動完了');
       
     } catch (error) {
       logger.error('❌ 自動システム開始エラー:', error);
@@ -54,192 +47,382 @@ class SelfHealingDialerService extends EventEmitter {
       // 5秒後に再試行
       setTimeout(() => {
         logger.info('🔄 自動システム再起動試行...');
-        this.startAutoSystemWithHealing();
+        this.startAutoSystem();
       }, 5000);
     }
   }
 
-  // 🏥 自己診断・回復機能開始
-  startHealthCheck() {
-    if (this.healthCheckIntervalId) {
-      clearInterval(this.healthCheckIntervalId);
+  // 👁️ キャンペーン監視開始（データベース変更を自動検知）
+  startCampaignWatcher() {
+    if (this.campaignWatcherIntervalId) {
+      clearInterval(this.campaignWatcherIntervalId);
     }
     
-    this.healthCheckIntervalId = setInterval(async () => {
+    this.campaignWatcherIntervalId = setInterval(async () => {
       try {
-        await this.performHealthCheck();
+        await this.checkCampaignChanges();
       } catch (error) {
-        logger.error('自己診断エラー:', error);
-        this.healingStats.consecutiveFailures++;
+        logger.error('キャンペーン監視エラー:', error);
       }
-    }, this.healthCheckInterval);
+    }, this.campaignCheckInterval);
     
-    logger.info(`🏥 自己診断機能開始: ${this.healthCheckInterval}ms間隔`);
+    logger.info(`👁️ キャンペーン監視開始: ${this.campaignCheckInterval}ms間隔`);
   }
 
-  // 🔍 自己診断実行
-  async performHealthCheck() {
+  // 🔍 キャンペーン変更チェック（自動検知）
+  async checkCampaignChanges() {
     try {
-      let needsHealing = false;
-      const issues = [];
-      
-      // 1. 基本システム状態チェック
-      if (this.enabled && !this.dialerIntervalId) {
-        issues.push('自動発信システム停止');
-        needsHealing = true;
-      }
-      
-      if (this.enabled && !this.campaignWatcherIntervalId) {
-        issues.push('キャンペーン監視停止');
-        needsHealing = true;
-      }
-      
-      // 2. データベース整合性チェック
-      const [dbCampaigns] = await db.query(`
-        SELECT c.id, c.name,
+      // データベースから現在のアクティブキャンペーンを取得
+      const [currentActiveCampaigns] = await db.query(`
+        SELECT c.id, c.name, c.max_concurrent_calls, c.caller_id_id,
+               ci.number as caller_id_number,
+               c.updated_at,
                (SELECT COUNT(*) FROM contacts WHERE campaign_id = c.id AND status = 'pending') as pending_count
         FROM campaigns c
-        WHERE c.status = 'active'
+        JOIN caller_ids ci ON c.caller_id_id = ci.id
+        WHERE c.status = 'active' AND ci.active = true
+        ORDER BY c.updated_at DESC
       `);
       
-      const dbActiveIds = new Set(dbCampaigns.filter(c => c.pending_count > 0).map(c => c.id));
-      const memoryActiveIds = new Set(this.activeCampaigns.keys());
+      const currentIds = new Set(currentActiveCampaigns.map(c => c.id));
+      const existingIds = new Set(this.activeCampaigns.keys());
       
-      // DBにあるがメモリにないキャンペーン
-      const missingInMemory = [...dbActiveIds].filter(id => !memoryActiveIds.has(id));
-      if (missingInMemory.length > 0) {
-        issues.push(`メモリ不整合: ${missingInMemory.length}キャンペーン`);
-        needsHealing = true;
-      }
-      
-      // 3. SIP接続チェック
-      const sipService = require('./sipService');
-      if (!sipService.connected || sipService.getAvailableSipAccountCount() === 0) {
-        issues.push('SIP接続問題');
-        needsHealing = true;
-      }
-      
-      // 4. 発信活動チェック（過去2分間）
-      if (this.activeCampaigns.size > 0) {
-        const [recentCalls] = await db.query(`
-          SELECT COUNT(*) as count
-          FROM call_logs
-          WHERE start_time >= DATE_SUB(NOW(), INTERVAL 2 MINUTE)
-        `);
-        
-        if (recentCalls[0].count === 0) {
-          // アクティブキャンペーンがあるのに発信がない
-          issues.push('発信活動なし');
-          needsHealing = true;
+      // 🆕 新しいキャンペーンを自動検知
+      const newCampaigns = currentActiveCampaigns.filter(c => !existingIds.has(c.id));
+      for (const campaign of newCampaigns) {
+        if (campaign.pending_count > 0) {
+          await this.autoAddCampaign(campaign);
+          logger.info(`🆕 新しいキャンペーンを自動検知: "${campaign.name}" (ID: ${campaign.id})`);
         }
       }
       
-      // 5. 自己回復実行
-      if (needsHealing) {
-        await this.performSelfHealing(issues);
-      } else {
-        // 正常時は連続失敗回数をリセット
-        this.healingStats.consecutiveFailures = 0;
-        logger.debug('🏥 システム健全性確認: 正常');
+      // ❌ 停止されたキャンペーンを自動検知
+      const removedIds = Array.from(existingIds).filter(id => !currentIds.has(id));
+      for (const campaignId of removedIds) {
+        await this.autoRemoveCampaign(campaignId);
+        logger.info(`❌ 停止されたキャンペーンを自動検知: ID ${campaignId}`);
+      }
+      
+      // 自動発信システムの状態調整
+      if (this.activeCampaigns.size > 0 && !this.dialerIntervalId) {
+        this.startAutoDialer();
+        logger.info('🚀 アクティブキャンペーン検知により自動発信開始');
+      } else if (this.activeCampaigns.size === 0 && this.dialerIntervalId) {
+        this.stopAutoDialer();
+        logger.info('🛑 アクティブキャンペーンなしにより自動発信停止');
       }
       
     } catch (error) {
-      logger.error('自己診断実行エラー:', error);
-      throw error;
+      logger.error('キャンペーン変更チェックエラー:', error);
     }
   }
 
-  // 🔧 自己回復実行
-  async performSelfHealing(issues) {
+  // 🆕 キャンペーン自動追加
+  async autoAddCampaign(campaign) {
     try {
-      logger.warn(`🔧 自己回復開始: 検出された問題 [${issues.join(', ')}]`);
+      this.activeCampaigns.set(campaign.id, {
+        id: campaign.id,
+        name: campaign.name,
+        maxConcurrentCalls: Math.min(campaign.max_concurrent_calls || 1, 2),
+        callerIdId: campaign.caller_id_id,
+        callerIdNumber: campaign.caller_id_number,
+        activeCalls: 0,
+        status: 'active',
+        lastDialTime: null,
+        failCount: 0,
+        addedAt: new Date()
+      });
       
-      // 連続失敗回数チェック
-      if (this.healingStats.consecutiveFailures >= this.healingStats.maxConsecutiveFailures) {
-        logger.error(`🚨 連続失敗限界到達 (${this.healingStats.consecutiveFailures}回) - 緊急停止`);
-        await this.emergencyStop();
+      // イベント発火
+      this.emit('campaignAdded', campaign);
+      
+      logger.info(`✅ キャンペーン自動追加: "${campaign.name}" (未処理: ${campaign.pending_count}件)`);
+      
+    } catch (error) {
+      logger.error(`キャンペーン自動追加エラー: ${campaign.id}`, error);
+    }
+  }
+
+  // ❌ キャンペーン自動削除
+  async autoRemoveCampaign(campaignId) {
+    try {
+      const campaign = this.activeCampaigns.get(campaignId);
+      
+      if (campaign) {
+        this.activeCampaigns.delete(campaignId);
+        
+        // イベント発火
+        this.emit('campaignRemoved', { id: campaignId, name: campaign.name });
+        
+        logger.info(`🗑️ キャンペーン自動削除: "${campaign.name}" (ID: ${campaignId})`);
+      }
+      
+    } catch (error) {
+      logger.error(`キャンペーン自動削除エラー: ${campaignId}`, error);
+    }
+  }
+
+  // 📋 初期キャンペーンロード
+  async loadActiveCampaigns() {
+    try {
+      const [campaigns] = await db.query(`
+        SELECT c.id, c.name, c.max_concurrent_calls, c.caller_id_id,
+               ci.number as caller_id_number,
+               (SELECT COUNT(*) FROM contacts WHERE campaign_id = c.id AND status = 'pending') as pending_count
+        FROM campaigns c
+        JOIN caller_ids ci ON c.caller_id_id = ci.id
+        WHERE c.status = 'active' AND ci.active = true
+      `);
+      
+      logger.info(`📋 初期キャンペーンロード: ${campaigns.length}件検出`);
+      
+      for (const campaign of campaigns) {
+        if (campaign.pending_count > 0) {
+          await this.autoAddCampaign(campaign);
+        }
+      }
+      
+    } catch (error) {
+      logger.error('初期キャンペーンロードエラー:', error);
+    }
+  }
+
+  // 🚀 自動発信システム開始
+  startAutoDialer() {
+    if (this.dialerIntervalId) {
+      clearInterval(this.dialerIntervalId);
+    }
+    
+    this.dialerIntervalId = setInterval(async () => {
+      if (!this.enabled || this.isProcessing || this.activeCampaigns.size === 0) {
         return;
       }
       
-      // 1. システム停止
-      await this.stopSystem();
-      
-      // 2. 少し待機
-      await new Promise(resolve => setTimeout(resolve, 2000));
-      
-      // 3. SIP再接続
-      const sipService = require('./sipService');
-      await sipService.connect();
-      
-      // 4. CallService再初期化
-      const callService = require('./callService');
-      await callService.initialize();
-      
-      // 5. システム再開
-      await this.startAutoSystem();
-      this.startHealthCheck();
-      
-      // 6. 統計更新
-      this.healingStats.totalHeals++;
-      this.healingStats.lastHealTime = new Date();
-      this.healingStats.consecutiveFailures = 0;
-      
-      logger.info(`✅ 自己回復完了 (累計: ${this.healingStats.totalHeals}回)`);
-      
-      // 回復成功をイベントで通知
-      this.emit('systemHealed', {
-        issues,
-        healCount: this.healingStats.totalHeals,
-        timestamp: new Date()
-      });
-      
-    } catch (error) {
-      logger.error('❌ 自己回復失敗:', error);
-      this.healingStats.consecutiveFailures++;
-      
-      // 回復失敗をイベントで通知
-      this.emit('healingFailed', {
-        error: error.message,
-        consecutiveFailures: this.healingStats.consecutiveFailures,
-        timestamp: new Date()
-      });
+      try {
+        await this.processAutoDialing();
+      } catch (error) {
+        logger.error('自動発信エラー:', error);
+      }
+    }, this.dialInterval);
+    
+    logger.info(`🚀 自動発信システム開始: ${this.dialInterval}ms間隔`);
+  }
+
+  // 🛑 自動発信システム停止
+  stopAutoDialer() {
+    if (this.dialerIntervalId) {
+      clearInterval(this.dialerIntervalId);
+      this.dialerIntervalId = null;
+      logger.info('🛑 自動発信システム停止');
     }
   }
 
-  // 🚨 緊急停止
-  async emergencyStop() {
-    logger.error('🚨 緊急停止実行 - システムを安全に停止します');
+  // 📞 自動発信処理
+  async processAutoDialing() {
+    this.isProcessing = true;
     
-    this.enabled = false;
-    await this.stopSystem();
-    
-    // 緊急停止イベント
-    this.emit('emergencyStop', {
-      reason: '連続自己回復失敗',
-      consecutiveFailures: this.healingStats.consecutiveFailures,
-      timestamp: new Date()
-    });
-  }
-
-  // 📊 拡張システム状態取得
-  getSystemStatus() {
-    const baseStatus = this.getBasicSystemStatus();
-    
-    return {
-      ...baseStatus,
-      healing: {
-        enabled: true,
-        totalHeals: this.healingStats.totalHeals,
-        lastHealTime: this.healingStats.lastHealTime,
-        consecutiveFailures: this.healingStats.consecutiveFailures,
-        maxConsecutiveFailures: this.healingStats.maxConsecutiveFailures,
-        healthCheckRunning: this.healthCheckIntervalId !== null
+    try {
+      for (const [campaignId, campaign] of this.activeCampaigns.entries()) {
+        if (campaign.status !== 'active') continue;
+        if (campaign.activeCalls >= campaign.maxConcurrentCalls) continue;
+        
+        // 未処理連絡先を1件取得
+        const [contacts] = await db.query(`
+          SELECT id, phone, name, company 
+          FROM contacts 
+          WHERE campaign_id = ? AND status = 'pending' 
+          LIMIT 1
+        `, [campaignId]);
+        
+        if (contacts.length === 0) {
+          // 未処理連絡先がない場合はキャンペーン完了チェック
+          await this.checkCampaignCompletion(campaignId);
+          continue;
+        }
+        
+        const contact = contacts[0];
+        const success = await this.dialContact(campaign, contact);
+        
+        if (success) {
+          campaign.activeCalls++;
+          campaign.lastDialTime = new Date();
+          
+          // イベント発火
+          this.emit('contactDialed', {
+            campaignId,
+            contactId: contact.id,
+            phone: contact.phone
+          });
+        }
+        
+        // 発信間隔
+        await new Promise(resolve => setTimeout(resolve, 1000));
       }
-    };
+      
+    } catch (error) {
+      logger.error('自動発信処理エラー:', error);
+    } finally {
+      this.isProcessing = false;
+    }
   }
 
-  // 基本システム状態取得（既存メソッド）
-  getBasicSystemStatus() {
+  // 📞 連絡先発信
+  async dialContact(campaign, contact) {
+    try {
+      logger.info(`📞 自動発信: ${contact.phone} (Campaign: ${campaign.name})`);
+      
+      // ステータス更新
+      await db.query(
+        'UPDATE contacts SET status = ?, last_attempt = NOW() WHERE id = ?',
+        ['called', contact.id]
+      );
+      
+      // 発信実行
+      const callService = require('./callService');
+      const result = await callService.originate({
+        phoneNumber: contact.phone,
+        context: 'autodialer',
+        callerID: `"${campaign.name}" <${campaign.callerIdNumber}>`,
+        variables: {
+          CAMPAIGN_ID: campaign.id,
+          CONTACT_ID: contact.id,
+          CONTACT_NAME: contact.name || '',
+          AUTO_DIAL: 'true'
+        }
+      });
+      
+      // 通話ログ記録
+      await db.query(`
+        INSERT INTO call_logs 
+        (contact_id, campaign_id, caller_id_id, call_id, phone_number, start_time, status, call_provider)
+        VALUES (?, ?, ?, ?, ?, NOW(), 'ORIGINATING', ?)
+      `, [
+        contact.id,
+        campaign.id,
+        campaign.callerIdId,
+        result.ActionID,
+        contact.phone,
+        result.provider || 'sip'
+      ]);
+      
+      // アクティブコール記録
+      this.activeCalls.set(result.ActionID, {
+        id: result.ActionID,
+        contactId: contact.id,
+        campaignId: campaign.id,
+        startTime: new Date()
+      });
+      
+      logger.info(`✅ 自動発信成功: ${contact.phone} (CallID: ${result.ActionID})`);
+      return true;
+      
+    } catch (error) {
+      logger.error(`❌ 発信エラー: ${contact.phone}`, error);
+      
+      // エラー時は失敗ステータスに更新
+      await db.query(
+        'UPDATE contacts SET status = ? WHERE id = ?',
+        ['failed', contact.id]
+      ).catch(() => {});
+      
+      return false;
+    }
+  }
+
+  // 🏁 キャンペーン完了チェック
+  async checkCampaignCompletion(campaignId) {
+    try {
+      const [result] = await db.query(
+        'SELECT COUNT(*) as count FROM contacts WHERE campaign_id = ? AND status = "pending"',
+        [campaignId]
+      );
+      
+      if (result[0].count === 0) {
+        // キャンペーン完了
+        await db.query(
+          'UPDATE campaigns SET status = ? WHERE id = ?',
+          ['completed', campaignId]
+        );
+        
+        const campaign = this.activeCampaigns.get(campaignId);
+        logger.info(`🏁 キャンペーン自動完了: "${campaign?.name}" (ID: ${campaignId})`);
+        
+        // イベント発火
+        this.emit('campaignCompleted', { id: campaignId, name: campaign?.name });
+      }
+      
+    } catch (error) {
+      logger.error(`キャンペーン完了チェックエラー: ${campaignId}`, error);
+    }
+  }
+
+  // 📞 通話終了処理
+  async handleCallEnd(callId, duration, status, keypress) {
+    try {
+      const call = this.activeCalls.get(callId);
+      if (!call) return false;
+      
+      // 通話ログ更新
+      await db.query(`
+        UPDATE call_logs
+        SET end_time = NOW(), duration = ?, status = ?, keypress = ?
+        WHERE call_id = ?
+      `, [duration, status, keypress, callId]);
+      
+      // 連絡先ステータス更新
+      let contactStatus = 'completed';
+      if (keypress === '9') {
+        contactStatus = 'dnc';
+        
+        // DNC登録
+        const [contacts] = await db.query(
+          'SELECT phone FROM contacts WHERE id = ?',
+          [call.contactId]
+        );
+        
+        if (contacts.length > 0) {
+          await db.query(
+            'INSERT IGNORE INTO dnc_list (phone, reason) VALUES (?, ?)',
+            [contacts[0].phone, 'ユーザーリクエスト（9キー）']
+          );
+        }
+      }
+      
+      await db.query(
+        'UPDATE contacts SET status = ? WHERE id = ?',
+        [contactStatus, call.contactId]
+      );
+      
+      // アクティブコール数を減らす
+      const campaign = this.activeCampaigns.get(call.campaignId);
+      if (campaign) {
+        campaign.activeCalls = Math.max(0, campaign.activeCalls - 1);
+      }
+      
+      // アクティブコールから削除
+      this.activeCalls.delete(callId);
+      
+      // イベント発火
+      this.emit('callEnded', {
+        callId,
+        campaignId: call.campaignId,
+        contactId: call.contactId,
+        status,
+        duration,
+        keypress
+      });
+      
+      logger.info(`📞 通話終了処理完了: ${callId} (Status: ${status})`);
+      return true;
+      
+    } catch (error) {
+      logger.error(`通話終了処理エラー: ${callId}`, error);
+      return false;
+    }
+  }
+
+  // 📊 システム状態取得
+  getSystemStatus() {
     return {
       enabled: this.enabled,
       autoDialerRunning: this.dialerIntervalId !== null,
@@ -260,37 +443,20 @@ class SelfHealingDialerService extends EventEmitter {
       isProcessing: this.isProcessing,
       intervals: {
         dialInterval: this.dialInterval,
-        campaignCheckInterval: this.campaignCheckInterval,
-        healthCheckInterval: this.healthCheckInterval
+        campaignCheckInterval: this.campaignCheckInterval
       }
     };
   }
 
-  // 🔄 手動回復トリガー
-  async manualHeal(reason = '手動実行') {
-    logger.info(`🔧 手動回復トリガー: ${reason}`);
-    await this.performSelfHealing([reason]);
-  }
-
-  // システム停止時に自己診断も停止
+  // 🚨 システム停止
   async stopSystem() {
-    logger.info('🚨 自己回復システム停止...');
+    logger.info('🚨 自動連動システム停止...');
     
-    // 基本システム停止
-    if (this.dialerIntervalId) {
-      clearInterval(this.dialerIntervalId);
-      this.dialerIntervalId = null;
-    }
+    this.stopAutoDialer();
     
     if (this.campaignWatcherIntervalId) {
       clearInterval(this.campaignWatcherIntervalId);
       this.campaignWatcherIntervalId = null;
-    }
-    
-    // 自己診断停止
-    if (this.healthCheckIntervalId) {
-      clearInterval(this.healthCheckIntervalId);
-      this.healthCheckIntervalId = null;
     }
     
     this.activeCampaigns.clear();
@@ -298,39 +464,30 @@ class SelfHealingDialerService extends EventEmitter {
     
     logger.info('✅ システム停止完了');
   }
-
-  // 以下、既存のメソッドをそのまま継承
-  // （startAutoSystem, loadActiveCampaigns, checkCampaignChanges, etc.）
-  
-  async startAutoSystem() {
-    try {
-      logger.info('🎯 基本自動システム開始...');
-      
-      await this.loadActiveCampaigns();
-      this.startCampaignWatcher();
-      this.startAutoDialer();
-      
-      logger.info('✅ 基本自動システム起動完了');
-      
-    } catch (error) {
-      logger.error('❌ 基本システム開始エラー:', error);
-      throw error;
-    }
-  }
-
-  // ... 他の既存メソッドもここに含める
 }
 
-// 使用例：既存のdialerServiceを置き換える際の移行方法
-/*
-// 1. 既存ファイルをバックアップ
-// cp src/services/dialerService.js src/services/dialerService.backup.js
+// シングルトンインスタンス
+const dialerService = new DialerService();
 
-// 2. 新しいサービスに置き換え
-// cp src/services/dialerService-self-healing.js src/services/dialerService.js
+// グローバルイベントリスナー（デバッグ用）
+dialerService.on('campaignAdded', (campaign) => {
+  logger.info(`🎉 イベント: キャンペーン追加 - ${campaign.name}`);
+});
 
-// 3. システム再起動
-// pm2 restart autodialer
-*/
+dialerService.on('campaignRemoved', (campaign) => {
+  logger.info(`🗑️ イベント: キャンペーン削除 - ${campaign.name}`);
+});
 
-module.exports = SelfHealingDialerService;
+dialerService.on('contactDialed', (data) => {
+  logger.debug(`📞 イベント: 発信完了 - ${data.phone}`);
+});
+
+dialerService.on('callEnded', (data) => {
+  logger.debug(`📞 イベント: 通話終了 - CallID: ${data.callId}`);
+});
+
+dialerService.on('campaignCompleted', (campaign) => {
+  logger.info(`🏁 イベント: キャンペーン完了 - ${campaign.name}`);
+});
+
+module.exports = dialerService;
