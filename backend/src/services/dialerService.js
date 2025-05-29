@@ -1,258 +1,232 @@
-// backend/src/services/dialerService.js - エラー修正版
+// backend/src/services/dialerService.js - 完全自動連動版
 const db = require('./database');
 const logger = require('./logger');
+const { EventEmitter } = require('events');
 
-class DialerService {
+class DialerService extends EventEmitter {
   constructor() {
+    super();
     this.activeCampaigns = new Map();
     this.activeCalls = new Map();
-    this.initialized = false;
-    this.dialerJobRunning = false;
-    this.lastJobExecution = null;
-    this.jobExecutionCount = 0;
-    this.jobErrors = [];
-    this.defaultDialInterval = 10000; // 10秒間隔
-    this.maxRetryAttempts = 3;
-    this.dialingInProgress = false;
+    this.isProcessing = false;
+    this.dialerIntervalId = null;
+    this.campaignWatcherIntervalId = null;
     
-    // 🔥 重要: 環境変数による自動発信制御
-    this.autoDialerEnabled = process.env.DISABLE_AUTO_DIALER !== 'true';
+    // 設定
+    this.dialInterval = 5000; // 5秒間隔
+    this.campaignCheckInterval = 10000; // 10秒ごとにキャンペーン状態チェック
+    this.enabled = process.env.DISABLE_AUTO_DIALER !== 'true';
     
-    logger.info(`DialerService構築: 自動発信=${this.autoDialerEnabled ? '有効' : '無効'}`);
+    logger.info(`🚀 DialerService初期化: 自動連動システム=${this.enabled ? '有効' : '無効'}`);
+    
+    // 🔥 完全自動開始
+    if (this.enabled) {
+      this.startAutoSystem();
+    }
   }
 
-  // 🚀 初期化（修正版）
-  async initialize() {
+  // 🎯 完全自動システム開始
+  async startAutoSystem() {
     try {
-      logger.info('DialerService初期化開始...');
+      logger.info('🎯 完全自動連動システム開始...');
       
-      if (this.initialized) {
-        logger.info('DialerServiceは既に初期化済みです');
-        return true;
+      // 1. 初期キャンペーンロード
+      await this.loadActiveCampaigns();
+      
+      // 2. キャンペーン監視開始（データベース変更を自動検知）
+      this.startCampaignWatcher();
+      
+      // 3. 自動発信システム開始
+      this.startAutoDialer();
+      
+      logger.info('✅ 完全自動連動システム起動完了');
+      
+    } catch (error) {
+      logger.error('❌ 自動システム開始エラー:', error);
+      
+      // 5秒後に再試行
+      setTimeout(() => {
+        logger.info('🔄 自動システム再起動試行...');
+        this.startAutoSystem();
+      }, 5000);
+    }
+  }
+
+  // 👁️ キャンペーン監視開始（データベース変更を自動検知）
+  startCampaignWatcher() {
+    if (this.campaignWatcherIntervalId) {
+      clearInterval(this.campaignWatcherIntervalId);
+    }
+    
+    this.campaignWatcherIntervalId = setInterval(async () => {
+      try {
+        await this.checkCampaignChanges();
+      } catch (error) {
+        logger.error('キャンペーン監視エラー:', error);
+      }
+    }, this.campaignCheckInterval);
+    
+    logger.info(`👁️ キャンペーン監視開始: ${this.campaignCheckInterval}ms間隔`);
+  }
+
+  // 🔍 キャンペーン変更チェック（自動検知）
+  async checkCampaignChanges() {
+    try {
+      // データベースから現在のアクティブキャンペーンを取得
+      const [currentActiveCampaigns] = await db.query(`
+        SELECT c.id, c.name, c.max_concurrent_calls, c.caller_id_id,
+               ci.number as caller_id_number,
+               c.updated_at,
+               (SELECT COUNT(*) FROM contacts WHERE campaign_id = c.id AND status = 'pending') as pending_count
+        FROM campaigns c
+        JOIN caller_ids ci ON c.caller_id_id = ci.id
+        WHERE c.status = 'active' AND ci.active = true
+        ORDER BY c.updated_at DESC
+      `);
+      
+      const currentIds = new Set(currentActiveCampaigns.map(c => c.id));
+      const existingIds = new Set(this.activeCampaigns.keys());
+      
+      // 🆕 新しいキャンペーンを自動検知
+      const newCampaigns = currentActiveCampaigns.filter(c => !existingIds.has(c.id));
+      for (const campaign of newCampaigns) {
+        if (campaign.pending_count > 0) {
+          await this.autoAddCampaign(campaign);
+          logger.info(`🆕 新しいキャンペーンを自動検知: "${campaign.name}" (ID: ${campaign.id})`);
+        }
       }
       
-      // 🔥 自動発信が無効な場合は初期化をスキップ
-      if (!this.autoDialerEnabled) {
-        logger.info('🛑 自動発信機能は無効化されています (DISABLE_AUTO_DIALER=true)');
-        this.initialized = true;
-        return true;
+      // ❌ 停止されたキャンペーンを自動検知
+      const removedIds = Array.from(existingIds).filter(id => !currentIds.has(id));
+      for (const campaignId of removedIds) {
+        await this.autoRemoveCampaign(campaignId);
+        logger.info(`❌ 停止されたキャンペーンを自動検知: ID ${campaignId}`);
       }
       
-      // データベース接続確認
-      await db.query('SELECT 1');
-      logger.info('✅ データベース接続確認成功');
+      // 自動発信システムの状態調整
+      if (this.activeCampaigns.size > 0 && !this.dialerIntervalId) {
+        this.startAutoDialer();
+        logger.info('🚀 アクティブキャンペーン検知により自動発信開始');
+      } else if (this.activeCampaigns.size === 0 && this.dialerIntervalId) {
+        this.stopAutoDialer();
+        logger.info('🛑 アクティブキャンペーンなしにより自動発信停止');
+      }
       
-      // アクティブなキャンペーンを復元
-      const [activeCampaigns] = await db.query(`
-        SELECT c.id, c.name, c.max_concurrent_calls, c.caller_id_id, 
-               ci.number as caller_id_number
+    } catch (error) {
+      logger.error('キャンペーン変更チェックエラー:', error);
+    }
+  }
+
+  // 🆕 キャンペーン自動追加
+  async autoAddCampaign(campaign) {
+    try {
+      this.activeCampaigns.set(campaign.id, {
+        id: campaign.id,
+        name: campaign.name,
+        maxConcurrentCalls: Math.min(campaign.max_concurrent_calls || 1, 2),
+        callerIdId: campaign.caller_id_id,
+        callerIdNumber: campaign.caller_id_number,
+        activeCalls: 0,
+        status: 'active',
+        lastDialTime: null,
+        failCount: 0,
+        addedAt: new Date()
+      });
+      
+      // イベント発火
+      this.emit('campaignAdded', campaign);
+      
+      logger.info(`✅ キャンペーン自動追加: "${campaign.name}" (未処理: ${campaign.pending_count}件)`);
+      
+    } catch (error) {
+      logger.error(`キャンペーン自動追加エラー: ${campaign.id}`, error);
+    }
+  }
+
+  // ❌ キャンペーン自動削除
+  async autoRemoveCampaign(campaignId) {
+    try {
+      const campaign = this.activeCampaigns.get(campaignId);
+      
+      if (campaign) {
+        this.activeCampaigns.delete(campaignId);
+        
+        // イベント発火
+        this.emit('campaignRemoved', { id: campaignId, name: campaign.name });
+        
+        logger.info(`🗑️ キャンペーン自動削除: "${campaign.name}" (ID: ${campaignId})`);
+      }
+      
+    } catch (error) {
+      logger.error(`キャンペーン自動削除エラー: ${campaignId}`, error);
+    }
+  }
+
+  // 📋 初期キャンペーンロード
+  async loadActiveCampaigns() {
+    try {
+      const [campaigns] = await db.query(`
+        SELECT c.id, c.name, c.max_concurrent_calls, c.caller_id_id,
+               ci.number as caller_id_number,
+               (SELECT COUNT(*) FROM contacts WHERE campaign_id = c.id AND status = 'pending') as pending_count
         FROM campaigns c
         JOIN caller_ids ci ON c.caller_id_id = ci.id
         WHERE c.status = 'active' AND ci.active = true
       `);
       
-      logger.info(`アクティブキャンペーン復元: ${activeCampaigns.length}件`);
+      logger.info(`📋 初期キャンペーンロード: ${campaigns.length}件検出`);
       
-      for (const campaign of activeCampaigns) {
-        this.activeCampaigns.set(campaign.id, {
-          id: campaign.id,
-          name: campaign.name,
-          maxConcurrentCalls: campaign.max_concurrent_calls || 2,
-          callerIdId: campaign.caller_id_id,
-          callerIdNumber: campaign.caller_id_number,
-          activeCalls: 0,
-          status: 'active',
-          lastDialTime: null
-        });
+      for (const campaign of campaigns) {
+        if (campaign.pending_count > 0) {
+          await this.autoAddCampaign(campaign);
+        }
       }
-      
-      // 🔥 自動発信ジョブを開始（条件付き）
-      if (this.autoDialerEnabled && activeCampaigns.length > 0) {
-        this.startDialerJob();
-        logger.info('🚀 自動発信ジョブ開始');
-      } else {
-        logger.info('ℹ️ 自動発信ジョブはスキップされました');
-      }
-      
-      this.initialized = true;
-      logger.info('✅ DialerService初期化完了');
-      return true;
       
     } catch (error) {
-      logger.error('❌ DialerService初期化エラー:', error);
-      this.initialized = false;
-      return false;
+      logger.error('初期キャンペーンロードエラー:', error);
     }
   }
 
-  // 🔄 自動発信ジョブ開始（安全版）
-  startDialerJob() {
-    // 重複起動防止
-    if (this.dialerJobRunning) {
-      logger.warn('発信ジョブは既に実行中です');
-      return;
+  // 🚀 自動発信システム開始
+  startAutoDialer() {
+    if (this.dialerIntervalId) {
+      clearInterval(this.dialerIntervalId);
     }
     
-    // 環境変数再チェック
-    if (process.env.DISABLE_AUTO_DIALER === 'true') {
-      logger.info('🛑 自動発信は環境変数により無効化されています');
-      return;
-    }
-    
-    this.dialerJobRunning = true;
-    
-    // 10秒ごとに発信処理を実行
-    const intervalId = setInterval(async () => {
+    this.dialerIntervalId = setInterval(async () => {
+      if (!this.enabled || this.isProcessing || this.activeCampaigns.size === 0) {
+        return;
+      }
+      
       try {
-        // 環境変数による緊急停止チェック
-        if (process.env.DISABLE_AUTO_DIALER === 'true') {
-          logger.info('🚨 緊急停止: 自動発信ジョブを停止します');
-          clearInterval(intervalId);
-          this.dialerJobRunning = false;
-          return;
-        }
-        
-        await this.processDialerQueue();
-        this.lastJobExecution = new Date();
-        this.jobExecutionCount++;
-        
+        await this.processAutoDialing();
       } catch (error) {
-        logger.error('発信ジョブエラー:', error);
-        this.jobErrors.push({
-          timestamp: new Date(),
-          error: error.message
-        });
-        
-        // エラーが多すぎる場合は自動停止
-        if (this.jobErrors.length > 10) {
-          logger.error('🚨 エラー多発により自動発信を停止します');
-          clearInterval(intervalId);
-          this.dialerJobRunning = false;
-        }
+        logger.error('自動発信エラー:', error);
       }
-    }, this.defaultDialInterval);
+    }, this.dialInterval);
     
-    logger.info(`🔥 自動発信ジョブ開始: 間隔=${this.defaultDialInterval}ms`);
+    logger.info(`🚀 自動発信システム開始: ${this.dialInterval}ms間隔`);
   }
 
-  // 🚀 キャンペーン開始（安全版）
-  async startCampaign(campaignId) {
-    try {
-      logger.info(`🚀 キャンペーン開始: ID=${campaignId}`);
-      
-      if (!campaignId || isNaN(parseInt(campaignId))) {
-        throw new Error('無効なキャンペーンID');
-      }
-      
-      // キャンペーン情報を取得
-      const [campaigns] = await db.query(`
-        SELECT c.id, c.name, c.max_concurrent_calls, c.caller_id_id, 
-               ci.number as caller_id_number
-        FROM campaigns c
-        JOIN caller_ids ci ON c.caller_id_id = ci.id
-        WHERE c.id = ? AND ci.active = true
-      `, [campaignId]);
-      
-      if (campaigns.length === 0) {
-        throw new Error('キャンペーンが見つからないか、発信者番号が無効です');
-      }
-      
-      const campaign = campaigns[0];
-      
-      // キャンペーンのステータスを更新
-      await db.query(
-        'UPDATE campaigns SET status = ? WHERE id = ?',
-        ['active', campaignId]
-      );
-      
-      // アクティブキャンペーンリストに追加
-      this.activeCampaigns.set(parseInt(campaignId), {
-        id: campaign.id,
-        name: campaign.name,
-        maxConcurrentCalls: campaign.max_concurrent_calls || 2,
-        callerIdId: campaign.caller_id_id,
-        callerIdNumber: campaign.caller_id_number,
-        activeCalls: 0,
-        status: 'active',
-        lastDialTime: new Date()
-      });
-      
-      // 自動発信ジョブが動いていない場合は開始
-      if (this.autoDialerEnabled && !this.dialerJobRunning) {
-        this.startDialerJob();
-      }
-      
-      logger.info(`✅ キャンペーン開始成功: ${campaign.name}`);
-      return true;
-      
-    } catch (error) {
-      logger.error(`❌ キャンペーン開始エラー: ${error.message}`);
-      return false;
+  // 🛑 自動発信システム停止
+  stopAutoDialer() {
+    if (this.dialerIntervalId) {
+      clearInterval(this.dialerIntervalId);
+      this.dialerIntervalId = null;
+      logger.info('🛑 自動発信システム停止');
     }
   }
 
-  // 🛑 キャンペーン停止（安全版）
-  async pauseCampaign(campaignId) {
+  // 📞 自動発信処理
+  async processAutoDialing() {
+    this.isProcessing = true;
+    
     try {
-      logger.info(`🛑 キャンペーン停止: ID=${campaignId}`);
-      
-      if (!campaignId || isNaN(parseInt(campaignId))) {
-        throw new Error('無効なキャンペーンID');
-      }
-      
-      await db.query(
-        'UPDATE campaigns SET status = ? WHERE id = ?',
-        ['paused', campaignId]
-      );
-      
-      // アクティブキャンペーンリストから削除
-      if (this.activeCampaigns.has(parseInt(campaignId))) {
-        this.activeCampaigns.delete(parseInt(campaignId));
-      }
-      
-      logger.info(`✅ キャンペーン停止成功: ID=${campaignId}`);
-      return true;
-      
-    } catch (error) {
-      logger.error(`❌ キャンペーン停止エラー: ${error.message}`);
-      return false;
-    }
-  }
-
-  // 🔄 発信キュー処理（安全版）
-  async processDialerQueue() {
-    try {
-      // 基本チェック
-      if (!this.autoDialerEnabled) {
-        return;
-      }
-      
-      if (this.activeCampaigns.size === 0) {
-        return;
-      }
-      
-      if (this.dialingInProgress) {
-        logger.debug('発信処理が既に実行中です');
-        return;
-      }
-      
-      this.dialingInProgress = true;
-      
-      logger.debug(`発信キュー処理開始: ${this.activeCampaigns.size}キャンペーン`);
-      
-      // 各アクティブキャンペーンを処理
       for (const [campaignId, campaign] of this.activeCampaigns.entries()) {
-        if (campaign.status !== 'active') {
-          continue;
-        }
+        if (campaign.status !== 'active') continue;
+        if (campaign.activeCalls >= campaign.maxConcurrentCalls) continue;
         
-        // 最大同時発信数をチェック
-        const availableSlots = campaign.maxConcurrentCalls - campaign.activeCalls;
-        if (availableSlots <= 0) {
-          continue;
-        }
-        
-        // 発信待ち連絡先を取得（1件のみ）
+        // 未処理連絡先を1件取得
         const [contacts] = await db.query(`
           SELECT id, phone, name, company 
           FROM contacts 
@@ -260,163 +234,260 @@ class DialerService {
           LIMIT 1
         `, [campaignId]);
         
-        // 連絡先がある場合のみ発信
-        if (contacts.length > 0) {
-          const contact = contacts[0];
-          const result = await this.dialContact(campaign, contact);
-          
-          if (result) {
-            campaign.activeCalls++;
-            logger.info(`📞 発信成功: ${contact.phone} (Campaign: ${campaign.name})`);
-          }
+        if (contacts.length === 0) {
+          // 未処理連絡先がない場合はキャンペーン完了チェック
+          await this.checkCampaignCompletion(campaignId);
+          continue;
         }
+        
+        const contact = contacts[0];
+        const success = await this.dialContact(campaign, contact);
+        
+        if (success) {
+          campaign.activeCalls++;
+          campaign.lastDialTime = new Date();
+          
+          // イベント発火
+          this.emit('contactDialed', {
+            campaignId,
+            contactId: contact.id,
+            phone: contact.phone
+          });
+        }
+        
+        // 発信間隔
+        await new Promise(resolve => setTimeout(resolve, 1000));
       }
       
     } catch (error) {
-      logger.error('発信キュー処理エラー:', error);
+      logger.error('自動発信処理エラー:', error);
     } finally {
-      this.dialingInProgress = false;
+      this.isProcessing = false;
     }
   }
 
-  // 📞 連絡先への発信（簡単版）
+  // 📞 連絡先発信
   async dialContact(campaign, contact) {
     try {
-      logger.info(`📞 発信開始: ${contact.phone}`);
+      logger.info(`📞 自動発信: ${contact.phone} (Campaign: ${campaign.name})`);
       
-      // 発信中ステータスに更新
+      // ステータス更新
       await db.query(
         'UPDATE contacts SET status = ?, last_attempt = NOW() WHERE id = ?',
         ['called', contact.id]
       );
       
-      // 通話ログを記録（発信開始）
-      const callId = `dial-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
+      // 発信実行
+      const callService = require('./callService');
+      const result = await callService.originate({
+        phoneNumber: contact.phone,
+        context: 'autodialer',
+        callerID: `"${campaign.name}" <${campaign.callerIdNumber}>`,
+        variables: {
+          CAMPAIGN_ID: campaign.id,
+          CONTACT_ID: contact.id,
+          CONTACT_NAME: contact.name || '',
+          AUTO_DIAL: 'true'
+        }
+      });
       
+      // 通話ログ記録
       await db.query(`
         INSERT INTO call_logs 
         (contact_id, campaign_id, caller_id_id, call_id, phone_number, start_time, status, call_provider)
-        VALUES (?, ?, ?, ?, ?, NOW(), 'ORIGINATING', 'sip')
+        VALUES (?, ?, ?, ?, ?, NOW(), 'ORIGINATING', ?)
       `, [
-        contact.id, 
-        campaign.id, 
-        campaign.callerIdId, 
-        callId,
-        contact.phone
+        contact.id,
+        campaign.id,
+        campaign.callerIdId,
+        result.ActionID,
+        contact.phone,
+        result.provider || 'sip'
       ]);
       
-      // 実際のSIP発信処理（今は省略してモックとして処理）
-      logger.info(`📞 SIP発信シミュレーション: ${contact.phone}`);
+      // アクティブコール記録
+      this.activeCalls.set(result.ActionID, {
+        id: result.ActionID,
+        contactId: contact.id,
+        campaignId: campaign.id,
+        startTime: new Date()
+      });
       
-      // 10秒後に通話終了シミュレーション
-      setTimeout(async () => {
-        await this.handleCallEnd(callId, 10, 'ANSWERED', null);
-      }, 10000);
-      
+      logger.info(`✅ 自動発信成功: ${contact.phone} (CallID: ${result.ActionID})`);
       return true;
       
     } catch (error) {
       logger.error(`❌ 発信エラー: ${contact.phone}`, error);
       
-      // エラー状態に更新
+      // エラー時のステータス更新
       await db.query(
         'UPDATE contacts SET status = ? WHERE id = ?',
         ['failed', contact.id]
-      );
+      ).catch(() => {});
       
       return false;
     }
   }
 
-  // 📞 通話終了処理（簡易版）
-  async handleCallEnd(callId, duration, disposition, keypress) {
+  // 🏁 キャンペーン完了チェック
+  async checkCampaignCompletion(campaignId) {
     try {
-      logger.info(`📞 通話終了: ${callId}, disposition=${disposition}`);
+      const [result] = await db.query(
+        'SELECT COUNT(*) as count FROM contacts WHERE campaign_id = ? AND status = "pending"',
+        [campaignId]
+      );
       
-      // 通話ログの更新
+      if (result[0].count === 0) {
+        // キャンペーン完了
+        await db.query(
+          'UPDATE campaigns SET status = ? WHERE id = ?',
+          ['completed', campaignId]
+        );
+        
+        const campaign = this.activeCampaigns.get(campaignId);
+        logger.info(`🏁 キャンペーン自動完了: "${campaign?.name}" (ID: ${campaignId})`);
+        
+        // イベント発火
+        this.emit('campaignCompleted', { id: campaignId, name: campaign?.name });
+      }
+      
+    } catch (error) {
+      logger.error(`キャンペーン完了チェックエラー: ${campaignId}`, error);
+    }
+  }
+
+  // 📞 通話終了処理
+  async handleCallEnd(callId, duration, status, keypress) {
+    try {
+      const call = this.activeCalls.get(callId);
+      if (!call) return false;
+      
+      // 通話ログ更新
       await db.query(`
         UPDATE call_logs
         SET end_time = NOW(), duration = ?, status = ?, keypress = ?
         WHERE call_id = ?
-      `, [duration, disposition, keypress, callId]);
+      `, [duration, status, keypress, callId]);
       
       // 連絡先ステータス更新
-      const [callInfo] = await db.query(
-        'SELECT contact_id, campaign_id FROM call_logs WHERE call_id = ?',
-        [callId]
-      );
-      
-      if (callInfo.length > 0) {
-        const { contact_id, campaign_id } = callInfo[0];
+      let contactStatus = 'completed';
+      if (keypress === '9') {
+        contactStatus = 'dnc';
         
-        let contactStatus = 'completed';
-        if (keypress === '9') {
-          contactStatus = 'dnc';
-        } else if (keypress === '1') {
-          contactStatus = 'operator_requested';
-        }
-        
-        await db.query(
-          'UPDATE contacts SET status = ? WHERE id = ?',
-          [contactStatus, contact_id]
+        // DNC登録
+        const [contacts] = await db.query(
+          'SELECT phone FROM contacts WHERE id = ?',
+          [call.contactId]
         );
         
-        // キャンペーンの同時通話数を減らす
-        if (this.activeCampaigns.has(campaign_id)) {
-          const campaign = this.activeCampaigns.get(campaign_id);
-          campaign.activeCalls = Math.max(0, campaign.activeCalls - 1);
+        if (contacts.length > 0) {
+          await db.query(
+            'INSERT IGNORE INTO dnc_list (phone, reason) VALUES (?, ?)',
+            [contacts[0].phone, 'ユーザーリクエスト（9キー）']
+          );
         }
       }
       
+      await db.query(
+        'UPDATE contacts SET status = ? WHERE id = ?',
+        [contactStatus, call.contactId]
+      );
+      
+      // アクティブコール数を減らす
+      const campaign = this.activeCampaigns.get(call.campaignId);
+      if (campaign) {
+        campaign.activeCalls = Math.max(0, campaign.activeCalls - 1);
+      }
+      
+      // アクティブコールから削除
+      this.activeCalls.delete(callId);
+      
+      // イベント発火
+      this.emit('callEnded', {
+        callId,
+        campaignId: call.campaignId,
+        contactId: call.contactId,
+        status,
+        duration,
+        keypress
+      });
+      
+      logger.info(`📞 通話終了処理完了: ${callId} (Status: ${status})`);
       return true;
       
     } catch (error) {
-      logger.error(`❌ 通話終了処理エラー: ${callId}`, error);
+      logger.error(`通話終了処理エラー: ${callId}`, error);
       return false;
     }
   }
 
-  // 📊 ヘルスステータス取得
-  getHealthStatus() {
+  // 📊 システム状態取得
+  getSystemStatus() {
     return {
-      initialized: this.initialized,
-      autoDialerEnabled: this.autoDialerEnabled,
-      dialerJobRunning: this.dialerJobRunning,
-      activeCampaigns: this.activeCampaigns.size,
-      activeCalls: this.activeCalls.size,
-      lastJobExecution: this.lastJobExecution,
-      jobExecutionCount: this.jobExecutionCount,
-      errorCount: this.jobErrors.length
+      enabled: this.enabled,
+      autoDialerRunning: this.dialerIntervalId !== null,
+      campaignWatcherRunning: this.campaignWatcherIntervalId !== null,
+      activeCampaigns: {
+        count: this.activeCampaigns.size,
+        details: Array.from(this.activeCampaigns.values()).map(c => ({
+          id: c.id,
+          name: c.name,
+          activeCalls: c.activeCalls,
+          maxConcurrentCalls: c.maxConcurrentCalls,
+          lastDialTime: c.lastDialTime
+        }))
+      },
+      activeCalls: {
+        count: this.activeCalls.size
+      },
+      isProcessing: this.isProcessing,
+      intervals: {
+        dialInterval: this.dialInterval,
+        campaignCheckInterval: this.campaignCheckInterval
+      }
     };
   }
 
-  // 🔧 緊急停止
-  async emergencyStopAll(reason = '手動停止') {
-    logger.warn(`🚨 緊急停止実行: ${reason}`);
+  // 🚨 システム停止
+  async stopSystem() {
+    logger.info('🚨 自動連動システム停止...');
     
-    try {
-      // 環境変数設定
-      process.env.DISABLE_AUTO_DIALER = 'true';
-      
-      // ジョブ停止
-      this.dialerJobRunning = false;
-      this.autoDialerEnabled = false;
-      
-      // 全キャンペーンを停止
-      for (const [campaignId] of this.activeCampaigns.entries()) {
-        await this.pauseCampaign(campaignId);
-      }
-      
-      logger.warn('🚨 緊急停止完了');
-      return true;
-      
-    } catch (error) {
-      logger.error('緊急停止エラー:', error);
-      return false;
+    this.stopAutoDialer();
+    
+    if (this.campaignWatcherIntervalId) {
+      clearInterval(this.campaignWatcherIntervalId);
+      this.campaignWatcherIntervalId = null;
     }
+    
+    this.activeCampaigns.clear();
+    this.activeCalls.clear();
+    
+    logger.info('✅ システム停止完了');
   }
 }
 
 // シングルトンインスタンス
 const dialerService = new DialerService();
+
+// グローバルイベントリスナー（デバッグ用）
+dialerService.on('campaignAdded', (campaign) => {
+  logger.info(`🎉 イベント: キャンペーン追加 - ${campaign.name}`);
+});
+
+dialerService.on('campaignRemoved', (campaign) => {
+  logger.info(`🗑️ イベント: キャンペーン削除 - ${campaign.name}`);
+});
+
+dialerService.on('contactDialed', (data) => {
+  logger.debug(`📞 イベント: 発信完了 - ${data.phone}`);
+});
+
+dialerService.on('callEnded', (data) => {
+  logger.debug(`📞 イベント: 通話終了 - CallID: ${data.callId}`);
+});
+
+dialerService.on('campaignCompleted', (campaign) => {
+  logger.info(`🏁 イベント: キャンペーン完了 - ${campaign.name}`);
+});
+
 module.exports = dialerService;
