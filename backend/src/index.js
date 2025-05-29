@@ -1,4 +1,4 @@
-// backend/src/index.js - SIP初期化修正版
+// backend/src/index.js - DialerService修正版（完全置換）
 const express = require('express');
 const cors = require('cors');
 const http = require('http');
@@ -137,7 +137,7 @@ console.log('📊 ルーター登録状況:', routerStatus);
 app.get('/', (req, res) => {
   res.json({ 
     message: 'オートコールシステムAPI稼働中',
-    version: '1.4.0',
+    version: '1.4.1',
     timestamp: new Date().toISOString(),
     routerStatus: routerStatus,
     endpoints: [
@@ -286,6 +286,9 @@ if (!routerStatus.campaigns) {
     try {
       const { id } = req.params;
       
+      console.log(`🚀 キャンペーン開始要求: ID=${id}`);
+      
+      // データベースのステータス更新
       const [result] = await db.query(
         'UPDATE campaigns SET status = "active", updated_at = NOW() WHERE id = ?',
         [id]
@@ -295,11 +298,68 @@ if (!routerStatus.campaigns) {
         return res.status(400).json({ message: 'キャンペーンが見つかりません' });
       }
       
+      // 🔥 DialerServiceにキャンペーンを手動登録
+      try {
+        const dialerService = require('./services/dialerService');
+        
+        console.log('🔄 DialerServiceへキャンペーン追加...');
+        
+        // キャンペーン情報を取得
+        const [campaigns] = await db.query(`
+          SELECT c.id, c.name, c.max_concurrent_calls, c.caller_id_id,
+                 ci.number as caller_id_number
+          FROM campaigns c
+          JOIN caller_ids ci ON c.caller_id_id = ci.id
+          WHERE c.id = ? AND ci.active = true
+        `, [id]);
+        
+        if (campaigns.length > 0) {
+          const campaign = campaigns[0];
+          
+          // DialerServiceを強制初期化
+          if (!dialerService.initialized) {
+            dialerService.initialized = true;
+            dialerService.enabled = true;
+            dialerService.errorCount = 0;
+            dialerService.dialInterval = 5000; // 5秒間隔
+            console.log('🔧 DialerService強制初期化完了');
+          }
+          
+          // activeCampaignsに追加
+          dialerService.activeCampaigns.set(parseInt(id), {
+            id: campaign.id,
+            name: campaign.name,
+            maxConcurrentCalls: Math.min(campaign.max_concurrent_calls || 1, 2),
+            callerIdId: campaign.caller_id_id,
+            callerIdNumber: campaign.caller_id_number,
+            activeCalls: 0,
+            status: 'active',
+            lastDialTime: null,
+            failCount: 0
+          });
+          
+          console.log(`✅ キャンペーン${id}をDialerServiceに追加`);
+          
+          // 自動発信ジョブ開始
+          if (!dialerService.dialerIntervalId) {
+            dialerService.startDialerJobSafe();
+            console.log('🚀 自動発信ジョブ開始');
+          }
+          
+        } else {
+          console.warn(`キャンペーン${id}の詳細取得失敗`);
+        }
+        
+      } catch (dialerError) {
+        console.error('DialerService追加エラー:', dialerError.message);
+      }
+      
       res.json({
         success: true,
         message: 'キャンペーンを開始しました',
         campaignId: parseInt(id)
       });
+      
     } catch (error) {
       console.error(`フォールバック キャンペーン開始エラー: ID=${req.params.id}`, error);
       res.status(500).json({ message: 'キャンペーンの開始に失敗しました' });
@@ -317,6 +377,21 @@ if (!routerStatus.campaigns) {
       
       if (result.affectedRows === 0) {
         return res.status(400).json({ message: 'キャンペーンが見つかりません' });
+      }
+      
+      // DialerServiceからキャンペーンを削除
+      try {
+        const dialerService = require('./services/dialerService');
+        dialerService.activeCampaigns.delete(parseInt(id));
+        console.log(`🛑 キャンペーン${id}をDialerServiceから削除`);
+        
+        // 他にアクティブキャンペーンがなければジョブ停止
+        if (dialerService.activeCampaigns.size === 0) {
+          dialerService.stopDialerJob();
+          console.log('🛑 自動発信ジョブ停止');
+        }
+      } catch (dialerError) {
+        console.error('DialerService停止エラー:', dialerError.message);
       }
       
       res.json({
@@ -354,15 +429,33 @@ if (!routerStatus.calls) {
         return res.status(400).json({ message: '発信先電話番号は必須です' });
       }
       
+      // 実際のSIP発信を実行
+      const callService = require('./services/callService');
+      const params = {
+        phoneNumber,
+        callerID: callerID || process.env.DEFAULT_CALLER_ID || '"Auto Dialer" <03-5946-8520>',
+        context: 'autodialer',
+        exten: 's',
+        priority: 1,
+        variables: {
+          CAMPAIGN_ID: 'TEST',
+          CONTACT_ID: 'TEST',
+          TEST_CALL: 'true'
+        },
+        mockMode
+      };
+      
+      const result = await callService.originate(params);
+      
       res.json({
         success: true,
-        callId: `test-${Date.now()}`,
-        message: 'テスト発信が開始されました（フォールバック）',
-        mockMode: true
+        callId: result.ActionID,
+        message: 'テスト発信が開始されました',
+        data: result
       });
     } catch (error) {
       console.error('テスト発信エラー:', error);
-      res.status(500).json({ message: 'テスト発信に失敗しました' });
+      res.status(500).json({ message: 'テスト発信に失敗しました', error: error.message });
     }
   });
 }
@@ -387,7 +480,7 @@ app.use((err, req, res, next) => {
   });
 });
 
-// 🔥 修正版: SIP初期化を含むサーバー起動
+// 🔥 修正版: 強化されたサーバー起動処理
 const startServer = async () => {
   try {
     console.log('🚀 サーバー初期化開始...');
@@ -396,19 +489,13 @@ const startServer = async () => {
     await db.query('SELECT 1');
     console.log('✅ データベース接続成功');
 
-    // 2. SIPサービス初期化（最重要！）
+    // 2. SIPサービス初期化
     console.log('🔧 SIPサービス初期化中...');
     try {
       const sipService = require('./services/sipService');
       const sipResult = await sipService.connect();
       console.log('📞 SIP初期化結果:', sipResult);
       console.log('📞 SIPアカウント数:', sipService.getAvailableSipAccountCount());
-      
-      if (sipResult) {
-        console.log('✅ SIPサービス初期化成功');
-      } else {
-        console.log('⚠️ SIPサービス初期化失敗（続行）');
-      }
     } catch (sipError) {
       console.error('❌ SIPサービス初期化エラー（続行）:', sipError.message);
     }
@@ -419,45 +506,73 @@ const startServer = async () => {
       const callService = require('./services/callService');
       const callResult = await callService.initialize();
       console.log('📞 CallService初期化結果:', callResult);
-      
-      if (callResult) {
-        console.log('✅ CallService初期化成功');
-      } else {
-        console.log('⚠️ CallService初期化失敗（続行）');
-      }
     } catch (callError) {
       console.error('❌ CallService初期化エラー（続行）:', callError.message);
     }
 
-    // 4. DialerService初期化
-    console.log('🔧 DialerService初期化中...');
+    // 4. DialerService手動初期化（重要！）
+    console.log('🔧 DialerService手動初期化中...');
     try {
       const dialerService = require('./services/dialerService');
-      const dialerResult = await dialerService.initialize();
       
-      if (dialerResult) {
-        console.log('✅ DialerService初期化成功');
-      } else {
-        console.log('⚠️ DialerService初期化失敗（続行）');
-      }
+      // 🔥 強制的に基本設定
+      dialerService.initialized = true;
+      dialerService.enabled = true;
+      dialerService.errorCount = 0;
+      dialerService.dialInterval = 5000; // 5秒間隔
+      dialerService.isProcessing = false;
+      
+      console.log('✅ DialerService手動初期化完了');
+      
+      // アクティブキャンペーンを確認して自動開始
+      setTimeout(async () => {
+        try {
+          const [activeCampaigns] = await db.query(`
+            SELECT c.id, c.name, c.max_concurrent_calls, c.caller_id_id,
+                   ci.number as caller_id_number,
+                   (SELECT COUNT(*) FROM contacts WHERE campaign_id = c.id AND status = 'pending') as pending_count
+            FROM campaigns c
+            JOIN caller_ids ci ON c.caller_id_id = ci.id
+            WHERE c.status = 'active' AND ci.active = true
+          `);
+          
+          console.log(`📊 アクティブキャンペーン検出: ${activeCampaigns.length}件`);
+          
+          if (activeCampaigns.length > 0) {
+            console.log('🔄 アクティブキャンペーンを自動登録...');
+            
+            activeCampaigns.forEach(campaign => {
+              if (campaign.pending_count > 0) {
+                dialerService.activeCampaigns.set(campaign.id, {
+                  id: campaign.id,
+                  name: campaign.name,
+                  maxConcurrentCalls: Math.min(campaign.max_concurrent_calls || 1, 2),
+                  callerIdId: campaign.caller_id_id,
+                  callerIdNumber: campaign.caller_id_number,
+                  activeCalls: 0,
+                  status: 'active',
+                  lastDialTime: null,
+                  failCount: 0
+                });
+                
+                console.log(`✅ キャンペーン${campaign.id} "${campaign.name}" 自動登録 (未処理: ${campaign.pending_count}件)`);
+              }
+            });
+            
+            // 自動発信ジョブ開始
+            if (dialerService.activeCampaigns.size > 0) {
+              dialerService.startDialerJobSafe();
+              console.log('🚀 自動発信ジョブ自動開始');
+            }
+          }
+          
+        } catch (autoStartError) {
+          console.error('自動開始エラー:', autoStartError.message);
+        }
+      }, 5000); // 5秒後に実行
       
     } catch (dialerError) {
       console.error('❌ DialerService初期化エラー（続行）:', dialerError.message);
-    }
-    
-    // 5. 最終確認
-    console.log('📊 初期化完了状態:');
-    try {
-      const sipService = require('./services/sipService');
-      const callService = require('./services/callService');
-      const dialerService = require('./services/dialerService');
-      
-      console.log('- SIP接続:', sipService.connected || false);
-      console.log('- SIPアカウント:', sipService.getAvailableSipAccountCount ? sipService.getAvailableSipAccountCount() : 0);
-      console.log('- Dialer初期化:', dialerService.initialized || false);
-      console.log('- Dialerジョブ:', dialerService.dialerIntervalId ? 'active' : 'inactive');
-    } catch (statusError) {
-      console.warn('ステータス確認エラー:', statusError.message);
     }
     
     // 6. サーバー起動
@@ -466,8 +581,8 @@ const startServer = async () => {
       console.log('🎯 自動発信システム準備完了');
       console.log('🔗 利用可能なエンドポイント:');
       console.log('  - GET  /health');
-      console.log('  - GET  /api/system/health');
       console.log('  - GET  /api/campaigns');
+      console.log('  - POST /api/campaigns/:id/start');
       console.log('  - POST /api/calls/test');
     });
     

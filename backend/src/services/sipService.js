@@ -15,7 +15,7 @@ class SipService extends EventEmitter {
     this.callToAccountMap = new Map();
     this.activeCallsMap = new Map();
     this.callerIdToChannelsMap = new Map();
-    this.sipcmdPath = process.env.SIPCMD_PATH || "/usr/local/bin/sipcmd-flexible";
+    this.sipcmdPath = process.env.SIPCMD_PATH || "/usr/local/bin/sipcmd-final";
     
     logger.info(`SipService初期化: mockMode=${this.mockMode}, sipcmdPath=${this.sipcmdPath}`);
     this.on('callEnded', this.handleCallEnded.bind(this));
