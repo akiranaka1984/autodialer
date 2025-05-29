@@ -585,42 +585,6 @@ const startServer = async () => {
       console.log('  - POST /api/campaigns/:id/start');
       console.log('  - POST /api/calls/test');
     });
-    // 🔥 DialerService自動開始の強化（恒久的修正）
-    console.log('🔧 DialerService強制自動開始...');
-    try {
-      const dialerService = require('./services/dialerService');
-      
-      // 強制的に有効化
-      dialerService.enabled = true;
-      dialerService.isProcessing = false;
-      
-      // 10秒後に自動システム開始（他の初期化完了後）
-      setTimeout(async () => {
-        try {
-          if (typeof dialerService.startAutoSystem === 'function') {
-            await dialerService.startAutoSystem();
-            console.log('✅ DialerService自動システム開始完了');
-          } else {
-            console.log('⚠️ startAutoSystem メソッドが見つかりません');
-          }
-        } catch (autoStartError) {
-          console.error('DialerService自動開始エラー:', autoStartError.message);
-          
-          // 30秒後に再試行
-          setTimeout(async () => {
-            try {
-              await dialerService.startAutoSystem();
-              console.log('✅ DialerService自動システム再試行成功');
-            } catch (retryError) {
-              console.error('DialerService再試行失敗:', retryError.message);
-            }
-          }, 30000);
-        }
-      }, 10000);
-      
-    } catch (dialerError) {
-      console.error('DialerService初期化エラー:', dialerError.message);
-    }
     
   } catch (error) {
     console.error('❌ サーバー起動エラー:', error);
