@@ -1,4 +1,4 @@
-// backend/src/index.js - 重複ルート修正版
+// backend/src/index.js - SIP初期化修正版
 const express = require('express');
 const cors = require('cors');
 const http = require('http');
@@ -48,7 +48,7 @@ app.use((req, res, next) => {
   next();
 });
 
-// ✅ 修正版: ルーター登録（重複解決）
+// ✅ ルーター登録
 console.log('🚀 ルーター登録開始...');
 
 const routerStatus = {
@@ -61,7 +61,7 @@ const routerStatus = {
   ivr: false
 };
 
-// 1. システムルーター（最優先）
+// 1. システムルーター
 try {
   const systemRouter = require('./routes/system');
   app.use('/api/system', systemRouter);
@@ -137,7 +137,7 @@ console.log('📊 ルーター登録状況:', routerStatus);
 app.get('/', (req, res) => {
   res.json({ 
     message: 'オートコールシステムAPI稼働中',
-    version: '1.3.2',
+    version: '1.4.0',
     timestamp: new Date().toISOString(),
     routerStatus: routerStatus,
     endpoints: [
@@ -162,16 +162,12 @@ app.get('/health', (req, res) => {
   });
 });
 
-// === フォールバック用の基本API（重複削除版） ===
-
-// ✅ フォールバックAPI（routerが読み込めない場合のみ）
+// === フォールバック用の基本API ===
 if (!routerStatus.campaigns) {
   console.log('🔄 キャンペーンルーターフォールバック登録中...');
   
   app.get('/api/campaigns', async (req, res) => {
     try {
-      console.log('フォールバック キャンペーン一覧API呼び出し');
-      
       const [campaigns] = await db.query(`
         SELECT c.id, c.name, c.description, c.status, c.created_at, c.updated_at, c.progress,
                ci.number as caller_id_number,
@@ -227,14 +223,12 @@ if (!routerStatus.campaigns) {
     try {
       const { id } = req.params;
       
-      // キャンペーンの存在確認
       const [campaigns] = await db.query('SELECT * FROM campaigns WHERE id = ?', [id]);
       
       if (campaigns.length === 0) {
         return res.status(404).json({ message: 'キャンペーンが見つかりません' });
       }
       
-      // 連絡先統計
       const [contactStats] = await db.query(`
         SELECT 
           COUNT(*) as total,
@@ -247,7 +241,6 @@ if (!routerStatus.campaigns) {
         WHERE campaign_id = ?
       `, [id]);
       
-      // 通話統計
       const [callStats] = await db.query(`
         SELECT 
           COUNT(*) as total_calls,
@@ -394,19 +387,55 @@ app.use((err, req, res, next) => {
   });
 });
 
-// サーバー起動
+// 🔥 修正版: SIP初期化を含むサーバー起動
 const startServer = async () => {
   try {
-    // データベース接続確認
+    console.log('🚀 サーバー初期化開始...');
+    
+    // 1. データベース接続確認
     await db.query('SELECT 1');
     console.log('✅ データベース接続成功');
 
-    // 🔥 修正版: DialerService初期化（エラーハンドリング強化）
+    // 2. SIPサービス初期化（最重要！）
+    console.log('🔧 SIPサービス初期化中...');
+    try {
+      const sipService = require('./services/sipService');
+      const sipResult = await sipService.connect();
+      console.log('📞 SIP初期化結果:', sipResult);
+      console.log('📞 SIPアカウント数:', sipService.getAvailableSipAccountCount());
+      
+      if (sipResult) {
+        console.log('✅ SIPサービス初期化成功');
+      } else {
+        console.log('⚠️ SIPサービス初期化失敗（続行）');
+      }
+    } catch (sipError) {
+      console.error('❌ SIPサービス初期化エラー（続行）:', sipError.message);
+    }
+
+    // 3. CallService初期化
+    console.log('🔧 CallService初期化中...');
+    try {
+      const callService = require('./services/callService');
+      const callResult = await callService.initialize();
+      console.log('📞 CallService初期化結果:', callResult);
+      
+      if (callResult) {
+        console.log('✅ CallService初期化成功');
+      } else {
+        console.log('⚠️ CallService初期化失敗（続行）');
+      }
+    } catch (callError) {
+      console.error('❌ CallService初期化エラー（続行）:', callError.message);
+    }
+
+    // 4. DialerService初期化
+    console.log('🔧 DialerService初期化中...');
     try {
       const dialerService = require('./services/dialerService');
-      const initResult = await dialerService.initialize();
+      const dialerResult = await dialerService.initialize();
       
-      if (initResult) {
+      if (dialerResult) {
         console.log('✅ DialerService初期化成功');
       } else {
         console.log('⚠️ DialerService初期化失敗（続行）');
@@ -416,18 +445,29 @@ const startServer = async () => {
       console.error('❌ DialerService初期化エラー（続行）:', dialerError.message);
     }
     
-    // サーバー起動
+    // 5. 最終確認
+    console.log('📊 初期化完了状態:');
+    try {
+      const sipService = require('./services/sipService');
+      const callService = require('./services/callService');
+      const dialerService = require('./services/dialerService');
+      
+      console.log('- SIP接続:', sipService.connected || false);
+      console.log('- SIPアカウント:', sipService.getAvailableSipAccountCount ? sipService.getAvailableSipAccountCount() : 0);
+      console.log('- Dialer初期化:', dialerService.initialized || false);
+      console.log('- Dialerジョブ:', dialerService.dialerIntervalId ? 'active' : 'inactive');
+    } catch (statusError) {
+      console.warn('ステータス確認エラー:', statusError.message);
+    }
+    
+    // 6. サーバー起動
     server.listen(PORT, '0.0.0.0', () => {
       console.log(`✅ サーバーが起動しました: http://0.0.0.0:${PORT}`);
-      console.log('🔗 ルーター状況:', routerStatus);
+      console.log('🎯 自動発信システム準備完了');
       console.log('🔗 利用可能なエンドポイント:');
       console.log('  - GET  /health');
       console.log('  - GET  /api/system/health');
       console.log('  - GET  /api/campaigns');
-      console.log('  - GET  /api/campaigns/:id');
-      console.log('  - POST /api/campaigns/:id/start');
-      console.log('  - POST /api/campaigns/:id/stop');
-      console.log('  - GET  /api/caller-ids');
       console.log('  - POST /api/calls/test');
     });
     
