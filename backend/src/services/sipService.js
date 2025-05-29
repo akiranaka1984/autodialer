@@ -1,4 +1,4 @@
-// backend/src/services/sipService.js - 修正版
+// backend/src/services/sipService.js - 完全修正版
 const { spawn, exec } = require('child_process');
 const logger = require('./logger');
 const { EventEmitter } = require('events');
@@ -15,146 +15,66 @@ class SipService extends EventEmitter {
     this.callToAccountMap = new Map();
     this.activeCallsMap = new Map();
     this.callerIdToChannelsMap = new Map();
-    this.sipcmdPath = process.env.SIPCMD_PATH || "/usr/local/bin/sipcmd-instant-audio";
+    this.sipcmdPath = process.env.SIPCMD_PATH || "/usr/local/bin/sipcmd-flexible";
     
     logger.info(`SipService初期化: mockMode=${this.mockMode}, sipcmdPath=${this.sipcmdPath}`);
     this.on('callEnded', this.handleCallEnded.bind(this));
   }
 
-// 🔧 修正版: sipService.js の connect() メソッドのみ修正
-// 既存のsipService.jsファイルで、以下のconnect()メソッドのみを置き換えてください
-
-async connect() {
-  if (this.mockMode) {
-    logger.info('SIPサービスにモックモードで接続しました');
-    this.connected = true;
-    this.sipAccounts = await this.loadSipAccountsFromDatabase();
-    
-    if (this.sipAccounts.length === 0) {
-      this.sipAccounts = [
-        { username: '03080001', password: '56110478', status: 'available', callerID: '0359468520', mainCallerId: 1 },
-        { username: '03080002', password: '51448459', status: 'available', callerID: '0335289538', mainCallerId: 2 }
-      ];
-    }
-    return true;
-  }
-
-  try {
-    logger.info('🔧 SIPサービス接続開始（修正版）...');
-    
-    // 🔥 修正1: sipcmdコマンドの存在確認（エラー時は警告のみ）
-    let sipcmdAvailable = false;
-    try {
-      fs.accessSync(this.sipcmdPath, fs.constants.X_OK);
-      logger.info(`✅ SIPコマンド確認済み: ${this.sipcmdPath}`);
-      sipcmdAvailable = true;
-    } catch (error) {
-      logger.warn(`⚠️ sipcmdコマンドアクセスエラー: ${this.sipcmdPath} - ${error.message}`);
-      // 🔥 致命的エラーにしない
-      sipcmdAvailable = false;
-    }
-    
-    // 🔥 修正2: データベースからSIPアカウント情報をロード（エラー耐性強化）
-    let sipAccounts = [];
-    try {
-      sipAccounts = await this.loadSipAccountsFromDatabase();
-      logger.info(`📊 SIPアカウント読み込み結果: ${sipAccounts.length}個`);
-    } catch (dbError) {
-      logger.warn('⚠️ データベースからのSIPアカウント読み込みエラー:', dbError.message);
-      // フォールバック用のデフォルトアカウント
-      sipAccounts = [{
-        username: '03080001',
-        password: '56110478',
-        callerID: '03-5946-8520',
-        description: 'デフォルト SIP',
-        domain: 'ito258258.site',
-        provider: 'Default SIP',
-        mainCallerId: 1,
-        channelType: 'both',
-        status: 'available',
-        lastUsed: null,
-        failCount: 0,
-        channelId: 1
-      }];
-      logger.info('📊 フォールバックSIPアカウントを使用');
-    }
-    
-    this.sipAccounts = sipAccounts;
-    
-    if (this.sipAccounts.length === 0) {
-      logger.warn('⚠️ SIPアカウントが0個です');
-      // 🔥 致命的エラーにしない、デフォルトアカウントを作成
-      this.sipAccounts = [{
-        username: '03080001',
-        password: '56110478',
-        callerID: '03-5946-8520',
-        description: 'エマージェンシー SIP',
-        domain: 'ito258258.site',
-        provider: 'Emergency SIP',
-        mainCallerId: 1,
-        channelType: 'both',
-        status: 'available',
-        lastUsed: null,
-        failCount: 0,
-        channelId: 999
-      }];
-    }
-    
-    // 🔥 修正3: 実際のSIP接続テスト（簡単なバージョン）
-    let connectionTestPassed = false;
-    
-    if (sipcmdAvailable && this.sipAccounts.length > 0) {
-      try {
-        // 最初のアカウントで簡単な接続テスト
-        const testAccount = this.sipAccounts[0];
-        logger.info(`🧪 SIP接続テスト開始: ${testAccount.username}`);
-        
-        // 🔥 修正: 軽量な接続テスト（実際の発信はしない）
-        const testResult = await this.testSipConnection(testAccount);
-        
-        if (testResult) {
-          connectionTestPassed = true;
-          logger.info('✅ SIP接続テスト成功');
-        } else {
-          logger.warn('⚠️ SIP接続テスト失敗、但し続行');
-        }
-        
-      } catch (testError) {
-        logger.warn('⚠️ SIP接続テストエラー:', testError.message);
-        // 🔥 テスト失敗でも続行
-      }
-    }
-    
-    // 発信者番号ごとのチャンネルグループを作成
-    try {
-      this.organizeChannelsByCallerId();
-    } catch (organizeError) {
-      logger.warn('⚠️ チャンネル編成エラー:', organizeError.message);
-    }
-    
-    // 定期的なステータスモニタリングを開始
-    try {
-      this.startStatusMonitoring();
-    } catch (monitorError) {
-      logger.warn('⚠️ ステータスモニタリング開始エラー:', monitorError.message);
-    }
-    
-    // 🔥 修正4: 接続状態の決定（条件を緩和）
-    if (this.sipAccounts.length > 0) {
+  // 🔧 修正版接続メソッド
+  async connect() {
+    if (this.mockMode) {
+      logger.info('SIPサービスにモックモードで接続しました');
       this.connected = true;
-      logger.info(`✅ SIPサービス接続完了: ${this.sipAccounts.length}個のアカウント, 接続テスト=${connectionTestPassed ? '成功' : '未実施'}`);
-    } else {
-      this.connected = false;
-      logger.error('❌ SIPサービス接続失敗: アカウントが0個');
+      this.sipAccounts = await this.loadSipAccountsFromDatabase();
+      
+      if (this.sipAccounts.length === 0) {
+        this.sipAccounts = [
+          { username: '03080001', password: '56110478', status: 'available', callerID: '0359468520', mainCallerId: 1 },
+          { username: '03080002', password: '51448459', status: 'available', callerID: '0335289538', mainCallerId: 2 }
+        ];
+      }
+      return true;
     }
-    
-    return this.connected;
-    
-  } catch (error) {
-    logger.error('❌ SIP接続エラー:', error);
-    
-    // 🔥 修正5: エラー時もフォールバック処理
+
     try {
+      logger.info('🔧 SIPサービス接続開始（修正版）...');
+      
+      // SIPアカウント読み込み
+      this.sipAccounts = await this.loadSipAccountsFromDatabase();
+      logger.info(`📊 SIPアカウント読み込み結果: ${this.sipAccounts.length}個`);
+      
+      if (this.sipAccounts.length === 0) {
+        this.sipAccounts = [{
+          username: '03080001',
+          password: '56110478',
+          callerID: '03-5946-8520',
+          description: 'デフォルト SIP',
+          domain: 'ito258258.site',
+          provider: 'Default SIP',
+          mainCallerId: 1,
+          channelType: 'both',
+          status: 'available',
+          lastUsed: null,
+          failCount: 0,
+          channelId: 1
+        }];
+      }
+      
+      // 発信者番号ごとのチャンネルグループを作成
+      this.organizeChannelsByCallerId();
+      
+      // 定期的なステータスモニタリングを開始
+      this.startStatusMonitoring();
+      
+      this.connected = true;
+      logger.info(`✅ SIPサービス接続完了: ${this.sipAccounts.length}個のアカウント`);
+      return true;
+      
+    } catch (error) {
+      logger.error('❌ SIP接続エラー:', error);
+      
+      // フォールバック処理
       this.sipAccounts = [{
         username: '03080001',
         password: '56110478',
@@ -170,180 +90,112 @@ async connect() {
         channelId: 999
       }];
       
-      this.connected = true; // フォールバックでも接続成功扱い
+      this.connected = true;
       logger.warn('⚠️ エラー時フォールバック: デフォルトSIPアカウントで動作継続');
       return true;
-      
-    } catch (fallbackError) {
-      this.connected = false;
-      logger.error('❌ フォールバック処理も失敗:', fallbackError);
-      throw error;
     }
   }
-}
 
-// 🔥 新規追加: 軽量SIP接続テストメソッド
-async testSipConnection(sipAccount) {
-  return new Promise((resolve) => {
-    try {
-      // 🔥 修正: タイムアウト付きの軽量テスト
-      const timeout = setTimeout(() => {
-        logger.warn('⚠️ SIP接続テストタイムアウト');
-        resolve(false);
-      }, 5000); // 5秒タイムアウト
+  // 発信者番号ごとにチャンネルをグループ化
+  organizeChannelsByCallerId() {
+    this.callerIdToChannelsMap.clear();
+    
+    this.sipAccounts.forEach(account => {
+      if (!account.mainCallerId) return;
       
-      // 簡単なSIPアカウント情報検証
-      if (sipAccount.username && sipAccount.password && sipAccount.domain) {
-        clearTimeout(timeout);
-        logger.info('✅ SIPアカウント情報検証成功');
-        resolve(true);
-      } else {
-        clearTimeout(timeout);
-        logger.warn('⚠️ SIPアカウント情報不完全');
-        resolve(false);
+      if (!this.callerIdToChannelsMap.has(account.mainCallerId)) {
+        this.callerIdToChannelsMap.set(account.mainCallerId, []);
       }
       
-    } catch (error) {
-      logger.warn('⚠️ SIP接続テストエラー:', error.message);
-      resolve(false);
-    }
-  });
-}  
-  // データベースからSIPアカウント読み込み
-  async loadSipAccountsFromDatabase() {
-  try {
-    logger.info('🔧 データベースからSIPチャンネル情報を読み込み中...');
-    
-    const [channels] = await db.query(`
-      SELECT 
-        cc.id,
-        cc.caller_id_id,
-        cc.username,
-        cc.password,
-        cc.channel_type,
-        cc.status,
-        cc.last_used,
-        cc.created_at,
-        ci.number as caller_number, 
-        ci.description, 
-        ci.provider, 
-        ci.domain, 
-        ci.active as caller_active
-      FROM caller_channels cc
-      JOIN caller_ids ci ON cc.caller_id_id = ci.id
-      WHERE ci.active = true
-      ORDER BY cc.caller_id_id, cc.id
-    `);
-    
-    // 🔥 デバッグログ追加
-    console.log('🔍 SipService データベースクエリ結果:');
-    console.log('  - 取得件数:', channels ? channels.length : 'undefined');
-    console.log('  - データ型:', typeof channels);
-    console.log('  - 配列チェック:', Array.isArray(channels));
-    
-    if (!channels) {
-      console.log('❌ channels が null/undefined');
-      logger.error('SIPチャンネルクエリ結果がnull');
-      // フォールバック用のデフォルトアカウント
-      return [{
-        username: '03080001',
-        password: '56110478',
-        callerID: '03-5946-8520',
-        description: 'フォールバック SIP',
-        domain: 'ito258258.site',
-        provider: 'Emergency SIP',
-        mainCallerId: 1,
-        channelType: 'both',
-        status: 'available',
-        lastUsed: null,
-        failCount: 0,
-        channelId: 999
-      }];
-    }
-    
-    if (channels.length === 0) {
-      console.log('⚠️ channels.length === 0');
-      logger.warn('データベースに有効なSIPチャンネルが見つかりません');
-      // フォールバック用のデフォルトアカウント
-      return [{
-        username: '03080001',
-        password: '56110478',
-        callerID: '03-5946-8520',
-        description: 'フォールバック SIP',
-        domain: 'ito258258.site',
-        provider: 'Emergency SIP',
-        mainCallerId: 1,
-        channelType: 'both',
-        status: 'available',
-        lastUsed: null,
-        failCount: 0,
-        channelId: 999
-      }];
-    }
-    
-    // 🔥 各レコードのデバッグ出力
-    console.log('📋 取得したSIPチャンネル:');
-    channels.forEach((channel, index) => {
-      console.log(`  [${index + 1}] ${channel.username} -> ${channel.caller_number} (${channel.status})`);
+      this.callerIdToChannelsMap.get(account.mainCallerId).push(account);
     });
     
-    // 🔥 フォーマット処理（エラーハンドリング強化）
-    const formattedAccounts = [];
-    
-    for (let i = 0; i < channels.length; i++) {
-      const channel = channels[i];
-      
-      try {
-        const formattedAccount = {
-          username: channel.username || 'unknown',
-          password: channel.password || 'unknown',
-          callerID: channel.caller_number || '03-5946-8520',
-          description: channel.description || '',
-          domain: channel.domain || 'ito258258.site',
-          provider: channel.provider || 'SIP Provider',
-          mainCallerId: channel.caller_id_id || 1,
-          channelType: channel.channel_type || 'both',
-          status: channel.status || 'available',
-          lastUsed: channel.last_used || null,
-          failCount: 0,
-          channelId: channel.id || i + 1
-        };
-        
-        formattedAccounts.push(formattedAccount);
-        console.log(`✅ SIPアカウント[${i + 1}]フォーマット成功:`, formattedAccount.username);
-        
-      } catch (formatError) {
-        console.error(`❌ SIPアカウント[${i + 1}]フォーマットエラー:`, formatError);
-        logger.error(`SIPアカウントフォーマットエラー[${i}]:`, formatError);
-      }
-    }
-    
-    console.log(`🎯 最終結果: ${formattedAccounts.length}個のSIPアカウントを処理`);
-    logger.info(`合計${formattedAccounts.length}個のSIPチャンネルを読み込みました`);
-    
-    return formattedAccounts;
-    
-  } catch (error) {
-    console.error('❌ SIPチャンネル読み込みエラー:', error);
-    logger.error('データベースからのSIPチャンネル読み込みエラー:', error);
-    
-    // 🔥 エラー時のフォールバック（確実に動作するデフォルトアカウント）
-    return [{
-      username: '03080001',
-      password: '56110478',
-      callerID: '03-5946-8520',
-      description: 'エラー時フォールバック',
-      domain: 'ito258258.site',
-      provider: 'Fallback SIP',
-      mainCallerId: 1,
-      channelType: 'both',
-      status: 'available',
-      lastUsed: null,
-      failCount: 0,
-      channelId: 999
-    }];
+    this.callerIdToChannelsMap.forEach((channels, callerId) => {
+      logger.info(`発信者番号ID ${callerId} のチャンネル数: ${channels.length}`);
+    });
   }
-}
+
+  // データベースからSIPアカウント読み込み
+  async loadSipAccountsFromDatabase() {
+    try {
+      logger.info('🔧 データベースからSIPチャンネル情報を読み込み中...');
+      
+      const [channels] = await db.query(`
+        SELECT 
+          cc.id,
+          cc.caller_id_id,
+          cc.username,
+          cc.password,
+          cc.channel_type,
+          cc.status,
+          cc.last_used,
+          cc.created_at,
+          ci.number as caller_number, 
+          ci.description, 
+          ci.provider, 
+          ci.domain, 
+          ci.active as caller_active
+        FROM caller_channels cc
+        JOIN caller_ids ci ON cc.caller_id_id = ci.id
+        WHERE ci.active = true
+        ORDER BY cc.caller_id_id, cc.id
+      `);
+      
+      if (!channels || channels.length === 0) {
+        logger.warn('データベースに有効なSIPチャンネルが見つかりません');
+        return [{
+          username: '03080001',
+          password: '56110478',
+          callerID: '03-5946-8520',
+          description: 'フォールバック SIP',
+          domain: 'ito258258.site',
+          provider: 'Emergency SIP',
+          mainCallerId: 1,
+          channelType: 'both',
+          status: 'available',
+          lastUsed: null,
+          failCount: 0,
+          channelId: 999
+        }];
+      }
+      
+      const formattedAccounts = channels.map(channel => ({
+        username: channel.username || 'unknown',
+        password: channel.password || 'unknown',
+        callerID: channel.caller_number || '03-5946-8520',
+        description: channel.description || '',
+        domain: channel.domain || 'ito258258.site',
+        provider: channel.provider || 'SIP Provider',
+        mainCallerId: channel.caller_id_id || 1,
+        channelType: channel.channel_type || 'both',
+        status: channel.status || 'available',
+        lastUsed: channel.last_used || null,
+        failCount: 0,
+        channelId: channel.id || 1
+      }));
+      
+      logger.info(`合計${formattedAccounts.length}個のSIPチャンネルを読み込みました`);
+      return formattedAccounts;
+      
+    } catch (error) {
+      logger.error('データベースからのSIPチャンネル読み込みエラー:', error);
+      return [{
+        username: '03080001',
+        password: '56110478',
+        callerID: '03-5946-8520',
+        description: 'エラー時フォールバック',
+        domain: 'ito258258.site',
+        provider: 'Fallback SIP',
+        mainCallerId: 1,
+        channelType: 'both',
+        status: 'available',
+        lastUsed: null,
+        failCount: 0,
+        channelId: 999
+      }];
+    }
+  }
+
   // 利用可能なSIPアカウント取得
   async getAvailableSipAccount() {
     logger.info(`利用可能なSIPアカウントを検索中 (全${this.sipAccounts.length}個)`);
@@ -367,34 +219,19 @@ async testSipConnection(sipAccount) {
     }
     
     const selectedAccount = availableAccounts[0];
-    logger.info(`選択されたSIPアカウント: ${selectedAccount.username}`);
+    logger.info(`選択されたSIP���カウント: ${selectedAccount.username}`);
     return selectedAccount;
   }
-  
-  // ★★★ メイン発信メソッド ★★★
+
+  // 🚀 メイン発信メソッド（完全修正版）
   async originate(params) {
     if (this.mockMode) {
       return this.originateMock(params);
     }
     
-    logger.info(`SIP発信を開始: 発信先=${params.phoneNumber}`);
+    logger.info(`🔥 SIP発信を開始: 発信先=${params.phoneNumber}`);
     
     try {
-      // キャンペーンの音声ファイルを事前に取得
-      let campaignAudio = null;
-      if (params.variables && params.variables.CAMPAIGN_ID) {
-        try {
-          const audioService = require('./audioService');
-          campaignAudio = await audioService.getCampaignAudio(params.variables.CAMPAIGN_ID);
-          
-          if (campaignAudio && campaignAudio.length > 0) {
-            logger.info(`キャンペーン ${params.variables.CAMPAIGN_ID} の音声ファイル取得: ${campaignAudio.length}件`);
-          }
-        } catch (audioError) {
-          logger.warn('音声ファイル取得エラー（続行）:', audioError.message);
-        }
-      }
-      
       // SIPアカウントを取得
       let sipAccount = await this.getAvailableSipAccount();
       
@@ -416,16 +253,17 @@ async testSipConnection(sipAccount) {
       // 通話IDとSIPアカウントを関連付け
       this.callToAccountMap.set(callId, sipAccount);
       
-      // 🔥 修正版: 安全なコマンド実行
+      // sipcmdコマンド実行
       const args = [
         sipAccount.username,
         sipAccount.password,
         sipServer,
         formattedNumber,
-        '30' // 固定通話時間
+        '30'
       ];
       
-      const commandLine = `${this.sipcmdPath} ${args.map(arg => `"${arg}"`).join(' ')}`;
+      const commandLine = `${this.sipcmdPath} "${args[0]}" "${args[1]}" "${args[2]}" "${args[3]}" "${args[4]}"`;
+      
       logger.info(`🚀 SIPコマンド実行: ${this.sipcmdPath} [引数は安全のため省略]`);
       
       // プロセス実行（エラーハンドリング強化）
@@ -436,9 +274,9 @@ async testSipConnection(sipAccount) {
           LANG: 'C',
           LC_ALL: 'C'
         },
-        timeout: 45000, // 45秒でタイムアウト
+        timeout: 45000,
         killSignal: 'SIGTERM',
-        maxBuffer: 1024 * 1024 // 1MB buffer
+        maxBuffer: 1024 * 1024
       });
       
       // プロセス開始確認
@@ -448,47 +286,38 @@ async testSipConnection(sipAccount) {
       
       logger.info(`✅ SIPプロセス開始: PID=${sipcmdProcess.pid}`);
       
-      // 🎯 プロセス完了を Promise で管理
-      const processPromise = new Promise((resolve, reject) => {
-        sipcmdProcess.on('exit', (code, signal) => {
-          logger.info(`SIPプロセス終了: code=${code}, signal=${signal}`);
-          
-          if (code === 0) {
-            resolve({ success: true, code });
-          } else {
-            reject(new Error(`SIPプロセス異常終了: code=${code}, signal=${signal}`));
-          }
-        });
-        
-        sipcmdProcess.on('error', (error) => {
-          logger.error(`SIPプロセスエラー: ${error.message}`);
-          reject(error);
-        });
-        
-        sipcmdProcess.stdout?.on('data', (data) => {
-          const output = data.toString().trim();
-          if (output) {
-            logger.info(`SIP stdout: ${output}`);
-          }
-        });
-        
-        sipcmdProcess.stderr?.on('data', (data) => {
-          const error = data.toString().trim();
-          if (error) {
-            logger.warn(`SIP stderr: ${error}`);
-          }
+      // プロセス監視
+      sipcmdProcess.on('exit', (code, signal) => {
+        logger.info(`SIPプロセス終了: code=${code}, signal=${signal}`);
+        this.emit('callEnded', {
+          callId,
+          status: code === 0 ? 'ANSWERED' : 'FAILED',
+          duration: 10
         });
       });
       
-      // 🎵 音声再生システム（非同期で開始）
-      if (campaignAudio && campaignAudio.length > 0) {
-        logger.info(`🎵 音声再生開始: callId=${callId}`);
-        
-        // 2秒後に音声再生開始（SIP接続確立を待つ）
-        setTimeout(() => {
-          this.playAudioSimple(callId, campaignAudio);
-        }, 2000);
-      }
+      sipcmdProcess.on('error', (error) => {
+        logger.error(`SIPプロセスエラー: ${error.message}`);
+        this.emit('callEnded', {
+          callId,
+          status: 'FAILED',
+          duration: 0
+        });
+      });
+      
+      sipcmdProcess.stdout?.on('data', (data) => {
+        const output = data.toString().trim();
+        if (output) {
+          logger.info(`SIP stdout: ${output}`);
+        }
+      });
+      
+      sipcmdProcess.stderr?.on('data', (data) => {
+        const error = data.toString().trim();
+        if (error) {
+          logger.warn(`SIP stderr: ${error}`);
+        }
+      });
       
       // 発信成功イベントをエミット
       this.emit('callStarted', {
@@ -496,12 +325,9 @@ async testSipConnection(sipAccount) {
         number: params.phoneNumber,
         callerID: params.callerID || sipAccount.callerID,
         variables: params.variables || {},
-        mainCallerId: sipAccount.mainCallerId,
-        hasAudio: campaignAudio ? true : false
+        mainCallerId: sipAccount.mainCallerId
       });
       
-      // プロセス完了を待たずに成功レスポンスを返す
-      // 実際の通話結果は後でイベントで通知される
       return {
         ActionID: callId,
         Response: 'Success',
@@ -509,7 +335,6 @@ async testSipConnection(sipAccount) {
         SipAccount: sipAccount.username,
         mainCallerId: sipAccount.mainCallerId,
         provider: 'sip',
-        audioFilesCount: campaignAudio ? campaignAudio.length : 0,
         processId: sipcmdProcess.pid
       };
       
@@ -525,207 +350,7 @@ async testSipConnection(sipAccount) {
     }
   }
 
-  // 🔊 音声再生処理（改良版）
-  playAudioSimple(callId, campaignAudio) {
-    try {
-      if (!campaignAudio || campaignAudio.length === 0) {
-        logger.info(`🔊 音声ファイルなし: callId=${callId}`);
-        return true;
-      }
-      
-      logger.info(`🔊 音声再生開始: callId=${callId}, ファイル数=${campaignAudio.length}`);
-      
-      const audioMap = {};
-      campaignAudio.forEach(audio => {
-        if (audio && audio.audio_type) {
-          audioMap[audio.audio_type] = audio;
-        }
-      });
-      
-      logger.info(`🔊 [音声タイプ] ${Object.keys(audioMap).join(', ')}`);
-      
-      // 段階的音声再生
-      let delay = 1000;
-      
-      // 1. ウェルカムメッセージ
-      if (audioMap.welcome) {
-        setTimeout(() => {
-          logger.info(`🔊 [再生] ウェルカムメッセージ: ${audioMap.welcome.name}`);
-          this.playAudioFile(callId, audioMap.welcome);
-        }, delay);
-        delay += 3000;
-      }
-      
-      // 2. メニュー案内
-      if (audioMap.menu) {
-        setTimeout(() => {
-          logger.info(`🔊 [再生] メニュー案内: ${audioMap.menu.name}`);
-          this.playAudioFile(callId, audioMap.menu);
-          
-          // メニュー後にキー入力待機開始
-          this.startKeyInputWait(callId);
-        }, delay);
-        delay += 5000;
-      } else {
-        // メニューがない場合もキー入力待機
-        setTimeout(() => {
-          this.startKeyInputWait(callId);
-        }, delay);
-      }
-      
-      // 3. タイムアウト処理
-      setTimeout(() => {
-        if (this.isCallActive(callId)) {
-          logger.info(`⏰ キー入力タイムアウト: ${callId}`);
-          this.handleCallTimeout(callId, audioMap.goodbye);
-        }
-      }, delay + 10000); // 10秒待機
-      
-      return true;
-      
-    } catch (error) {
-      logger.warn('音声再生エラー（継続）:', error.message);
-      return false;
-    }
-  }
-
-  // 🎵 個別音声ファイル再生（新規追加）
-  playAudioFile(callId, audioFile) {
-    try {
-      if (!audioFile || !audioFile.path) {
-        logger.warn(`音声ファイルパスが無効: ${audioFile?.name || 'unknown'}`);
-        return false;
-      }
-      
-      logger.info(`🎵 音声ファイル再生: ${audioFile.name} -> ${audioFile.path}`);
-      
-      // 実際の音声再生処理
-      // 現在はログのみ（実装時にpjsuaコマンド等で実際の再生処理を追加）
-      
-      return true;
-      
-    } catch (error) {
-      logger.error(`音声ファイル再生エラー: ${audioFile?.name}`, error);
-      return false;
-    }
-  }
-
-  // ⌨️ キー入力待機開始（新規追加）
-  startKeyInputWait(callId) {
-    logger.info(`⌨️ キー入力待機開始: ${callId}`);
-    
-    // 通話がアクティブな状態でキー入力を受け付ける準備
-    // 実際のSIP実装では、DTMFトーン検出を開始
-    
-    // 🧪 開発用：ランダムにキー入力をシミュレート
-    if (process.env.NODE_ENV === 'development' && process.env.MOCK_KEYPRESS === 'true') {
-      setTimeout(() => {
-        const randomKeys = ['1', '9', '0', '#'];
-        const randomKey = randomKeys[Math.floor(Math.random() * randomKeys.length)];
-        logger.info(`🧪 [開発用] ランダムキー入力シミュレーション: ${randomKey}`);
-        this.handleKeyPress(callId, randomKey);
-      }, 3000);
-    }
-  }
-
-  // 🎯 キー入力処理（新規追加）
-  handleKeyPress(callId, keypress) {
-    try {
-      logger.info(`🔢 キー入力受信: CallID=${callId}, Key=${keypress}`);
-      
-      if (!callId) {
-        logger.warn('無効な通話ID');
-        return false;
-      }
-      
-      // キー入力に応じた処理
-      switch (keypress) {
-        case '1':
-          logger.info(`🎯 オペレーター転送要求: ${callId}`);
-          this.emit('keyPressed', {
-            callId,
-            keypress: '1',
-            action: 'operator_transfer',
-            timestamp: new Date()
-          });
-          
-          // 通話終了処理を実行
-          this.emit('callEnded', {
-            callId,
-            status: 'ANSWERED',
-            duration: 15,
-            keypress: '1'
-          });
-          break;
-          
-        case '9':
-          logger.info(`🚫 DNC登録要求: ${callId}`);
-          this.emit('keyPressed', {
-            callId,
-            keypress: '9',
-            action: 'dnc_request',
-            timestamp: new Date()
-          });
-          
-          // 通話終了処理を実行
-          this.emit('callEnded', {
-            callId,
-            status: 'ANSWERED',
-            duration: 10,
-            keypress: '9'
-          });
-          break;
-          
-        default:
-          logger.info(`ℹ️ その他のキー入力: ${callId}, Key=${keypress}`);
-          this.emit('keyPressed', {
-            callId,
-            keypress,
-            action: 'other',
-            timestamp: new Date()
-          });
-          break;
-      }
-      
-      return true;
-      
-    } catch (error) {
-      logger.error(`キー入力処理エラー: ${callId}`, error);
-      return false;
-    }
-  }
-
-  // 🔍 通話アクティブ状態確認（新規追加）
-  isCallActive(callId) {
-    return this.callToAccountMap.has(callId) || this.activeCallsMap.has(callId);
-  }
-
-  // ⏰ タイムアウト処理（新規追加）
-  handleCallTimeout(callId, goodbyeAudio) {
-    try {
-      logger.info(`⏰ 通話タイムアウト処理: ${callId}`);
-      
-      // お別れメッセージ再生
-      if (goodbyeAudio) {
-        this.playAudioFile(callId, goodbyeAudio);
-      }
-      
-      // 通話終了処理
-      setTimeout(() => {
-        this.emit('callEnded', {
-          callId,
-          status: 'TIMEOUT',
-          duration: 30,
-          reason: 'キー入力タイムアウト'
-        });
-      }, 2000);
-      
-    } catch (error) {
-      logger.error(`タイムアウト処理エラー: ${callId}`, error);
-    }
-  }
-
-  // 電話番号フォーマット
+  // ✅ 電話番号フォーマット（追加）
   formatPhoneNumber(phoneNumber) {
     if (phoneNumber.startsWith('0')) {
       return phoneNumber;
@@ -769,13 +394,12 @@ async testSipConnection(sipAccount) {
     };
   }
 
-  // 📞 通話終了イベント処理（強化版）
+  // 通話終了イベント処理
   async handleCallEnded(eventData) {
     const { callId, status, duration, keypress } = eventData;
     logger.info(`通話終了イベント処理: ${callId}, status=${status || 'unknown'}, keypress=${keypress || 'none'}`);
     
     try {
-      // 🔥 キー入力があった場合はdialerServiceに通知
       if (keypress) {
         const dialerService = require('./dialerService');
         await dialerService.handleCallEnd(callId, duration, status, keypress);
@@ -800,7 +424,6 @@ async testSipConnection(sipAccount) {
     }
     
     try {
-      // SIPアカウントを解放
       if (this.callToAccountMap.has(callId)) {
         const sipAccount = this.callToAccountMap.get(callId);
         
@@ -904,7 +527,7 @@ async testSipConnection(sipAccount) {
       });
       
       logger.info(`SIPアカウント状態: 全体=${statusCounts.total}, 利用可能=${statusCounts.available}, 使用中=${statusCounts.busy}, エラー=${statusCounts.error}`);
-    }, 60000); // 1分ごと
+    }, 60000);
   }
 
   getAccountStatus() {
@@ -923,26 +546,6 @@ async testSipConnection(sipAccount) {
     };
   }
 
-  async testAudioPlayback(audioFile) {
-    logger.info(`🧪 音声再生テスト: ${audioFile.name}`);
-    
-    try {
-      const audioPath = audioFile.path || path.join(__dirname, '../../audio-files', audioFile.filename);
-      
-      if (!fs.existsSync(audioPath)) {
-        logger.warn(`音声ファイルが見つかりません: ${audioPath}`);
-        return false;
-      }
-      
-      logger.info(`✅ 音声テスト結果: 成功`);
-      return true;
-      
-    } catch (error) {
-      logger.error('音声再生テストエラー:', error);
-      return false;
-    }
-  }
-
   async disconnect() {
     logger.info('SIPサービスを切断しています...');
     this.connected = false;
@@ -952,5 +555,4 @@ async testSipConnection(sipAccount) {
 
 // シングルトンインスタンスを作成
 const sipService = new SipService();
-
 module.exports = sipService;
