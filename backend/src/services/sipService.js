@@ -603,7 +603,7 @@ class SipService extends EventEmitter {
 
       return new Promise((resolve, reject) => {
         const pjsuaProcess = spawn('pjsua', pjsuaArgs, {
-          stdio: ['ignore', 'pipe', 'pipe'],  // stdin無視、stdout/stderr監視
+	  stdio: 'inherit',
           env: { ...process.env, LANG: 'C', LC_ALL: 'C' },
           cwd: '/var/www/autodialer/backend'
         });
