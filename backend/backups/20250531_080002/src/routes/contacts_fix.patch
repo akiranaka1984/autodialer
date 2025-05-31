@@ -1,0 +1,41 @@
+--- a/contacts.js
++++ b/contacts.js
+@@ -65,7 +65,7 @@
+       
+       // カンマで分割（簡易的なCSVパース）
+-      const cols = row.split(',');
++      const cols = row.split(',').map(col => col.replace(/"/g, '').trim());
+       
+       // マッピングに基づいてデータを取得
+       const phoneCol = mappings.phone || 0;
+@@ -93,22 +93,16 @@
+     console.log(`${contacts.length}件の連絡先をインポート処理します`);
+     
+     // データベースに登録
+-    const connection = await db.beginTransaction();
+-    
+-    try {
++    let insertCount = 0;
+       // 各連絡先をデータベースに追加
+       for (const contact of contacts) {
+-        await connection.query(
+-          'INSERT INTO contacts (phone, name, company, campaign_id, status, created_at) VALUES (?, ?, ?, ?, ?, NOW())',
++        try {
++        await db.query(
++          'INSERT IGNORE INTO contacts (phone, name, company, campaign_id, status, created_at) VALUES (?, ?, ?, ?, ?, NOW())',
+           [contact.phone, contact.name, contact.company, contact.campaign_id, contact.status]
+         );
++        insertCount++;
++        } catch (insertError) {
++          console.warn(`連絡先登録スキップ: ${contact.phone} - ${insertError.message}`);
++        }
+       }
+-      
+-      await db.commit(connection);
+-      console.log(`${importedCount}件の連絡先を登録しました`);
+-    } catch (dbError) {
+-      // エラー時はロールバック
+-      await db.rollback(connection);
+-      console.error('データベース登録エラー:', dbError);
+-      throw dbError;
+-    }

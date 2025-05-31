@@ -1,0 +1,387 @@
+// backend/src/index.js - ポート競合完全解決版
+const express = require('express');
+const cors = require('cors');
+const http = require('http');
+const logger = require('./services/logger');
+const db = require('./services/database');
+
+require('dotenv').config();
+
+const app = express();
+
+// 🔥 動的ポート割り当て機能
+const findAvailablePort = async (startPort = 5000) => {
+  const net = require('net');
+  
+  for (let port = startPort; port <= startPort + 10; port++) {
+    try {
+      await new Promise((resolve, reject) => {
+        const server = net.createServer();
+        
+        server.listen(port, (err) => {
+          if (err) {
+            reject(err);
+          } else {
+            server.close(() => resolve());
+          }
+        });
+        
+        server.on('error', reject);
+      });
+      
+      return port;
+    } catch (error) {
+      console.log(`ポート ${port} は使用中: ${error.code}`);
+      continue;
+    }
+  }
+  
+  throw new Error('利用可能なポートが見つかりません');
+};
+
+// 🔧 単一サーバーインスタンス保証
+let server = null;
+let isServerStarted = false;
+
+// CORS設定
+app.use((req, res, next) => {
+  res.setHeader("Access-Control-Allow-Origin", "*");
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, PATCH, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With, Accept, Origin, Cache-Control, Pragma');
+  res.setHeader('Access-Control-Allow-Credentials', 'true');
+  res.setHeader('Access-Control-Max-Age', '86400');
+  
+  if (req.method === 'OPTIONS') {
+    return res.status(200).end();
+  }
+  
+  next();
+});
+
+// ミドルウェア
+app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
+
+// リクエストログ
+app.use((req, res, next) => {
+  console.log(`${req.method} ${req.url} - Origin: ${req.headers.origin || 'none'}`);
+  next();
+});
+
+// ✅ ルーター登録
+console.log('🚀 ルーター登録開始...');
+
+const routerStatus = {
+  system: false,
+  contacts: false,
+  campaigns: false,
+  callerIds: false,
+  calls: false,
+  audio: false,
+  ivr: false
+};
+
+// ルーター登録関数
+const registerRouter = (path, routerFile, name) => {
+  try {
+    const router = require(routerFile);
+    app.use(path, router);
+    routerStatus[name] = true;
+    console.log(`✅ ${name} router 登録成功`);
+    return true;
+  } catch (error) {
+    console.error(`❌ ${name} router 登録失敗:`, error.message);
+    return false;
+  }
+};
+
+// 各ルーター登録
+registerRouter('/api/system', './routes/system', 'system');
+registerRouter('/api', './routes/contacts', 'contacts');
+registerRouter('/api/campaigns', './routes/campaigns', 'campaigns');
+registerRouter('/api/caller-ids', './routes/callerIds', 'callerIds');
+registerRouter('/api/calls', './routes/calls', 'calls');
+registerRouter('/api/audio', './routes/audio', 'audio');
+registerRouter('/api/ivr', './routes/ivr', 'ivr');
+
+console.log('📊 ルーター登録状況:', routerStatus);
+
+// 認証エンドポイント
+app.post("/api/auth/login", (req, res) => {
+  const { username, password } = req.body;
+  console.log("ログイン試行:", username);
+  if (username && password) {
+    res.json({
+      success: true,
+      user: { username: username, role: "admin", name: "システム管理者" },
+      token: "dummy-token-" + Date.now()
+    });
+  } else {
+    res.status(400).json({ success: false, message: "ユーザー名とパスワードが必要です" });
+  }
+});
+
+app.get("/api/auth/profile", (req, res) => {
+  res.json({
+    id: 1,
+    username: "admin",
+    name: "システム管理者",
+    role: "admin"
+  });
+});
+
+// 基本エンドポイント
+app.get('/', (req, res) => {
+  res.json({ 
+    message: 'オートコールシステムAPI稼働中（ポート競合解決版）',
+    version: '1.4.2-fixed',
+    timestamp: new Date().toISOString(),
+    routerStatus: routerStatus,
+    port: process.env.ACTIVE_PORT || 'dynamic'
+  });
+});
+
+app.get('/health', (req, res) => {
+  res.json({ 
+    status: 'ok', 
+    timestamp: new Date().toISOString(),
+    server: 'main-fixed',
+    routerStatus: routerStatus,
+    port: process.env.ACTIVE_PORT
+  });
+});
+
+// フォールバックAPI（キャンペーン管理）
+if (!routerStatus.campaigns) {
+  console.log('🔄 キャンペーンルーターフォールバック登録中...');
+  
+  app.get('/api/campaigns', async (req, res) => {
+    try {
+      const [campaigns] = await db.query(`
+        SELECT c.id, c.name, c.description, c.status, c.created_at, c.updated_at, c.progress,
+               ci.number as caller_id_number,
+               (SELECT COUNT(*) FROM contacts WHERE campaign_id = c.id) as contact_count
+        FROM campaigns c
+        LEFT JOIN caller_ids ci ON c.caller_id_id = ci.id
+        ORDER BY c.created_at DESC
+      `);
+      
+      res.json({
+        campaigns: campaigns || [],
+        total: campaigns ? campaigns.length : 0,
+        page: 1,
+        limit: 50,
+        totalPages: 1
+      });
+    } catch (error) {
+      console.error('キャンペーン一覧エラー:', error);
+      res.status(500).json({ 
+        campaigns: [], 
+        total: 0, 
+        message: 'キャンペーンの取得に失敗しました' 
+      });
+    }
+  });
+  
+  app.post('/api/campaigns/:id/start', async (req, res) => {
+    try {
+      const { id } = req.params;
+      const [result] = await db.query(
+        'UPDATE campaigns SET status = "active", updated_at = NOW() WHERE id = ?',
+        [id]
+      );
+      
+      if (result.affectedRows === 0) {
+        return res.status(400).json({ message: 'キャンペーンが見つかりません' });
+      }
+      
+      res.json({
+        success: true,
+        message: 'キャンペーンを開始しました',
+        campaignId: parseInt(id)
+      });
+    } catch (error) {
+      console.error('キャンペーン開始エラー:', error);
+      res.status(500).json({ message: 'キャンペーンの開始に失敗しました' });
+    }
+  });
+}
+
+// テスト発信フォールバック
+if (!routerStatus.calls) {
+  app.post('/api/calls/test', async (req, res) => {
+    try {
+      const { phoneNumber, callerID, mockMode } = req.body;
+      
+      if (!phoneNumber) {
+        return res.status(400).json({ message: '発信先電話番号は必須です' });
+      }
+      
+      const callService = require('./services/callService');
+      const params = {
+        phoneNumber,
+        callerID: callerID || process.env.DEFAULT_CALLER_ID || '"Auto Dialer" <03-5946-8520>',
+        context: 'autodialer',
+        exten: 's',
+        priority: 1,
+        variables: {
+          CAMPAIGN_ID: 'TEST',
+          CONTACT_ID: 'TEST',
+          TEST_CALL: 'true'
+        },
+        mockMode
+      };
+      
+      const result = await callService.originate(params);
+      
+      res.json({
+        success: true,
+        callId: result.ActionID,
+        message: 'テスト発信が開始されました',
+        data: result
+      });
+    } catch (error) {
+      console.error('テスト発信エラー:', error);
+      res.status(500).json({ message: 'テスト発信に失敗しました', error: error.message });
+    }
+  });
+}
+
+// 404エラーハンドラー
+app.use((req, res, next) => {
+  res.status(404).json({ 
+    message: '要求されたリソースが見つかりません',
+    path: req.originalUrl,
+    method: req.method,
+    timestamp: new Date().toISOString()
+  });
+});
+
+// エラーハンドリングミドルウェア
+app.use((err, req, res, next) => {
+  console.error('アプリケーションエラー:', err);
+  res.status(500).json({ 
+    message: '内部サーバーエラー', 
+    error: err.message 
+  });
+});
+
+// 🚀 修正版: 安全なサーバー起動処理
+const startServer = async () => {
+  // 🔒 重複起動防止
+  if (isServerStarted) {
+    console.log('⚠️ サーバーは既に起動されています');
+    return;
+  }
+  
+  try {
+    console.log('🚀 サーバー初期化開始...');
+    
+    // 1. データベース接続確認
+    await db.query('SELECT 1');
+    console.log('✅ データベース接続成功');
+
+    // 2. 利用可能ポート検索
+    const availablePort = await findAvailablePort(5000);
+    console.log(`🔍 利用可能ポート発見: ${availablePort}`);
+    
+    // 環境変数に設定
+    process.env.ACTIVE_PORT = availablePort;
+    
+    // 3. サーバー作成（1回のみ）
+    if (!server) {
+      server = http.createServer(app);
+    }
+    
+    // 4. SIPサービス初期化
+    console.log('🔧 SIPサービス初期化中...');
+    try {
+      const sipService = require('./services/sipService');
+      const sipResult = await sipService.connect();
+      console.log('📞 SIP初期化結果:', sipResult);
+    } catch (sipError) {
+      console.error('❌ SIPサービス初期化エラー（続行）:', sipError.message);
+    }
+
+    // 5. CallService初期化
+    console.log('🔧 CallService初期化中...');
+    try {
+      const callService = require('./services/callService');
+      const callResult = await callService.initialize();
+      console.log('📞 CallService初期化結果:', callResult);
+    } catch (callError) {
+      console.error('❌ CallService初期化エラー（続行）:', callError.message);
+    }
+
+    // 6. DialerService初期化
+    console.log('🔧 DialerService初期化中...');
+    try {
+      const dialerService = require('./services/dialerService');
+      dialerService.initialized = true;
+      dialerService.enabled = true;
+      console.log('✅ DialerService初期化完了');
+    } catch (dialerError) {
+      console.error('❌ DialerService初期化エラー（続行）:', dialerError.message);
+    }
+    
+    // 7. 🔥 確実な単一サーバー起動
+    await new Promise((resolve, reject) => {
+      server.listen(availablePort, '0.0.0.0', (err) => {
+        if (err) {
+          console.error('❌ サーバー起動エラー:', err);
+          reject(err);
+        } else {
+          isServerStarted = true;
+          console.log(`✅ サーバーが起動しました: http://0.0.0.0:${availablePort}`);
+          console.log('🎯 自動発信システム準備完了');
+          resolve();
+        }
+      });
+    });
+    
+  } catch (error) {
+    console.error('❌ サーバー起動エラー:', error);
+    isServerStarted = false;
+    throw error;
+  }
+};
+
+// 未処理エラーハンドリング
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('Unhandled Rejection:', reason);
+});
+
+process.on('uncaughtException', (error) => {
+  console.error('Uncaught Exception:', error);
+});
+
+// 終了処理
+process.on('SIGINT', async () => {
+  console.log('アプリケーションを終了します...');
+  
+  try {
+    if (server) {
+      server.close(() => {
+        console.log('サーバーを正常に終了しました');
+        process.exit(0);
+      });
+    }
+    
+    if (db.close) {
+      await db.close();
+    }
+  } catch (error) {
+    console.error('終了処理エラー:', error);
+    process.exit(1);
+  }
+});
+
+// 🔥 単一エントリーポイント
+if (require.main === module) {
+  startServer().catch(err => {
+    console.error('startServer実行エラー:', err);
+    process.exit(1);
+  });
+}
+
+module.exports = app;

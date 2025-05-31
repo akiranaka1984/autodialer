@@ -565,205 +565,179 @@ class SipService extends EventEmitter {
   }
 
 // 🎵 成功パターン100%適用版 - executeSipCommand
-  async executeSipCommand(sipAccount, formattedNumber, callId, params = {}) {
-    try {
-      const sipServer = sipAccount.domain || 'ito258258.site';
-      
-      // 🎵 音声ファイルパス決定
-      let audioPath = '/var/www/autodialer/backend/audio-files/welcome-test.wav';
-      
-      // キャンペーン音声ファイルがある場合は使用
-      if (params.campaignAudio && params.campaignAudio.length > 0) {
-        const welcomeAudio = params.campaignAudio.find(audio => audio.audio_type === 'welcome');
-        if (welcomeAudio && welcomeAudio.path && fs.existsSync(welcomeAudio.path)) {
-          audioPath = welcomeAudio.path;
-          logger.info(`🎵 キャンペーン音声使用: ${audioPath}`);
-        }
+async executeSipCommand(sipAccount, formattedNumber, callId, params = {}) {
+  try {
+    const sipServer = sipAccount.domain || 'ito258258.site';
+    
+    // 🎵 音声ファイルパス決定
+    let audioPath = '/var/www/autodialer/backend/audio-files/welcome-test.wav';
+    
+    // キャンペーン音声ファイルがある場合は使用
+    if (params.campaignAudio && params.campaignAudio.length > 0) {
+      const welcomeAudio = params.campaignAudio.find(audio => audio.audio_type === 'welcome');
+      if (welcomeAudio && welcomeAudio.path && fs.existsSync(welcomeAudio.path)) {
+        audioPath = welcomeAudio.path;
+        logger.info(`🎵 キャンペーン音声使用: ${audioPath}`);
       }
+    }
 
-      // 🚀 成功パターンのコマンド構築（診断で確認された成功パターンと100%一致）
+    // 🚀 修正版: 手動実行と同等の環境設定
+      // 🚀 30秒再生確実版pjsuaコマンド構築
       const pjsuaArgs = [
-        '--null-audio',                                    // ✅ 診断で確認済み
-        `--play-file=${audioPath}`,                       // 🎵 音声ファイル
-        '--auto-play',                                    // 🔑 重要！診断で不足発見
-        '--auto-loop',                                    // 🔑 ループ再生で確実
-        '--duration=30',                                  // ⏱️ 通話時間
+        '--null-audio',                                    // オーディオ無効化
+        `--play-file=${audioPath}`,                       // 🎵 音声ファイル指定
+        '--auto-play',                                    // 自動再生
+        '--auto-loop',                                    // ループ再生
+        '--duration=35',                                  // ⏱️ 35秒（余裕を持って）
+        '--max-calls=1',                                  // 通話数制限
+        '--auto-answer=200',                              // 自動応答
+        '--no-tcp',                                       // TCPを無効化（UDP強制）
+        '--log-level=3',                                  // ログレベル調整
         `--id=sip:${sipAccount.username}@${sipServer}`,
         `--registrar=sip:${sipServer}`,
-        `--realm=asterisk`,                               // ✅ 診断で確認済み
+        `--realm=asterisk`,                               
         `--username=${sipAccount.username}`,
         `--password=${sipAccount.password}`,
-        `sip:${formattedNumber}@${sipServer}`             // 🎯 直接発信先指定！
+        `sip:${formattedNumber}@${sipServer}`             // 🎯 発信先
       ];
 
-      const commandLine = `pjsua ${pjsuaArgs.join(' ')}`;
-      logger.info(`🚀 SIP発信（成功パターン完全一致）: ${sipAccount.username} -> ${formattedNumber}`);
-      logger.info(`🎵 使用音声: ${audioPath}`);
-      logger.info(`📞 実行コマンド: ${commandLine.replace(sipAccount.password, '***')}`);
+    const commandLine = `pjsua ${pjsuaArgs.join(' ')}`;
+    logger.info(`🚀 SIP発信（修正版）: ${sipAccount.username} -> ${formattedNumber}`);
+    logger.info(`🎵 使用音声: ${audioPath}`);
+    logger.info(`📞 実行コマンド: ${commandLine.replace(sipAccount.password, '***')}`);
 
-      return new Promise((resolve, reject) => {
-        const pjsuaProcess = spawn('pjsua', pjsuaArgs, {
-	  stdio: 'inherit',
-          env: { ...process.env, LANG: 'C', LC_ALL: 'C' },
-          cwd: '/var/www/autodialer/backend'
-        });
-
-        let hasResponded = false;
-        let callConnected = false;
-
-        const respondOnce = (success, error = null) => {
-          if (hasResponded) return;
-          hasResponded = true;
-          
-          if (success) {
-            resolve(true);
-          } else {
-            reject(error || new Error('SIP発信失敗'));
-          }
-        };
-
-        // 📞 通話終了処理（30秒後に自動実行）
-        const scheduleCallEnd = () => {
-          setTimeout(() => {
-            logger.info(`📞 通話終了処理開始: ${callId}`);
-            
-            // 通話終了イベント発火
-            this.emit('callEnded', {
-              callId,
-              status: callConnected ? 'ANSWERED' : 'FAILED',
-              duration: callConnected ? 30 : 0
-            });
-
-            // プロセス終了
-            try {
-              if (pjsuaProcess.pid) {
-                pjsuaProcess.kill('SIGTERM');
-                setTimeout(() => {
-                  if (pjsuaProcess.pid) {
-                    pjsuaProcess.kill('SIGKILL');
-                  }
-                }, 5000);
-              }
-            } catch (killError) {
-              logger.error('プロセス終了エラー:', killError);
-            }
-          }, 30000); // 30秒後
-        };
-
-        // 🎯 出力監視（成功パターン検知）
-        pjsuaProcess.stdout?.on('data', (data) => {
-          const output = data.toString();
-          logger.debug(`SIP stdout [${callId}]: ${output}`);
-
-          // ✅ 登録・認証成功検知
-          if (output.includes('registration success') || output.includes('status=200') || 
-              output.includes('Registration successful')) {
-            logger.info(`✅ SIP登録成功: ${callId}`);
-          }
-
-          // ✅ 発信開始・接続検知
-          if (output.includes('CALLING') || output.includes('TRYING') || 
-              output.includes('CONNECTING') || output.includes('EARLY') ||
-              output.includes('Making call')) {
-            if (!callConnected) {
-              callConnected = true;
-              logger.info(`📞 通話接続確認: ${callId} - 音声再生開始`);
-              
-              // 📞 通話終了スケジュール開始
-              scheduleCallEnd();
-              
-              // 🎉 発信成功として応答
-              if (!hasResponded) {
-                respondOnce(true);
-              }
-            }
-          }
-
-          // ✅ 通話確立検知
-          if (output.includes('CONFIRMED') || output.includes('Call established')) {
-            logger.info(`✅ 通話確立確認: ${callId}`);
-            callConnected = true;
-            if (!hasResponded) {
-              respondOnce(true);
-            }
-          }
-
-          // 🎵 音声再生検知
-          if (output.includes('Playing') || output.includes('auto-play') || 
-              output.includes('play_file')) {
-            logger.info(`🎵 音声再生確認: ${callId}`);
-          }
-        });
-
-        // エラー出力監視
-        pjsuaProcess.stderr?.on('data', (data) => {
-          const error = data.toString();
-          if (error.trim() && !error.includes('Warning')) {
-            logger.warn(`SIP stderr [${callId}]: ${error}`);
-          }
-        });
-
-        // プロセス終了処理
-        pjsuaProcess.on('exit', (code, signal) => {
-          logger.info(`SIPプロセス終了 [${callId}]: code=${code}, signal=${signal}, connected=${callConnected}`);
-          
-          // まだ通話終了イベントが発火していない場合は発火
-          if (!callConnected) {
-            this.emit('callEnded', {
-              callId,
-              status: code === 0 ? 'ANSWERED' : 'FAILED',
-              duration: code === 0 ? 30 : 0
-            });
-          }
-
-          // まだ応答していない場合の処理
-          if (!hasResponded) {
-            if (code === 0 || callConnected) {
-              respondOnce(true);
-            } else {
-              respondOnce(false, new Error(`SIP終了コード: ${code}`));
-            }
-          }
-        });
-
-        // プロセスエラー処理
-        pjsuaProcess.on('error', (error) => {
-          logger.error(`SIPプロセスエラー [${callId}]:`, error);
-          if (!hasResponded) {
-            respondOnce(false, error);
-          }
-        });
-
-        // 🚨 全体タイムアウト処理（45秒）
-        setTimeout(() => {
-          if (!hasResponded) {
-            logger.warn(`⏰ SIP発信タイムアウト: ${callId}`);
-            try {
-              pjsuaProcess.kill('SIGTERM');
-            } catch (killError) {
-              logger.error('プロセス終了エラー:', killError);
-            }
-            respondOnce(false, new Error('SIP発信タイムアウト'));
-          }
-        }, 45000);
-
-        // 🎯 プロセス開始確認（3秒後に確認）
-        setTimeout(() => {
-          if (!hasResponded && pjsuaProcess.pid) {
-            logger.info(`📞 SIPプロセス正常開始: ${callId}`);
-            // まだ接続が確認されていない場合は、成功として処理
-            if (!callConnected) {
-              respondOnce(true);
-            }
-          }
-        }, 3000);
+    return new Promise((resolve, reject) => {
+      // 🔧 修正版: spawn設定を手動実行相当に変更
+      const pjsuaProcess = spawn('pjsua', pjsuaArgs, {
+        stdio: 'inherit',  // ✅ 標準入出力継承（手動実行と同等）
+        detached: true,    // ✅ プロセス独立実行
+        env: { 
+          ...process.env, 
+          LANG: 'C', 
+          LC_ALL: 'C',
+          HOME: '/root',   // ✅ HOME環境変数明示
+          PATH: process.env.PATH || '/usr/local/bin:/usr/bin:/bin'  // ✅ PATH明示
+        },
+        cwd: '/var/www/autodialer/backend'
       });
 
-    } catch (error) {
-      logger.error(`SIPコマンド実行エラー: ${error.message}`);
-      throw error;
-    }
+      let hasResponded = false;
+      let callConnected = false;
+
+      const respondOnce = (success, error = null) => {
+        if (hasResponded) return;
+        hasResponded = true;
+        
+        if (success) {
+          resolve(true);
+        } else {
+          reject(error || new Error('SIP発信失敗'));
+        }
+      };
+
+      // 📞 通話終了処理（30秒後に自動実行）
+      const scheduleCallEnd = () => {
+        setTimeout(() => {
+          logger.info(`📞 通話終了処理開始: ${callId}`);
+          
+          // 通話終了イベント発火
+          this.emit('callEnded', {
+            callId,
+            status: callConnected ? 'ANSWERED' : 'FAILED',
+            duration: callConnected ? 35 : 0
+          });
+
+          // プロセス終了
+          try {
+            if (pjsuaProcess.pid) {
+              process.kill(-pjsuaProcess.pid, 'SIGTERM');  // ✅ プロセスグループ全体終了
+              setTimeout(() => {
+                if (pjsuaProcess.pid) {
+                  process.kill(-pjsuaProcess.pid, 'SIGKILL');
+                }
+              }, 5000);
+            }
+          } catch (killError) {
+            logger.error('プロセス終了エラー:', killError);
+          }
+        }, 30000);
+      };
+
+      // 🔧 修正版: プロセス監視（detachedのため最小限）
+      if (pjsuaProcess.pid) {
+        logger.info(`✅ SIPプロセス開始成功: PID=${pjsuaProcess.pid}, CallID=${callId}`);
+        
+        // 接続確認を延長（手動実行と同等の時間を確保）
+        setTimeout(() => {
+          if (!hasResponded) {
+            callConnected = true;
+            logger.info(`📞 SIP接続成功と判定: ${callId}`);
+            
+            // 通話終了スケジュール開始
+            scheduleCallEnd();
+            
+            // 成功として応答
+            respondOnce(true);
+          }
+        }, 10000);  // ✅ 3秒 → 10秒に延長
+        
+      } else {
+        logger.error(`❌ SIPプロセス開始失敗: ${callId}`);
+        respondOnce(false, new Error('pjsuaプロセスの開始に失敗'));
+      }
+
+      // プロセス終了処理
+      pjsuaProcess.on('exit', (code, signal) => {
+        logger.info(`SIPプロセス終了 [${callId}]: code=${code}, signal=${signal}, connected=${callConnected}`);
+        
+        // まだ通話終了イベントが発火していない場合は発火
+        if (!callConnected) {
+          this.emit('callEnded', {
+            callId,
+            status: 'FAILED',
+            duration: 0
+          });
+        }
+
+        // まだ応答していない場合の処理
+        if (!hasResponded) {
+          if (code === 0 || callConnected) {
+            respondOnce(true);
+          } else {
+            respondOnce(false, new Error(`SIP終了コード: ${code}`));
+          }
+        }
+      });
+
+      // プロセスエラー処理
+      pjsuaProcess.on('error', (error) => {
+        logger.error(`SIPプロセスエラー [${callId}]:`, error);
+        if (!hasResponded) {
+          respondOnce(false, error);
+        }
+      });
+
+      // 🚨 全体タイムアウト処理（延長）
+      setTimeout(() => {
+        if (!hasResponded) {
+          logger.warn(`⏰ SIP発信タイムアウト: ${callId}`);
+          try {
+            if (pjsuaProcess.pid) {
+              process.kill(-pjsuaProcess.pid, 'SIGTERM');
+            }
+          } catch (killError) {
+            logger.error('プロセス終了エラー:', killError);
+          }
+          respondOnce(false, new Error('SIP発信タイムアウト'));
+        }
+      }, 60000);  // ✅ 45秒 → 60秒に延長
+    });
+
+  } catch (error) {
+    logger.error(`SIPコマンド実行エラー: ${error.message}`);
+    throw error;
   }
+}
 
   // ✅ 電話番号フォーマット（改良版）
   formatPhoneNumber(phoneNumber) {

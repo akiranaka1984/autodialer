@@ -1,0 +1,344 @@
+// backend/src/index.js - 最強ポート競合解決版
+const express = require('express');
+const cors = require('cors');
+const http = require('http');
+const net = require('net');
+
+console.log('🚀 AutoDialer 最強版起動開始...');
+
+const app = express();
+
+// 🔥 最強動的ポート検索機能
+const findAvailablePort = async (startPort = 5000) => {
+  console.log(`🔍 ポート検索開始: ${startPort}番から`);
+  
+  for (let port = startPort; port <= startPort + 20; port++) {
+    try {
+      await new Promise((resolve, reject) => {
+        const testServer = net.createServer();
+        
+        testServer.on('error', (err) => {
+          console.log(`❌ ポート${port}: ${err.code}`);
+          reject(err);
+        });
+        
+        testServer.listen(port, '0.0.0.0', () => {
+          console.log(`✅ ポート${port}: 利用可能`);
+          testServer.close(() => resolve(port));
+        });
+      });
+      
+      console.log(`🎯 利用可能ポート発見: ${port}`);
+      return port;
+      
+    } catch (error) {
+      continue;
+    }
+  }
+  
+  throw new Error(`ポート${startPort}-${startPort + 20}すべて使用中`);
+};
+
+// 🔒 グローバル起動フラグ
+global.SERVER_STARTED = global.SERVER_STARTED || false;
+let activeServer = null;
+
+// CORS設定
+app.use(cors({
+  origin: '*',
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept', 'Origin'],
+  credentials: true
+}));
+
+// ミドルウェア
+app.use(express.json({ limit: '10mb' }));
+app.use(express.urlencoded({ extended: true, limit: '10mb' }));
+
+// リクエストログ
+app.use((req, res, next) => {
+  console.log(`${new Date().toISOString()} ${req.method} ${req.url}`);
+  next();
+});
+
+console.log('🔧 ルーター登録開始...');
+
+// 安全なルーター登録
+const safeRouterLoad = (path, file, name) => {
+  try {
+    delete require.cache[require.resolve(file)];
+    const router = require(file);
+    app.use(path, router);
+    console.log(`✅ ${name} router 成功`);
+    return true;
+  } catch (error) {
+    console.log(`⚠️ ${name} router スキップ:`, error.message);
+    return false;
+  }
+};
+
+// ルーター登録
+const routers = [
+  ['/api/system', './routes/system', 'system'],
+  ['/api', './routes/contacts', 'contacts'], 
+  ['/api/campaigns', './routes/campaigns', 'campaigns'],
+  ['/api/caller-ids', './routes/callerIds', 'callerIds'],
+  ['/api/calls', './routes/calls', 'calls'],
+  ['/api/audio', './routes/audio', 'audio'],
+  ['/api/ivr', './routes/ivr', 'ivr']
+];
+
+let loadedRouters = 0;
+routers.forEach(([path, file, name]) => {
+  if (safeRouterLoad(path, file, name)) {
+    loadedRouters++;
+  }
+});
+
+console.log(`📊 ルーター登録完了: ${loadedRouters}/${routers.length}`);
+
+// 認証エンドポイント
+app.post('/api/auth/login', (req, res) => {
+  const { username, password } = req.body;
+  if (username && password) {
+    res.json({
+      success: true,
+      user: { username, role: 'admin', name: 'システム管理者' },
+      token: `token-${Date.now()}`
+    });
+  } else {
+    res.status(400).json({ success: false, message: '認証情報が必要です' });
+  }
+});
+
+app.get('/api/auth/profile', (req, res) => {
+  res.json({
+    id: 1,
+    username: 'admin', 
+    name: 'システム管理者',
+    role: 'admin'
+  });
+});
+
+// 基本エンドポイント
+app.get('/', (req, res) => {
+  res.json({
+    message: 'AutoDialer API 最強版稼働中',
+    version: '1.4.3-nuclear',
+    timestamp: new Date().toISOString(),
+    port: process.env.ACTIVE_PORT,
+    routers: loadedRouters,
+    uptime: process.uptime()
+  });
+});
+
+app.get('/health', (req, res) => {
+  res.json({
+    status: 'ok',
+    timestamp: new Date().toISOString(),
+    port: process.env.ACTIVE_PORT,
+    memory: process.memoryUsage(),
+    uptime: process.uptime()
+  });
+});
+
+// フォールバック：テスト発信
+app.post('/api/calls/test', async (req, res) => {
+  try {
+    console.log('📞 テスト発信要求:', req.body);
+    
+    const { phoneNumber, mockMode = true } = req.body;
+    
+    if (!phoneNumber) {
+      return res.status(400).json({ message: '電話番号が必要です' });
+    }
+    
+    // モックレスポンス（SIPサービス未起動でも動作）
+    const callId = `test-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
+    
+    res.json({
+      success: true,
+      callId,
+      message: 'テスト発信開始（最強版）',
+      data: {
+        ActionID: callId,
+        phoneNumber,
+        timestamp: new Date().toISOString(),
+        mode: mockMode ? 'mock' : 'real'
+      }
+    });
+    
+  } catch (error) {
+    console.error('テスト発信エラー:', error);
+    res.status(500).json({ 
+      success: false,
+      message: 'テスト発信失敗',
+      error: error.message 
+    });
+  }
+});
+
+// フォールバック：キャンペーン一覧
+app.get('/api/campaigns', async (req, res) => {
+  try {
+    // データベースが利用可能な場合のみクエリ実行
+    try {
+      const db = require('./services/database');
+      const [campaigns] = await db.query(`
+        SELECT c.id, c.name, c.description, c.status, c.created_at,
+               (SELECT COUNT(*) FROM contacts WHERE campaign_id = c.id) as contact_count
+        FROM campaigns c
+        ORDER BY c.created_at DESC
+        LIMIT 50
+      `);
+      
+      res.json({
+        campaigns: campaigns || [],
+        total: campaigns ? campaigns.length : 0
+      });
+      
+    } catch (dbError) {
+      console.warn('DB接続なし、モックレスポンス:', dbError.message);
+      
+      // DBなしでもモックデータで応答
+      res.json({
+        campaigns: [
+          {
+            id: 28,
+            name: 'テストキャンペーン',
+            description: 'サンプルキャンペーン',
+            status: 'draft',
+            created_at: new Date().toISOString(),
+            contact_count: 0
+          }
+        ],
+        total: 1,
+        message: 'モックデータ（DB接続なし）'
+      });
+    }
+    
+  } catch (error) {
+    console.error('キャンペーン取得エラー:', error);
+    res.status(500).json({ 
+      campaigns: [],
+      total: 0,
+      error: error.message 
+    });
+  }
+});
+
+// 404ハンドラー
+app.use((req, res) => {
+  res.status(404).json({
+    message: 'エンドポイントが見つかりません',
+    path: req.originalUrl,
+    availableEndpoints: [
+      'GET /',
+      'GET /health',
+      'POST /api/auth/login',
+      'GET /api/campaigns',
+      'POST /api/calls/test'
+    ]
+  });
+});
+
+// エラーハンドラー
+app.use((err, req, res, next) => {
+  console.error('アプリケーションエラー:', err);
+  res.status(500).json({
+    message: '内部サーバーエラー',
+    error: err.message,
+    timestamp: new Date().toISOString()
+  });
+});
+
+// 🚀 最強サーバー起動関数
+const startServerNuclear = async () => {
+  if (global.SERVER_STARTED) {
+    console.log('⚠️ サーバー既に起動済み');
+    return;
+  }
+  
+  try {
+    console.log('🚀 最強版サーバー起動処理開始...');
+    
+    // 1. ポート検索
+    const port = await findAvailablePort(5000);
+    process.env.ACTIVE_PORT = port;
+    
+    // 2. データベース接続テスト（オプショナル）
+    try {
+      const db = require('./services/database');
+      await db.query('SELECT 1');
+      console.log('✅ データベース接続成功');
+    } catch (dbError) {
+      console.warn('⚠️ データベース接続失敗（続行）:', dbError.message);
+    }
+    
+    // 3. サーバー起動
+    activeServer = http.createServer(app);
+    
+    await new Promise((resolve, reject) => {
+      activeServer.listen(port, '0.0.0.0', (err) => {
+        if (err) {
+          console.error('❌ サーバー起動失敗:', err);
+          reject(err);
+        } else {
+          global.SERVER_STARTED = true;
+          console.log(`✅ サーバー起動成功: http://0.0.0.0:${port}`);
+          console.log(`🎯 最強版AutoDialer稼働中`);
+          resolve();
+        }
+      });
+      
+      // タイムアウト設定
+      setTimeout(() => {
+        reject(new Error('サーバー起動タイムアウト'));
+      }, 10000);
+    });
+    
+  } catch (error) {
+    console.error('❌ 最強版起動失敗:', error);
+    global.SERVER_STARTED = false;
+    throw error;
+  }
+};
+
+// 終了処理
+const gracefulShutdown = () => {
+  console.log('🛑 サーバー停止開始...');
+  
+  if (activeServer) {
+    activeServer.close(() => {
+      console.log('✅ サーバー停止完了');
+      process.exit(0);
+    });
+  } else {
+    process.exit(0);
+  }
+};
+
+process.on('SIGINT', gracefulShutdown);
+process.on('SIGTERM', gracefulShutdown);
+
+// エラー処理
+process.on('uncaughtException', (error) => {
+  console.error('未処理例外:', error);
+  if (error.code !== 'EPIPE') {
+    process.exit(1);
+  }
+});
+
+process.on('unhandledRejection', (reason) => {
+  console.error('未処理Promise拒否:', reason);
+});
+
+// 🔥 メインエントリーポイント
+if (require.main === module) {
+  startServerNuclear().catch(err => {
+    console.error('起動エラー:', err);
+    process.exit(1);
+  });
+}
+
+module.exports = app;

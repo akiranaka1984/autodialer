@@ -5,27 +5,26 @@ const authController = require('../controllers/authController');
 
 
 // 認証が不要なエンドポイント
-router.post('/login'Controller.login);
+router.post('/login', authController.login);
 
 // 認証が必要なエンドポイント
 
-
 // ユーザー登録（管理者専用）
-router.post('/register'Controller.register);
+router.post('/register', authController.register);
 
 // プロフィール情報の取得
-router.get('/profile'Controller.getProfile);
+router.get('/profile', authController.getProfile);
 
 // パスワード変更
-router.post('/change-password'Controller.changePassword);
+router.post('/change-password', authController.changePassword);
 
 // ユーザー一覧取得（管理者専用）
-router.get('/users'Controller.getAllUsers);
+router.get('/users', authController.getAllUsers);
 
 // ユーザーの更新（管理者専用）
-router.put('/users/:id'Controller.updateUser);
+router.put('/users/:id', authController.updateUser);
 
 // ユーザーの削除（管理者専用）
-router.delete('/users/:id'Controller.deleteUser);
+router.delete('/users/:id', authController.deleteUser);
 
 module.exports = router;
