@@ -2,34 +2,47 @@
 const express = require('express');
 const router = express.Router();
 const dialerService = require('../services/dialerService');
+const db = require('../services/database');  // 🔧 追加
 const callService = require('../services/callService');
 const logger = require('../services/logger');
 
 // 🩺 システムヘルスチェック
 router.get('/health', async (req, res) => {
   try {
-    const healthData = {
-      timestamp: new Date().toISOString(),
-      dialer: dialerService.getHealthStatus(),
-      callService: callService.getProvidersStatus(),
-      system: {
-        nodeVersion: process.version,
-        uptime: process.uptime(),
-        memoryUsage: process.memoryUsage(),
-        environment: process.env.NODE_ENV
+    const [dbResult] = await db.query('SELECT 1 as test, NOW() as timestamp');
+    
+    let dialerServiceStatus = 'unknown';
+    try {
+      const dialerService = require('../services/dialerService');
+      if (typeof dialerService.getHealthStatus === 'function') {
+        dialerServiceStatus = dialerService.getHealthStatus();
+      } else {
+        const systemStatus = dialerService.getSystemStatus();
+        dialerServiceStatus = {
+          healthy: systemStatus.enabled && systemStatus.initialized,
+          status: systemStatus.systemStatus,
+          activeCampaigns: systemStatus.activeCampaigns.count
+        };
       }
-    };
+    } catch (error) {
+      dialerServiceStatus = 'error: ' + error.message;
+    }
     
     res.json({
-      success: true,
-      data: healthData
+      status: 'healthy',
+      timestamp: new Date().toISOString(),
+      database: {
+        connected: true,
+        ...dbResult[0]
+      },
+      dialerService: dialerServiceStatus
     });
   } catch (error) {
     logger.error('ヘルスチェックエラー:', error);
     res.status(500).json({
-      success: false,
-      message: 'ヘルスチェックに失敗しました',
-      error: error.message
+      status: 'unhealthy',
+      error: error.message,
+      timestamp: new Date().toISOString()
     });
   }
 });

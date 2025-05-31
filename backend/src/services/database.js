@@ -1,4 +1,4 @@
-// backend/src/services/database.js - 認証エラー修正版
+// backend/src/services/database.js - 認証エラー修正版（警告解消）
 const mysql = require('mysql2/promise');
 const logger = require('./logger');
 
@@ -22,13 +22,14 @@ const initDb = async (retries = 5, delay = 5000) => {
         connectionLimit: 10,
         queueLimit: 0,
         charset: 'utf8mb4',
-        collation: 'utf8mb4_unicode_ci',
+        // ❌ 以下4行を削除してMySQL2警告を解消
+        // collation: 'utf8mb4_unicode_ci',
         supportBigNumbers: true,
         bigNumberStrings: true,
-        dateStrings: true,
-        acquireTimeout: 60000,
-        timeout: 60000,
-        reconnect: true
+        dateStrings: true
+        // acquireTimeout: 60000,
+        // timeout: 60000,
+        // reconnect: true
       };
       
       console.log(`データベース接続設定:`, {
@@ -46,7 +47,7 @@ const initDb = async (retries = 5, delay = 5000) => {
       await pool.query("SET character_set_connection=utf8mb4");
       
       // 接続テスト
-      const [rows] = await pool.query('SELECT 1 as test, USER() as current_user_name_name, DATABASE() as current_db');
+      const [rows] = await pool.query('SELECT 1 as test, USER() as current_user_name, DATABASE() as current_db');
       console.log('データベース接続テスト成功:', rows[0]);
       
       logger.info('データベース接続プールを作成しました');

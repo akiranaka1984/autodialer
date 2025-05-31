@@ -383,4 +383,78 @@ router.use((error, req, res, next) => {
   });
 });
 
+
+// チャンネル編集
+router.put("/channels/:channelId", async (req, res) => {
+  try {
+    const channelId = req.params.channelId;
+    const { username, password, channel_type } = req.body;
+    
+    console.log("チャンネル編集開始:", { channelId, username, channel_type });
+    
+    if (!username || !password) {
+      return res.status(400).json({ message: "ユーザー名とパスワードは必須です" });
+    }
+    
+    // 重複チェック（自分以外）
+    const [existing] = await db.query(
+      "SELECT id FROM caller_channels WHERE username = ? AND id != ?",
+      [username, channelId]
+    );
+    
+    if (existing.length > 0) {
+      return res.status(400).json({ message: "このユーザー名は既に登録されています" });
+    }
+    
+    const [result] = await db.query(`
+      UPDATE caller_channels 
+      SET username = ?, password = ?, channel_type = ?
+      WHERE id = ?
+    `, [username, password, channel_type || "both", channelId]);
+    
+    if (result.affectedRows === 0) {
+      return res.status(404).json({ message: "チャンネルが見つかりません" });
+    }
+    
+    const [updatedChannel] = await db.query(
+      "SELECT * FROM caller_channels WHERE id = ?",
+      [channelId]
+    );
+    
+    console.log("チャンネル編集成功:", channelId);
+    res.json(updatedChannel[0]);
+    
+  } catch (error) {
+    console.error("チャンネル編集エラー:", error);
+    res.status(500).json({ message: "チャンネルの編集に失敗しました" });
+  }
+});
+
+// チャンネル削除
+router.delete("/channels/:channelId", async (req, res) => {
+  try {
+    const channelId = req.params.channelId;
+    
+    console.log("チャンネル削除開始:", channelId);
+    
+    const [result] = await db.query(
+      "DELETE FROM caller_channels WHERE id = ?",
+      [channelId]
+    );
+    
+    if (result.affectedRows === 0) {
+      return res.status(404).json({ message: "チャンネルが見つかりません" });
+    }
+    
+    console.log("チャンネル削除成功:", channelId);
+    res.json({ 
+      success: true,
+      message: "チャンネルを削除しました" 
+    });
+    
+  } catch (error) {
+    console.error("チャンネル削除エラー:", error);
+    res.status(500).json({ message: "チャンネルの削除に失敗しました" });
+  }
+});
 module.exports = router;

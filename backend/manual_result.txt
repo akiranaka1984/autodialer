@@ -1,0 +1,1 @@
+{"success":true,"callId":"sip-1748615041477-1764","message":"テスト発信が開始されました（sip）","data":{"ActionID":"sip-1748615041477-1764","Response":"Success","Message":"SIP call successfully initiated","SipAccount":"03750001","mainCallerId":4,"provider":"sip","audioFilesCount":0},"sipAccount":"03750001"}

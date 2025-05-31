@@ -19,12 +19,10 @@ app.use((req, res, next) => {
     'http://localhost:3001', 
     'http://localhost:3003',
     'http://127.0.0.1:3003',
-    'http://143.198.209.38:3003'
+    'http://146.190.83.205:3003'
   ];
   
-  if (allowedOrigins.includes(origin) || !origin) {
-    res.setHeader("Access-Control-Allow-Origin", "*");
-  }
+  res.setHeader("Access-Control-Allow-Origin", "*");
   
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, PATCH, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With, Accept, Origin, Cache-Control, Pragma');
@@ -132,6 +130,31 @@ try {
 }
 
 console.log('📊 ルーター登録状況:', routerStatus);
+
+// === 認証エンドポイント ===
+app.post("/api/auth/login", (req, res) => {
+  const { username, password } = req.body;
+  console.log("ログイン試行:", username);
+  if (username && password) {
+    res.json({
+      success: true,
+      user: { username: username, role: "admin", name: "システム管理者" },
+      token: "dummy-token-" + Date.now()
+    });
+  } else {
+    res.status(400).json({ success: false, message: "ユーザー名とパスワードが必要です" });
+  }
+});
+
+app.get("/api/auth/profile", (req, res) => {
+  res.json({
+    id: 1,
+    username: "admin",
+    name: "システム管理者",
+    role: "admin"
+  });
+});
+
 
 // === 基本エンドポイント ===
 app.get('/', (req, res) => {
