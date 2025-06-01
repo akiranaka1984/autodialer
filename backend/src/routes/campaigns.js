@@ -511,6 +511,115 @@ router.post('/:id/start', async (req, res) => {
   }
 });
 
+// 4. キャンペーン設定画面用の転送設定取得API
+// backend/src/routes/campaigns.js に追加
+
+router.get('/:id/transfer-settings', async (req, res) => {
+  try {
+    const { id } = req.params;
+    
+    const [campaign] = await db.query(`
+      SELECT 
+        c.id,
+        c.name,
+        c.transfer_enabled,
+        c.operator_number,
+        c.transfer_message,
+        ci.number as caller_id_number,
+        ci.description as caller_id_description
+      FROM campaigns c
+      LEFT JOIN caller_ids ci ON c.caller_id_id = ci.id  
+      WHERE c.id = ?
+    `, [id]);
+    
+    if (campaign.length === 0) {
+      return res.status(404).json({ message: 'キャンペーンが見つかりません' });
+    }
+    
+    // デフォルト設定
+    const transferSettings = {
+      transferEnabled: campaign[0].transfer_enabled || true,
+      operatorNumber: campaign[0].operator_number || campaign[0].caller_id_number,
+      transferMessage: campaign[0].transfer_message || 'オペレーターに転送いたします。少々お待ちください。',
+      callerIdNumber: campaign[0].caller_id_number,
+      callerIdDescription: campaign[0].caller_id_description
+    };
+    
+    res.json({
+      success: true,
+      campaignId: parseInt(id),
+      transferSettings: transferSettings
+    });
+    
+  } catch (error) {
+    logger.error('転送設定取得エラー:', error);
+    res.status(500).json({ message: '転送設定の取得に失敗しました' });
+  }
+});
+
+// 5. 転送設定更新API
+router.put('/:id/transfer-settings', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { transferEnabled, operatorNumber, transferMessage } = req.body;
+    
+    await db.query(`
+      UPDATE campaigns 
+      SET 
+        transfer_enabled = ?,
+        operator_number = ?,
+        transfer_message = ?,
+        updated_at = NOW()
+      WHERE id = ?
+    `, [transferEnabled, operatorNumber, transferMessage, id]);
+    
+    res.json({
+      success: true,
+      message: '転送設定を更新しました',
+      campaignId: parseInt(id)
+    });
+    
+  } catch (error) {
+    logger.error('転送設定更新エラー:', error);
+    res.status(500).json({ message: '転送設定の更新に失敗しました' });
+  }
+});
+
+// 6. 管理画面用の転送状況監視API（リアルタイム風）
+router.get('/transfers/realtime', async (req, res) => {
+  try {
+    // アクティブな転送の状況
+    const activeTransfers = transferService.getAllTransferStatus();
+    
+    // 今日の転送統計
+    const [todayStats] = await db.query(`
+      SELECT 
+        COUNT(*) as total_transfers,
+        SUM(CASE WHEN transfer_status = 'completed' THEN 1 ELSE 0 END) as completed_transfers,
+        SUM(CASE WHEN transfer_status = 'failed' THEN 1 ELSE 0 END) as failed_transfers,
+        AVG(operator_duration) as avg_operator_duration
+      FROM transfer_logs 
+      WHERE DATE(created_at) = CURDATE()
+    `);
+    
+    res.json({
+      success: true,
+      timestamp: new Date().toISOString(),
+      activeTransfers: activeTransfers,
+      todayStats: todayStats[0] || {
+        total_transfers: 0,
+        completed_transfers: 0, 
+        failed_transfers: 0,
+        avg_operator_duration: 0
+      }
+    });
+    
+  } catch (error) {
+    logger.error('リアルタイム転送状況取得エラー:', error);
+    res.status(500).json({ message: 'リアルタイム転送状況の取得に失敗しました' });
+  }
+});
+
 // 🛑 キャンペーン停止API（上記の後に追加）
 router.post('/:id/stop', async (req, res) => {
   try {

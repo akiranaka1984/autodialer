@@ -289,7 +289,7 @@ exports.handleCallEnd = async (req, res) => {
     // 🔄 キーパッド処理（転送機能統合）
     const [callInfoResult] = await db.query(`
       SELECT cl.contact_id, cl.campaign_id, cl.phone_number,
-             c.phone as original_number
+             c.phone as customer_phone
       FROM call_logs cl
       LEFT JOIN contacts c ON cl.contact_id = c.id
       WHERE cl.call_id = ?
@@ -307,7 +307,7 @@ exports.handleCallEnd = async (req, res) => {
         try {
           logger.info(`🔄 1キー押下により転送開始: CallID=${callId}`);
           
-          const customerPhone = callInfo.original_number || callInfo.phone_number;
+          const customerPhone = callInfo.customer_phone || callInfo.phone_number;
           const campaignId = callInfo.campaign_id;
           
           if (customerPhone && campaignId) {
@@ -341,9 +341,9 @@ exports.handleCallEnd = async (req, res) => {
               // 簡易転送ログ記録
               const transferId = `fallback-${Date.now()}`;
               await db.query(`
-                INSERT INTO transfer_logs (original_call_id, original_number, transfer_number, campaign_id, status, transfer_initiated_at, created_at)
-                VALUES (?, ?, ?, ?, 'initiated', NOW(), NOW())
-              `, [callId, customerPhone, operatorNumber, campaignId]);
+                INSERT INTO transfer_logs (transfer_id, original_call_id, customer_phone, operator_number, campaign_id, status, created_at)
+                VALUES (?, ?, ?, ?, ?, 'initiated', NOW())
+              `, [transferId, callId, customerPhone, operatorNumber, campaignId]);
               
               contactStatus = 'transferred';
               transferResult = { transferId, method: 'fallback', operatorNumber };
@@ -430,9 +430,9 @@ exports.handleTransferRequest = async (req, res) => {
       
       // 簡易転送ログ記録
       await db.query(`
-        INSERT INTO transfer_logs (original_call_id, original_number, transfer_number, campaign_id, status, transfer_initiated_at, created_at)
-        VALUES (?, ?, ?, ?, 'initiated', NOW(), NOW())
-      `, [callId, customerPhone, operatorNumber, campaignId]);
+        INSERT INTO transfer_logs (transfer_id, original_call_id, customer_phone, operator_number, campaign_id, status, created_at)
+        VALUES (?, ?, ?, ?, ?, 'initiated', NOW())
+      `, [transferId, callId, customerPhone, operatorNumber, campaignId]);
       
       transferResult = { 
         transferId, 
@@ -493,7 +493,7 @@ exports.getTransferStatus = async (req, res) => {
         c.name as customer_name
       FROM transfer_logs tl
       LEFT JOIN campaigns ca ON tl.campaign_id = ca.id
-      LEFT JOIN contacts c ON tl.original_number = c.phone
+      LEFT JOIN contacts c ON tl.customer_phone = c.phone
       WHERE tl.transfer_id = ?
     `, [transferId]);
 
@@ -538,7 +538,7 @@ exports.getAllTransfers = async (req, res) => {
         c.name as customer_name
       FROM transfer_logs tl
       LEFT JOIN campaigns ca ON tl.campaign_id = ca.id
-      LEFT JOIN contacts c ON tl.original_number = c.phone
+      LEFT JOIN contacts c ON tl.customer_phone = c.phone
       ORDER BY tl.created_at DESC
       LIMIT 50
     `);

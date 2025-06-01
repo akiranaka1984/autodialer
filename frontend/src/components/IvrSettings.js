@@ -29,8 +29,7 @@ const IVRSettings = ({ campaignId }) => {
   const [selectedUploaderType, setSelectedUploaderType] = useState(null);
 
   const audioTypes = [
-    { id: 'welcome', name: '初期挨拶' },
-    { id: 'menu', name: 'メニュー案内' },
+    { id: 'welcome', name: '初期挨拶・メニュー案内（統合）' },
     { id: 'goodbye', name: '終了メッセージ' },
     { id: 'error', name: 'エラーメッセージ' }
   ];
