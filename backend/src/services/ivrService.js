@@ -112,6 +112,20 @@ class IvrService {
       scriptContent += `exten => h,1,NoOp(Hangup handler)\n`;
       scriptContent += `  same => n,System(curl -X POST http://localhost:5000/api/callback/call-end -d "callId=${campaignId}-\${UNIQUEID}&duration=\${ANSWEREDTIME}&disposition=\${DIALSTATUS}&keypress=\${KEYPRESS}")\n`;
       
+      // 🚀 NEW: operator-transferコンテキスト追加（既存機能に影響なし）
+      scriptContent += `\n; operator-transfer context\n`;
+      scriptContent += `[operator-transfer]\n`;
+      scriptContent += `exten => s,1,NoOp(=== OPERATOR TRANSFER ===)\n`;
+      scriptContent += `  same => n,Set(TRANSFER_CALL_ID=\${UNIQUEID})\n`;
+      scriptContent += `  same => n,Set(TRANSFER_CAMPAIGN_ID=\${CAMPAIGN_ID})\n`;
+      scriptContent += `  same => n,Set(CONTACT_PHONE=\${CALLERID(num)})\n`;
+      scriptContent += `  same => n,System(curl -X POST http://localhost:5000/api/calls/transfer/keypress -H "Content-Type: application/json" -d "{\\"callId\\": \\"\${TRANSFER_CALL_ID}\\", \\"campaignId\\": \\"\${TRANSFER_CAMPAIGN_ID}\\", \\"keypress\\": \\"1\\", \\"customerPhone\\": \\"\${CONTACT_PHONE}\\"}")\n`;
+      scriptContent += `  same => n,Playback(custom/transfer-to-operator)\n`;
+      scriptContent += `  same => n,Transfer(SIP/03-5946-8520@ito258258.site)\n`;
+      scriptContent += `  same => n,NoOp(Transfer failed)\n`;
+      scriptContent += `  same => n,Playback(custom/transfer-failed)\n`;
+      scriptContent += `  same => n,Hangup()\n`;
+      
       // ファイルに保存
       const scriptPath = path.join(this.ivrDir, `campaign-${campaignId}.conf`);
       await fs.writeFile(scriptPath, scriptContent);
@@ -245,48 +259,48 @@ class IvrService {
       throw error;
     }
   }
-  // 個別キャンペーン用のIVRスクリプトデプロイ（新規追加）
-async deployIvrScript(campaignId) {
-  try {
-    logger.info(`キャンペーン ${campaignId} のIVRスクリプトをデプロイ中...`);
-    
-    // IVRスクリプトを生成
-    const scriptResult = await this.generateIvrScript(campaignId);
-    
-    if (!scriptResult || !scriptResult.path) {
-      throw new Error('IVRスクリプトの生成に失敗しました');
-    }
-    
-    // 現在のシステムではファイルベースでのデプロイをシミュレート
-    // 実際のAsterisk環境では、dialplan.confにincludeを追加したり
-    // Asterisk Manager Interface (AMI) でリロードを実行
-    
-    logger.info(`IVRスクリプトファイル作成完了: ${scriptResult.path}`);
-    
-    // デプロイ状態をデータベースに記録
-    try {
-      const db = require('./database');
-      await db.query(
-        'UPDATE campaigns SET ivr_deployed = true, ivr_deploy_time = NOW() WHERE id = ?',
-        [campaignId]
-      );
-    } catch (dbError) {
-      logger.warn('IVRデプロイ状態の記録エラー:', dbError.message);
-      // 続行する（重要ではない）
-    }
-    
-    logger.info(`キャンペーン ${campaignId} のIVRスクリプトデプロイ完了`);
-    return {
-      success: true,
-      scriptPath: scriptResult.path,
-      message: 'IVRスクリプトのデプロイが完了しました'
-    };
-  } catch (error) {
-    logger.error(`IVRスクリプトデプロイエラー: Campaign=${campaignId}`, error);
-    throw new Error(`IVRスクリプトのデプロイに失敗しました: ${error.message}`);
-  }
-}
 
+  // 個別キャンペーン用のIVRスクリプトデプロイ（新規追加）
+  async deployIvrScript(campaignId) {
+    try {
+      logger.info(`キャンペーン ${campaignId} のIVRスクリプトをデプロイ中...`);
+      
+      // IVRスクリプトを生成
+      const scriptResult = await this.generateIvrScript(campaignId);
+      
+      if (!scriptResult || !scriptResult.path) {
+        throw new Error('IVRスクリプトの生成に失敗しました');
+      }
+      
+      // 現在のシステムではファイルベースでのデプロイをシミュレート
+      // 実際のAsterisk環境では、dialplan.confにincludeを追加したり
+      // Asterisk Manager Interface (AMI) でリロードを実行
+      
+      logger.info(`IVRスクリプトファイル作成完了: ${scriptResult.path}`);
+      
+      // デプロイ状態をデータベースに記録
+      try {
+        const db = require('./database');
+        await db.query(
+          'UPDATE campaigns SET ivr_deployed = true, ivr_deploy_time = NOW() WHERE id = ?',
+          [campaignId]
+        );
+      } catch (dbError) {
+        logger.warn('IVRデプロイ状態の記録エラー:', dbError.message);
+        // 続行する（重要ではない）
+      }
+      
+      logger.info(`キャンペーン ${campaignId} のIVRスクリプトデプロイ完了`);
+      return {
+        success: true,
+        scriptPath: scriptResult.path,
+        message: 'IVRスクリプトのデプロイが完了しました'
+      };
+    } catch (error) {
+      logger.error(`IVRスクリプトデプロイエラー: Campaign=${campaignId}`, error);
+      throw new Error(`IVRスクリプトのデプロイに失敗しました: ${error.message}`);
+    }
+  }
 }
 
 module.exports = new IvrService();

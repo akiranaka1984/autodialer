@@ -581,11 +581,27 @@ async executeSipCommand(sipAccount, formattedNumber, callId, params = {}) {
       }
     }
 
+    // 🔥 ここに音声ファイル存在チェックを追加
+    if (!fs.existsSync(audioPath)) {
+      logger.warn(`⚠️ 音声ファイルが見つかりません: ${audioPath}`);
+      
+      // フォールバック音声ファイル使用
+      const fallbackAudio = '/var/www/autodialer/backend/audio-files/default-welcome.wav';
+      if (fs.existsSync(fallbackAudio)) {
+        audioPath = fallbackAudio;
+        logger.info(`🔄 フォールバック音声使用: ${audioPath}`);
+      } else {
+        // 音声なしで発信
+        audioPath = null;
+        logger.warn('⚠️ 音声なしで発信実行');
+      }
+    }
+
     // 🚀 修正版: 手動実行と同等の環境設定
       // 🚀 30秒再生確実版pjsuaコマンド構築
       const pjsuaArgs = [
         '--null-audio',                                    // オーディオ無効化
-        `--play-file=${audioPath}`,                       // 🎵 音声ファイル指定
+	`--play-file=${audioPath}`,                       // 🎵 音声ファイル指定
         '--auto-play',                                    // 自動再生
         '--auto-loop',                                    // ループ再生
         '--duration=35',                                  // ⏱️ 35秒（余裕を持って）
