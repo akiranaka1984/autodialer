@@ -142,4 +142,112 @@ router.post('/callback/call-end', async (req, res) => {
   }
 });
 
+router.post('/transfer/dtmf', async (req, res) => {
+  try {
+    const { callId, originalNumber, transferTarget, keypress } = req.body;
+    
+    logger.info(`🔄 転送要求受信: CallID=${callId}, 転送先=${transferTarget}`);
+    
+    // 必須パラメータ検証
+    if (!callId || !originalNumber || !transferTarget || !keypress) {
+      return res.status(400).json({ 
+        success: false,
+        message: '必須パラメータが不足しています'
+      });
+    }
+    
+    // 転送先SIPアカウント確認
+    const [sipAccounts] = await db.query(`
+      SELECT cc.username, cc.status, ci.number as caller_number
+      FROM caller_channels cc 
+      JOIN caller_ids ci ON cc.caller_id_id = ci.id 
+      WHERE cc.username = ? AND cc.status = 'available'
+    `, [transferTarget]);
+    
+    if (sipAccounts.length === 0) {
+      return res.status(400).json({ 
+        success: false,
+        message: `転送先SIPアカウント ${transferTarget} が利用できません`
+      });
+    }
+    
+    // 転送ログ記録
+    const transferId = `transfer-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
+    await db.query(`
+      INSERT INTO transfer_logs 
+      (id, call_id, original_number, transfer_target, transfer_key, transfer_status, transfer_start_time)
+      VALUES (?, ?, ?, ?, ?, 'initiated', NOW())
+    `, [transferId, callId, originalNumber, transferTarget, keypress]);
+    
+    // 転送実行
+    const sipService = require('../services/sipService');
+    const transferParams = {
+      phoneNumber: sipAccounts[0].caller_number,
+      callerID: `"Transfer from ${originalNumber}" <${originalNumber}>`,
+      context: 'transfer',
+      variables: {
+        ORIGINAL_CALL_ID: callId,
+        TRANSFER_TYPE: 'operator'
+      },
+      provider: 'sip'
+    };
+    
+    const transferResult = await sipService.originate(transferParams);
+    
+    if (transferResult && transferResult.ActionID) {
+      await db.query(`
+        UPDATE call_logs
+        SET transfer_attempted = 1, transfer_successful = 1, transfer_target = ?
+        WHERE call_id = ?
+      `, [transferTarget, callId]);
+      
+      res.json({
+        success: true,
+        transferId: transferId,
+        transferTarget: transferTarget,
+        message: `${transferTarget}への転送を開始しました`
+      });
+    } else {
+      throw new Error('転送実行に失敗しました');
+    }
+    
+  } catch (error) {
+    logger.error('転送API処理エラー:', error);
+    res.status(500).json({ 
+      success: false,
+      message: '転送処理中にエラーが発生しました', 
+      error: error.message
+    });
+  }
+});
+
+// DNC登録API（9キー用）
+router.post('/dnc/add', async (req, res) => {
+  try {
+    const { callId, phoneNumber, keypress, reason } = req.body;
+    
+    await db.query(`
+      INSERT IGNORE INTO dnc_list (phone, reason, source, created_at)
+      VALUES (?, ?, 'user_request', NOW())
+    `, [phoneNumber, reason || 'ユーザーリクエスト（9キー）']);
+    
+    if (callId) {
+      await db.query(`
+        UPDATE call_logs SET keypress = ? WHERE call_id = ?
+      `, [keypress, callId]);
+    }
+    
+    res.json({
+      success: true,
+      message: 'DNCリストに登録しました'
+    });
+    
+  } catch (error) {
+    res.status(500).json({ 
+      success: false,
+      error: error.message
+    });
+  }
+});
+
 module.exports = router;

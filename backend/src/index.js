@@ -72,7 +72,8 @@ const routerStatus = {
   callerIds: false,
   calls: false,
   audio: false,
-  ivr: false
+  ivr: false,
+  transfer: false  // 🚀 転送ルーター追加
 };
 
 // 1. システムルーター
@@ -125,7 +126,17 @@ try {
   console.error('❌ calls router 登録失敗:', error.message);
 }
 
-// 6. 音声ルーター
+// 🚀 6. 転送ルーター（修正版：正しい位置に配置）
+try {
+  const transferRouter = require('./routes/transfer');
+  app.use('/api/campaigns', transferRouter);  // /api/campaigns/:id/transfer-settings
+  routerStatus.transfer = true;
+  console.log('✅ transfer router 登録成功');
+} catch (error) {
+  console.error('❌ transfer router 登録失敗:', error.message);
+}
+
+// 7. 音声ルーター
 try {
   const audioRouter = require('./routes/audio');
   app.use('/api/audio', audioRouter);
@@ -135,7 +146,7 @@ try {
   console.error('❌ audio router 登録失敗:', error.message);
 }
 
-// 7. IVRルーター
+// 8. IVRルーター
 try {
   const ivrRouter = require('./routes/ivr');
   app.use('/api/ivr', ivrRouter);
@@ -171,7 +182,6 @@ app.get("/api/auth/profile", (req, res) => {
   });
 });
 
-
 // === 基本エンドポイント ===
 app.get('/', (req, res) => {
   res.json({ 
@@ -187,7 +197,9 @@ app.get('/', (req, res) => {
       '/api/caller-ids', 
       '/api/calls/test',
       '/api/audio',
-      '/api/ivr/test-call'
+      '/api/ivr/test-call',
+      '/api/campaigns/:id/transfer-settings',  // 🚀 転送設定追加
+      '/api/calls/transfer/dtmf'                // 🚀 動的転送追加
     ]
   });
 });
@@ -623,7 +635,10 @@ const startServer = async () => {
       console.log('  - GET  /api/campaigns');
       console.log('  - POST /api/campaigns/:id/start');
       console.log('  - POST /api/calls/test');
+      console.log('  - GET  /api/campaigns/:id/transfer-settings');    // 🚀 転送設定
+      console.log('  - POST /api/calls/transfer/dtmf');                // 🚀 動的転送
     });
+    
     // 🔥 DialerService自動開始の強化（恒久的修正）
     console.log('🔧 DialerService強制自動開始...');
     try {

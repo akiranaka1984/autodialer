@@ -565,75 +565,53 @@ class SipService extends EventEmitter {
   }
 
 // 🎵 成功パターン100%適用版 - executeSipCommand
+// 🔢 DTMF検知対応版 executeSipCommand（完全版）
 async executeSipCommand(sipAccount, formattedNumber, callId, params = {}) {
   try {
     const sipServer = sipAccount.domain || 'ito258258.site';
     
-    // 🎵 音声ファイルパス決定
+    // 音声ファイルパス決定
     let audioPath = '/var/www/autodialer/backend/audio-files/welcome-test.wav';
     
-    // キャンペーン音声ファイルがある場合は使用
     if (params.campaignAudio && params.campaignAudio.length > 0) {
       const welcomeAudio = params.campaignAudio.find(audio => audio.audio_type === 'welcome');
       if (welcomeAudio && welcomeAudio.path && fs.existsSync(welcomeAudio.path)) {
         audioPath = welcomeAudio.path;
-        logger.info(`🎵 キャンペーン音声使用: ${audioPath}`);
       }
     }
 
-    // 🔥 ここに音声ファイル存在チェックを追加
+    // 音声ファイル存在チェック
     if (!fs.existsSync(audioPath)) {
-      logger.warn(`⚠️ 音声ファイルが見つかりません: ${audioPath}`);
-      
-      // フォールバック音声ファイル使用
       const fallbackAudio = '/var/www/autodialer/backend/audio-files/default-welcome.wav';
-      if (fs.existsSync(fallbackAudio)) {
-        audioPath = fallbackAudio;
-        logger.info(`🔄 フォールバック音声使用: ${audioPath}`);
-      } else {
-        // 音声なしで発信
-        audioPath = null;
-        logger.warn('⚠️ 音声なしで発信実行');
-      }
+      audioPath = fs.existsSync(fallbackAudio) ? fallbackAudio : null;
     }
 
-    // 🚀 修正版: 手動実行と同等の環境設定
-      // 🚀 30秒再生確実版pjsuaコマンド構築
-      const pjsuaArgs = [
-        '--null-audio',                                    // オーディオ無効化
-	`--play-file=${audioPath}`,                       // 🎵 音声ファイル指定
-        '--auto-play',                                    // 自動再生
-        '--auto-loop',                                    // ループ再生
-        '--duration=35',                                  // ⏱️ 35秒（余裕を持って）
-        '--max-calls=1',                                  // 通話数制限
-        '--auto-answer=200',                              // 自動応答
-        '--no-tcp',                                       // TCPを無効化（UDP強制）
-        '--log-level=3',                                  // ログレベル調整
-        `--id=sip:${sipAccount.username}@${sipServer}`,
-        `--registrar=sip:${sipServer}`,
-        `--realm=asterisk`,                               
-        `--username=${sipAccount.username}`,
-        `--password=${sipAccount.password}`,
-        `sip:${formattedNumber}@${sipServer}`             // 🎯 発信先
-      ];
+    // pjsuaコマンド構築
+    const pjsuaArgs = [
+      '--null-audio',
+      `--play-file=${audioPath}`,
+      '--auto-play',
+      '--auto-loop',
+      '--duration=35',
+      '--max-calls=1',
+      '--auto-answer=200',
+      '--no-tcp',
+      '--log-level=3',
+      `--id=sip:${sipAccount.username}@${sipServer}`,
+      `--registrar=sip:${sipServer}`,
+      `--realm=asterisk`,
+      `--username=${sipAccount.username}`,
+      `--password=${sipAccount.password}`,
+      `sip:${formattedNumber}@${sipServer}`
+    ];
 
-    const commandLine = `pjsua ${pjsuaArgs.join(' ')}`;
-    logger.info(`🚀 SIP発信（修正版）: ${sipAccount.username} -> ${formattedNumber}`);
-    logger.info(`🎵 使用音声: ${audioPath}`);
-    logger.info(`📞 実行コマンド: ${commandLine.replace(sipAccount.password, '***')}`);
+    logger.info(`🚀 DTMF対応SIP発信: ${sipAccount.username} -> ${formattedNumber}`);
 
     return new Promise((resolve, reject) => {
-      // 🔧 修正版: spawn設定を手動実行相当に変更
       const pjsuaProcess = spawn('pjsua', pjsuaArgs, {
-        stdio: 'inherit',  // ✅ 標準入出力継承（手動実行と同等）
-        detached: true,    // ✅ プロセス独立実行
-        env: { 
-          ...process.env, 
-          LANG: 'C', 
-          LC_ALL: 'C',
-          HOME: '/root',   // ✅ HOME環境変数明示
-          PATH: process.env.PATH || '/usr/local/bin:/usr/bin:/bin'  // ✅ PATH明示
-        },
+        stdio: ['ignore', 'pipe', 'pipe'],
+        detached: true,
+        env: { ...process.env, LANG: 'C', LC_ALL: 'C' },
         cwd: '/var/www/autodialer/backend'
       });
 
@@ -643,100 +621,39 @@ async executeSipCommand(sipAccount, formattedNumber, callId, params = {}) {
       const respondOnce = (success, error = null) => {
         if (hasResponded) return;
         hasResponded = true;
-        
-        if (success) {
-          resolve(true);
-        } else {
-          reject(error || new Error('SIP発信失敗'));
-        }
+        success ? resolve(true) : reject(error || new Error('SIP発信失敗'));
       };
 
-      // 📞 通話終了処理（30秒後に自動実行）
+      // 🔢 DTMF検知処理
+      if (pjsuaProcess.stdout) {
+        pjsuaProcess.stdout.on('data', (data) => {
+          const output = data.toString();
+          
+          const dtmfMatch = output.match(/Received DTMF digit\s*([0-9*#])/i) || 
+                           output.match(/DTMF digit.*?([0-9*#])/i);
+          
+          if (dtmfMatch) {
+            const dtmfDigit = dtmfMatch[1];
+            logger.info(`🔢 DTMF検知: ${dtmfDigit} (CallID: ${callId})`);
+            
+            if (dtmfDigit === '1') {
+              this.handleTransferRequest(callId, formattedNumber, dtmfDigit);
+            } else if (dtmfDigit === '9') {
+              this.handleDncRequest(callId, formattedNumber, dtmfDigit);
+            }
+          }
+        });
+      }
+
+      // 通話終了スケジュール
       const scheduleCallEnd = () => {
         setTimeout(() => {
-          logger.info(`📞 通話終了処理開始: ${callId}`);
-          
-          // 通話終了イベント発火
           this.emit('callEnded', {
             callId,
             status: callConnected ? 'ANSWERED' : 'FAILED',
             duration: callConnected ? 35 : 0
           });
 
-          // プロセス終了
-          try {
-            if (pjsuaProcess.pid) {
-              process.kill(-pjsuaProcess.pid, 'SIGTERM');  // ✅ プロセスグループ全体終了
-              setTimeout(() => {
-                if (pjsuaProcess.pid) {
-                  process.kill(-pjsuaProcess.pid, 'SIGKILL');
-                }
-              }, 5000);
-            }
-          } catch (killError) {
-            logger.error('プロセス終了エラー:', killError);
-          }
-        }, 30000);
-      };
-
-      // 🔧 修正版: プロセス監視（detachedのため最小限）
-      if (pjsuaProcess.pid) {
-        logger.info(`✅ SIPプロセス開始成功: PID=${pjsuaProcess.pid}, CallID=${callId}`);
-        
-        // 接続確認を延長（手動実行と同等の時間を確保）
-        setTimeout(() => {
-          if (!hasResponded) {
-            callConnected = true;
-            logger.info(`📞 SIP接続成功と判定: ${callId}`);
-            
-            // 通話終了スケジュール開始
-            scheduleCallEnd();
-            
-            // 成功として応答
-            respondOnce(true);
-          }
-        }, 10000);  // ✅ 3秒 → 10秒に延長
-        
-      } else {
-        logger.error(`❌ SIPプロセス開始失敗: ${callId}`);
-        respondOnce(false, new Error('pjsuaプロセスの開始に失敗'));
-      }
-
-      // プロセス終了処理
-      pjsuaProcess.on('exit', (code, signal) => {
-        logger.info(`SIPプロセス終了 [${callId}]: code=${code}, signal=${signal}, connected=${callConnected}`);
-        
-        // まだ通話終了イベントが発火していない場合は発火
-        if (!callConnected) {
-          this.emit('callEnded', {
-            callId,
-            status: 'FAILED',
-            duration: 0
-          });
-        }
-
-        // まだ応答していない場合の処理
-        if (!hasResponded) {
-          if (code === 0 || callConnected) {
-            respondOnce(true);
-          } else {
-            respondOnce(false, new Error(`SIP終了コード: ${code}`));
-          }
-        }
-      });
-
-      // プロセスエラー処理
-      pjsuaProcess.on('error', (error) => {
-        logger.error(`SIPプロセスエラー [${callId}]:`, error);
-        if (!hasResponded) {
-          respondOnce(false, error);
-        }
-      });
-
-      // 🚨 全体タイムアウト処理（延長）
-      setTimeout(() => {
-        if (!hasResponded) {
-          logger.warn(`⏰ SIP発信タイムアウト: ${callId}`);
           try {
             if (pjsuaProcess.pid) {
               process.kill(-pjsuaProcess.pid, 'SIGTERM');
@@ -744,9 +661,40 @@ async executeSipCommand(sipAccount, formattedNumber, callId, params = {}) {
           } catch (killError) {
             logger.error('プロセス終了エラー:', killError);
           }
-          respondOnce(false, new Error('SIP発信タイムアウト'));
+        }, 30000);
+      };
+
+      if (pjsuaProcess.pid) {
+        logger.info(`✅ DTMF対応SIPプロセス開始: PID=${pjsuaProcess.pid}`);
+        
+        setTimeout(() => {
+          if (!hasResponded) {
+            callConnected = true;
+            scheduleCallEnd();
+            respondOnce(true);
+          }
+        }, 10000);
+      } else {
+        respondOnce(false, new Error('pjsuaプロセス開始失敗'));
+      }
+
+      pjsuaProcess.on('exit', (code, signal) => {
+        if (!callConnected) {
+          this.emit('callEnded', { callId, status: 'FAILED', duration: 0 });
         }
-      }, 60000);  // ✅ 45秒 → 60秒に延長
+        if (!hasResponded) {
+          respondOnce(code === 0 || callConnected, new Error(`終了コード: ${code}`));
+        }
+      });
+
+      setTimeout(() => {
+        if (!hasResponded) {
+          try {
+            if (pjsuaProcess.pid) process.kill(-pjsuaProcess.pid, 'SIGTERM');
+          } catch (e) {}
+          respondOnce(false, new Error('タイムアウト'));
+        }
+      }, 60000);
     });
 
   } catch (error) {
@@ -755,7 +703,63 @@ async executeSipCommand(sipAccount, formattedNumber, callId, params = {}) {
   }
 }
 
-  // ✅ 電話番号フォーマット（改良版）
+// 転送処理メソッド
+async handleTransferRequest(callId, originalNumber, keypress) {
+  try {
+    logger.info(`🔄 転送処理開始: CallID=${callId}, キー=${keypress}`);
+    
+    const transferRequest = {
+      callId: callId,
+      originalNumber: originalNumber,
+      transferTarget: '03760011',
+      keypress: keypress
+    };
+    
+    const response = await fetch('http://localhost:5000/api/calls/transfer/dtmf', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(transferRequest),
+      timeout: 10000
+    });
+    
+    if (response.ok) {
+      const result = await response.json();
+      logger.info(`✅ 転送成功: ${result.message}`);
+      return true;
+    } else {
+      throw new Error(`転送API応答エラー: ${response.status}`);
+    }
+    
+  } catch (error) {
+    logger.error(`❌ 転送処理エラー: ${error.message}`);
+    return false;
+  }
+}
+
+// DNC処理メソッド
+async handleDncRequest(callId, originalNumber, keypress) {
+  try {
+    const dncRequest = {
+      callId: callId,
+      phoneNumber: originalNumber,
+      keypress: keypress,
+      reason: 'ユーザーリクエスト（9キー）'
+    };
+    
+    await fetch('http://localhost:5000/api/calls/dnc/add', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(dncRequest)
+    });
+    
+    logger.info(`✅ DNC処理完了: ${originalNumber}`);
+    return true;
+  } catch (error) {
+    logger.error(`❌ DNC処理エラー: ${error.message}`);
+    return false;
+  }
+}
+
   formatPhoneNumber(phoneNumber) {
     // 数字のみに変換
     const numbersOnly = phoneNumber.replace(/[^\d]/g, '');

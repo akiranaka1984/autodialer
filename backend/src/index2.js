@@ -11,6 +11,11 @@ const app = express();
 const PORT = parseInt(process.env.PORT || '5000', 10);
 const server = http.createServer(app);
 
+// 🔧 追加: HTTPサーバー安定化設定
+server.timeout = 30000; // 30秒タイムアウト
+server.keepAliveTimeout = 65000; // Keep-Alive設定
+server.headersTimeout = 66000; // ヘッダータイムアウ
+
 // CORS設定
 app.use((req, res, next) => {
   const origin = req.headers.origin;
@@ -19,12 +24,10 @@ app.use((req, res, next) => {
     'http://localhost:3001', 
     'http://localhost:3003',
     'http://127.0.0.1:3003',
-    'http://143.198.209.38:3003'
+    'http://146.190.83.205:3003'
   ];
   
-  if (allowedOrigins.includes(origin) || !origin) {
-    res.setHeader("Access-Control-Allow-Origin", "*");
-  }
+  res.setHeader("Access-Control-Allow-Origin", "*");
   
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, PATCH, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With, Accept, Origin, Cache-Control, Pragma');
@@ -39,8 +42,19 @@ app.use((req, res, next) => {
 });
 
 // ミドルウェア
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
+app.use(express.json({ limit: '10mb', strict: true }));
+app.use(express.urlencoded({ extended: true, limit: '10mb', parameterLimit: 1000 }));
+
+// 🔧 新規追加: リクエストタイムアウト保護
+app.use((req, res, next) => {
+  req.setTimeout(25000, () => {
+    console.error(`Request timeout: ${req.method} ${req.url}`);
+    if (!res.headersSent) {
+      res.status(408).json({ error: 'Request timeout' });
+    }
+  });
+  next();
+});
 
 // リクエストログ
 app.use((req, res, next) => {
@@ -58,7 +72,8 @@ const routerStatus = {
   callerIds: false,
   calls: false,
   audio: false,
-  ivr: false
+  ivr: false,
+  transfer: false  // 🚀 転送ルーター追加
 };
 
 // 1. システムルーター
@@ -111,7 +126,17 @@ try {
   console.error('❌ calls router 登録失敗:', error.message);
 }
 
-// 6. 音声ルーター
+// 🚀 6. 転送ルーター（修正版：正しい位置に配置）
+try {
+  const transferRouter = require('./routes/transfer');
+  app.use('/api/campaigns', transferRouter);  // /api/campaigns/:id/transfer-settings
+  routerStatus.transfer = true;
+  console.log('✅ transfer router 登録成功');
+} catch (error) {
+  console.error('❌ transfer router 登録失敗:', error.message);
+}
+
+// 7. 音声ルーター
 try {
   const audioRouter = require('./routes/audio');
   app.use('/api/audio', audioRouter);
@@ -121,7 +146,7 @@ try {
   console.error('❌ audio router 登録失敗:', error.message);
 }
 
-// 7. IVRルーター
+// 8. IVRルーター
 try {
   const ivrRouter = require('./routes/ivr');
   app.use('/api/ivr', ivrRouter);
@@ -132,6 +157,30 @@ try {
 }
 
 console.log('📊 ルーター登録状況:', routerStatus);
+
+// === 認証エンドポイント ===
+app.post("/api/auth/login", (req, res) => {
+  const { username, password } = req.body;
+  console.log("ログイン試行:", username);
+  if (username && password) {
+    res.json({
+      success: true,
+      user: { username: username, role: "admin", name: "システム管理者" },
+      token: "dummy-token-" + Date.now()
+    });
+  } else {
+    res.status(400).json({ success: false, message: "ユーザー名とパスワードが必要です" });
+  }
+});
+
+app.get("/api/auth/profile", (req, res) => {
+  res.json({
+    id: 1,
+    username: "admin",
+    name: "システム管理者",
+    role: "admin"
+  });
+});
 
 // === 基本エンドポイント ===
 app.get('/', (req, res) => {
@@ -148,7 +197,9 @@ app.get('/', (req, res) => {
       '/api/caller-ids', 
       '/api/calls/test',
       '/api/audio',
-      '/api/ivr/test-call'
+      '/api/ivr/test-call',
+      '/api/campaigns/:id/transfer-settings',  // 🚀 転送設定追加
+      '/api/calls/transfer/dtmf'                // 🚀 動的転送追加
     ]
   });
 });
@@ -584,11 +635,50 @@ const startServer = async () => {
       console.log('  - GET  /api/campaigns');
       console.log('  - POST /api/campaigns/:id/start');
       console.log('  - POST /api/calls/test');
+      console.log('  - GET  /api/campaigns/:id/transfer-settings');    // 🚀 転送設定
+      console.log('  - POST /api/calls/transfer/dtmf');                // 🚀 動的転送
     });
+    
+    // 🔥 DialerService自動開始の強化（恒久的修正）
+    console.log('🔧 DialerService強制自動開始...');
+    try {
+      const dialerService = require('./services/dialerService');
+      
+      // 強制的に有効化
+      dialerService.enabled = true;
+      dialerService.isProcessing = false;
+      
+      // 10秒後に自動システム開始（他の初期化完了後）
+      setTimeout(async () => {
+        try {
+          if (typeof dialerService.startAutoSystem === 'function') {
+            await dialerService.startAutoSystem();
+            console.log('✅ DialerService自動システム開始完了');
+          } else {
+            console.log('⚠️ startAutoSystem メソッドが見つかりません');
+          }
+        } catch (autoStartError) {
+          console.error('DialerService自動開始エラー:', autoStartError.message);
+          
+          // 30秒後に再試行
+          setTimeout(async () => {
+            try {
+              await dialerService.startAutoSystem();
+              console.log('✅ DialerService自動システム再試行成功');
+            } catch (retryError) {
+              console.error('DialerService再試行失敗:', retryError.message);
+            }
+          }, 30000);
+        }
+      }, 10000);
+      
+    } catch (dialerError) {
+      console.error('DialerService初期化エラー:', dialerError.message);
+    }
     
   } catch (error) {
     console.error('❌ サーバー起動エラー:', error);
-    process.exit(1);
+    //process.exit(1);
   }
 };
 
@@ -600,7 +690,7 @@ process.on('unhandledRejection', (reason, promise) => {
 process.on('uncaughtException', (error) => {
   console.error('Uncaught Exception:', error);
   if (process.env.NODE_ENV === 'production') {
-    process.exit(1);
+   // process.exit(1);
   }
 });
 

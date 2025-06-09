@@ -67,36 +67,20 @@ router.post('/end', async (req, res) => {
   }
 });
 
-// 🔥 転送実行API（DTMF検知用）- 動的転送対応版
+// 🔥 転送実行API（DTMF検知用）
 router.post('/transfer/dtmf', async (req, res) => {
   try {
-    const { callId, originalNumber, keypress, campaignId } = req.body;
+    const { callId, originalNumber, transferTarget, keypress } = req.body;
     
-    logger.info(`🔄 動的転送要求: CallID=${callId}, Key=${keypress}, Campaign=${campaignId}`);
+    logger.info(`🔄 転送要求受信: CallID=${callId}, 転送先=${transferTarget}`);
     
     // 必須パラメータ検証
-    if (!callId || !originalNumber || !keypress || !campaignId) {
+    if (!callId || !originalNumber || !transferTarget || !keypress) {
       return res.status(400).json({ 
         success: false,
-        message: '必須パラメータが不足しています (callId, originalNumber, keypress, campaignId)'
+        message: '必須パラメータが不足しています'
       });
     }
-    
-    // ✅ DTMFキーに基づく転送先選択
-    const [destinations] = await db.query(`
-      SELECT sip_username FROM campaign_transfer_destinations 
-      WHERE campaign_id = ? AND dtmf_key = ? AND active = TRUE
-    `, [campaignId, keypress]);
-    
-    if (destinations.length === 0) {
-      return res.status(400).json({ 
-        success: false,
-        message: `キャンペーン${campaignId}のキー${keypress}に対応する転送先が設定されていません`
-      });
-    }
-    
-    const transferTarget = destinations[0].sip_username;
-    logger.info(`✅ 転送先決定: Key=${keypress} → ${transferTarget}`);
     
     // 転送先SIPアカウント確認
     const [sipAccounts] = await db.query(`
@@ -113,14 +97,14 @@ router.post('/transfer/dtmf', async (req, res) => {
       });
     }
     
-    // 転送ログ記録
+    // 転送ログ記録（完全に正しいカラム名とパラメータ）
     const transferId = `transfer-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
     
     await db.query(`
       INSERT INTO transfer_logs 
-      (original_call_id, transfer_number, keypress, status, transfer_initiated_at, original_number, campaign_id)
+      (original_call_id, transfer_number, keypress, status, transfer_initiated_at, campaign_id, original_number)
       VALUES (?, ?, ?, 'initiated', NOW(), ?, ?)
-    `, [callId, transferTarget, keypress, originalNumber, campaignId]);
+    `, [callId, transferTarget, keypress, 1, originalNumber]);
     
     // 転送実行
     const sipService = require('../services/sipService');
@@ -130,9 +114,7 @@ router.post('/transfer/dtmf', async (req, res) => {
       context: 'transfer',
       variables: {
         ORIGINAL_CALL_ID: callId,
-        TRANSFER_TYPE: 'operator',
-        CAMPAIGN_ID: campaignId,
-        DTMF_KEY: keypress
+        TRANSFER_TYPE: 'operator'
       },
       provider: 'sip'
     };
@@ -151,16 +133,14 @@ router.post('/transfer/dtmf', async (req, res) => {
         success: true,
         transferId: transferId,
         transferTarget: transferTarget,
-        campaignId: campaignId,
-        dtmfKey: keypress,
-        message: `キー${keypress}: ${transferTarget}への転送を開始しました`
+        message: `${transferTarget}への転送を開始しました`
       });
     } else {
       throw new Error('転送実行に失敗しました');
     }
     
   } catch (error) {
-    logger.error('動的転送API処理エラー:', error);
+    logger.error('転送API処理エラー:', error);
     res.status(500).json({ 
       success: false,
       message: '転送処理中にエラーが発生しました', 

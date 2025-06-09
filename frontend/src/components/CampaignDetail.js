@@ -18,9 +18,11 @@ import {
   XCircle,
   AlertCircle,
   ChevronDown,
-  ChevronUp
+  ChevronUp,
+  ArrowRightLeft
 } from 'lucide-react';
 import IvrSettings from './IvrSettings';
+import TransferSettings from './TransferSettings';
 
 const CampaignDetail = () => {
   const { id } = useParams();
@@ -64,6 +66,7 @@ const CampaignDetail = () => {
     { id: 'overview', name: '概要', icon: BarChart3 },
     { id: 'contacts', name: '連絡先', icon: Users },
     { id: 'ivr', name: 'IVR設定', icon: Mic },
+    { id: 'transfer', name: '転送設定', icon: Settings },
     { id: 'settings', name: '設定', icon: Settings }
   ];
 
@@ -838,6 +841,9 @@ useEffect(() => {
           {activeTab === 'ivr' && (
             <IvrSettings campaignId={id} />
           )}
+	  {activeTab === 'transfer' && (
+  	    <TransferSettings campaignId={id} />
+	  )}
 
           {/* 設定タブ */}
           {activeTab === 'settings' && (
