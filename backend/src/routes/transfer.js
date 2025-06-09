@@ -1,4 +1,4 @@
-// backend/src/routes/transfer.js - Phase2 負荷分散転送版
+// backend/src/routes/transfer.js - Phase2.2 完全版（通話数リセット機能統合）
 const express = require('express');
 const router = express.Router();
 const db = require('../services/database');
@@ -48,6 +48,340 @@ const updateCallCount = async (sipUsername, increment = 1) => {
     return false;
   }
 };
+
+// ================================
+// 🚀 Phase2.2: 通話数リセット機能
+// ================================
+
+// 🔄 特定発信者番号の通話数リセット（緊急対応用）
+router.post('/reset-call-counts/:callerId', async (req, res) => {
+  try {
+    const callerIdId = req.params.callerId;
+    
+    logger.info(`🔄 通話数リセット要求: CallerID=${callerIdId}`);
+    
+    // 発信者番号存在確認
+    const [callerIds] = await db.query(
+      'SELECT id, number FROM caller_ids WHERE id = ?',
+      [callerIdId]
+    );
+    
+    if (callerIds.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: '発信者番号が見つかりません'
+      });
+    }
+    
+    // リセット前の状況確認
+    const [beforeStatus] = await db.query(`
+      SELECT 
+        dtmf_key,
+        COUNT(*) as sip_count,
+        SUM(current_calls) as total_calls,
+        SUM(max_concurrent_calls) as total_capacity
+      FROM transfer_sip_assignments 
+      WHERE caller_id_id = ?
+      GROUP BY dtmf_key
+    `, [callerIdId]);
+    
+    // 通話数を全てリセット
+    const [resetResult] = await db.query(`
+      UPDATE transfer_sip_assignments 
+      SET current_calls = 0, updated_at = NOW()
+      WHERE caller_id_id = ?
+    `, [callerIdId]);
+    
+    // リセット後の状況確認
+    const [afterStatus] = await db.query(`
+      SELECT 
+        dtmf_key,
+        sip_username,
+        current_calls,
+        max_concurrent_calls
+      FROM transfer_sip_assignments 
+      WHERE caller_id_id = ?
+      ORDER BY dtmf_key, sip_username
+    `, [callerIdId]);
+    
+    const totalResetCalls = beforeStatus.reduce((sum, row) => sum + (row.total_calls || 0), 0);
+    
+    logger.info(`✅ 通話数リセット完了: CallerID=${callerIdId}, 影響SIP=${resetResult.affectedRows}個, リセット通話数=${totalResetCalls}`);
+    
+    res.json({
+      success: true,
+      message: `${resetResult.affectedRows}個のSIPアカウントの通話数をリセットしました`,
+      data: {
+        callerIdId: parseInt(callerIdId),
+        callerNumber: callerIds[0].number,
+        resetCount: resetResult.affectedRows,
+        totalCallsReset: totalResetCalls,
+        beforeStatus: beforeStatus,
+        afterStatus: afterStatus,
+        timestamp: new Date().toISOString()
+      }
+    });
+    
+  } catch (error) {
+    logger.error('通話数リセットエラー:', error);
+    res.status(500).json({
+      success: false,
+      message: '通話数のリセットに失敗しました',
+      error: error.message
+    });
+  }
+});
+
+// 🚨 全体システム通話数リセット（緊急時用）
+router.post('/reset-all-call-counts', async (req, res) => {
+  try {
+    logger.info('🚨 全体システム通話数リセット要求');
+    
+    // リセット前の全体状況
+    const [beforeGlobalStatus] = await db.query(`
+      SELECT 
+        caller_id_id,
+        COUNT(*) as sip_count,
+        SUM(current_calls) as total_calls
+      FROM transfer_sip_assignments 
+      WHERE current_calls > 0
+      GROUP BY caller_id_id
+    `);
+    
+    // 全体リセット実行
+    const [globalResetResult] = await db.query(`
+      UPDATE transfer_sip_assignments 
+      SET current_calls = 0, updated_at = NOW()
+      WHERE current_calls > 0
+    `);
+    
+    const totalCallsReset = beforeGlobalStatus.reduce((sum, row) => sum + (row.total_calls || 0), 0);
+    
+    logger.info(`✅ 全体通話数リセット完了: 影響SIP=${globalResetResult.affectedRows}個, 総リセット通話数=${totalCallsReset}`);
+    
+    res.json({
+      success: true,
+      message: `システム全体で${globalResetResult.affectedRows}個のSIPアカウントの通話数をリセットしました`,
+      data: {
+        globalResetCount: globalResetResult.affectedRows,
+        totalCallsReset: totalCallsReset,
+        affectedCallerIds: beforeGlobalStatus.map(row => row.caller_id_id),
+        timestamp: new Date().toISOString()
+      }
+    });
+    
+  } catch (error) {
+    logger.error('全体通話数リセットエラー:', error);
+    res.status(500).json({
+      success: false,
+      message: '全体通話数のリセットに失敗しました',
+      error: error.message
+    });
+  }
+});
+
+// 🔍 通話数状況診断API
+router.get('/call-counts-diagnosis/:callerId', async (req, res) => {
+  try {
+    const callerIdId = req.params.callerId;
+    
+    const [diagnosis] = await db.query(`
+      SELECT 
+        dtmf_key,
+        sip_username,
+        current_calls,
+        max_concurrent_calls,
+        CASE 
+          WHEN current_calls > max_concurrent_calls THEN 'OVERFLOW'
+          WHEN current_calls > 0 THEN 'BUSY'
+          ELSE 'AVAILABLE'
+        END as status,
+        updated_at
+      FROM transfer_sip_assignments 
+      WHERE caller_id_id = ?
+      ORDER BY dtmf_key, current_calls DESC
+    `, [callerIdId]);
+    
+    const summary = {
+      totalSipAccounts: diagnosis.length,
+      busyAccounts: diagnosis.filter(d => d.current_calls > 0).length,
+      overflowAccounts: diagnosis.filter(d => d.current_calls > d.max_concurrent_calls).length,
+      totalActiveCalls: diagnosis.reduce((sum, d) => sum + d.current_calls, 0),
+      needsReset: diagnosis.some(d => d.current_calls > 0)
+    };
+    
+    res.json({
+      success: true,
+      callerIdId: parseInt(callerIdId),
+      summary: summary,
+      details: diagnosis
+    });
+    
+  } catch (error) {
+    logger.error('通話数診断エラー:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+// 🎯 根本解決: 通話終了時自動減算API
+router.post('/call-ended', async (req, res) => {
+  try {
+    const { callId, originalNumber, transferTarget, campaignId } = req.body;
+    
+    logger.info(`📞 通話終了通知受信: CallID=${callId}, 転送先=${transferTarget}`);
+    
+    if (!transferTarget) {
+      // 転送が発生していない場合はスキップ
+      return res.json({
+        success: true,
+        message: '転送なし - 処理不要',
+        action: 'skipped'
+      });
+    }
+    
+    // 転送先SIPアカウントの通話数を減算
+    const [decrementResult] = await db.query(`
+      UPDATE transfer_sip_assignments 
+      SET current_calls = GREATEST(current_calls - 1, 0),
+          updated_at = NOW()
+      WHERE sip_username = ? AND current_calls > 0
+    `, [transferTarget]);
+    
+    if (decrementResult.affectedRows > 0) {
+      logger.info(`✅ 通話数自動減算: SIP=${transferTarget}, 減算後通話数確認中...`);
+      
+      // 減算後の状況確認
+      const [afterDecrement] = await db.query(`
+        SELECT current_calls, max_concurrent_calls
+        FROM transfer_sip_assignments 
+        WHERE sip_username = ?
+      `, [transferTarget]);
+      
+      if (afterDecrement.length > 0) {
+        const currentCalls = afterDecrement[0].current_calls;
+        const maxCalls = afterDecrement[0].max_concurrent_calls;
+        
+        logger.info(`📊 ${transferTarget}: ${currentCalls}/${maxCalls} 通話中`);
+        
+        res.json({
+          success: true,
+          message: `${transferTarget}の通話数を自動減算しました`,
+          data: {
+            sipUsername: transferTarget,
+            currentCalls: currentCalls,
+            maxConcurrentCalls: maxCalls,
+            decrementedRows: decrementResult.affectedRows
+          }
+        });
+      } else {
+        res.json({
+          success: true,
+          message: 'SIPアカウントが見つかりませんでした'
+        });
+      }
+      
+    } else {
+      logger.warn(`⚠️ 通話数減算対象なし: SIP=${transferTarget}`);
+      
+      res.json({
+        success: true,
+        message: '減算対象の通話数がありませんでした',
+        data: {
+          sipUsername: transferTarget,
+          decrementedRows: 0
+        }
+      });
+    }
+    
+  } catch (error) {
+    logger.error('通話終了時減算エラー:', error);
+    res.status(500).json({
+      success: false,
+      message: '通話数の自動減算に失敗しました',
+      error: error.message
+    });
+  }
+});
+
+// 🔄 複数SIP一括減算API（複数転送対応）
+router.post('/bulk-call-ended', async (req, res) => {
+  try {
+    const { callId, transferTargets } = req.body; // transferTargets: ['03750001', '03750002']
+    
+    if (!Array.isArray(transferTargets) || transferTargets.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: '転送先SIPアカウントの配列が必要です'
+      });
+    }
+    
+    logger.info(`📞 複数通話終了処理: CallID=${callId}, 対象SIP=${transferTargets.length}個`);
+    
+    const decrementResults = [];
+    
+    // 各SIPアカウントの通話数を減算
+    for (const sipUsername of transferTargets) {
+      try {
+        const [decrementResult] = await db.query(`
+          UPDATE transfer_sip_assignments 
+          SET current_calls = GREATEST(current_calls - 1, 0),
+              updated_at = NOW()
+          WHERE sip_username = ? AND current_calls > 0
+        `, [sipUsername]);
+        
+        decrementResults.push({
+          sipUsername,
+          success: true,
+          affectedRows: decrementResult.affectedRows
+        });
+        
+        if (decrementResult.affectedRows > 0) {
+          logger.info(`✅ 通話数減算完了: ${sipUsername}`);
+        } else {
+          logger.warn(`⚠️ 減算対象なし: ${sipUsername}`);
+        }
+        
+      } catch (sipError) {
+        logger.error(`❌ SIP減算エラー: ${sipUsername}`, sipError);
+        decrementResults.push({
+          sipUsername,
+          success: false,
+          error: sipError.message
+        });
+      }
+    }
+    
+    const successCount = decrementResults.filter(r => r.success).length;
+    const totalDecremented = decrementResults.reduce((sum, r) => sum + (r.affectedRows || 0), 0);
+    
+    res.json({
+      success: true,
+      message: `${successCount}/${transferTargets.length}個のSIPアカウントの通話数を処理しました`,
+      data: {
+        callId,
+        totalProcessed: transferTargets.length,
+        successCount,
+        totalDecremented,
+        results: decrementResults
+      }
+    });
+    
+  } catch (error) {
+    logger.error('一括通話終了処理エラー:', error);
+    res.status(500).json({
+      success: false,
+      message: '一括通話数減算に失敗しました',
+      error: error.message
+    });
+  }
+});
+
+// ================================
+// Phase1互換 基本転送API
+// ================================
 
 // 転送設定取得API（Phase1互換維持）
 router.get('/campaigns/:id/transfer-settings', async (req, res) => {
@@ -160,7 +494,11 @@ router.post('/campaigns/:id/transfer-settings', async (req, res) => {
   }
 });
 
-// 🚀 Phase2: 負荷分散動的転送処理API
+// ================================
+// 🚀 Phase2: 負荷分散転送処理API
+// ================================
+
+// 負荷分散動的転送処理API
 router.post('/campaigns/:id/dtmf', async (req, res) => {
   try {
     const campaignId = req.params.id;
@@ -293,7 +631,7 @@ router.post('/campaigns/:id/dtmf', async (req, res) => {
   }
 });
 
-// 🔄 通話終了時の通話数減算API（新規追加）
+// 🔄 既存の通話終了API（互換性維持）
 router.post('/call-end', async (req, res) => {
   try {
     const { callId, sipUsername } = req.body;
@@ -341,14 +679,14 @@ router.post('/call-end', async (req, res) => {
   }
 });
 
-// 📊 負荷状況取得API（新規追加）
+// 📊 負荷状況取得API（既存）
 router.get('/load-status/:callerId', async (req, res) => {
   try {
     const callerIdId = req.params.callerId;
     
     const [loadStatus] = await db.query(`
       SELECT
-	id,
+        id,
         dtmf_key,
         sip_username,
         priority,
@@ -549,7 +887,8 @@ router.delete('/sip-accounts/:id', async (req, res) => {
     if (sipAccount.current_calls > 0) {
       return res.status(409).json({
         success: false,
-        message: `SIP "${sipAccount.sip_username}" は現在 ${sipAccount.current_calls} 通話中のため削除できません`
+        message: `SIP "${sipAccount.sip_username}" は現在 ${sipAccount.current_calls} 通話中のため削除できません`,
+        suggestion: 'リセットボタンで通話数をリセットしてから削除してください'
       });
     }
     

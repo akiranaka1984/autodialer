@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Save, Settings, Phone, Plus, X, AlertCircle, Activity, RefreshCw } from 'lucide-react';
+import { Save, Settings, Phone, Plus, X, AlertCircle, Activity, RefreshCw, AlertTriangle, CheckCircle, Zap } from 'lucide-react';
 
 const getApiBaseUrl = () => {
   return process.env.REACT_APP_API_URL || '/api';
@@ -20,8 +20,11 @@ const TransferSettings = ({ campaignId }) => {
     '2': '',
     '3': ''
   });
-  // 🚀 NEW: 利用可能SIPアカウント用状態
   const [availableSipAccounts, setAvailableSipAccounts] = useState([]);
+  
+  // 🆕 Phase2.2: 通話数診断・リセット機能
+  const [callCountsDiagnosis, setCallCountsDiagnosis] = useState(null);
+  const [resetLoading, setResetLoading] = useState(false);
 
   useEffect(() => {
     fetchCampaignInfo();
@@ -30,11 +33,14 @@ const TransferSettings = ({ campaignId }) => {
   useEffect(() => {
     if (callerIdId) {
       fetchLoadStatus();
-      fetchAvailableSipAccounts(); // 🚀 NEW: 利用可能SIPアカウント取得
-      // 5秒ごとに負荷状況を更新
+      fetchAvailableSipAccounts();
+      fetchCallCountsDiagnosis(); // 🆕 診断情報取得
+      
+      // 5秒ごとに負荷状況・診断情報を更新
       const interval = setInterval(() => {
         fetchLoadStatus();
-        fetchAvailableSipAccounts(); // 🚀 NEW: 定期更新
+        fetchAvailableSipAccounts();
+        fetchCallCountsDiagnosis(); // 🆕 定期診断
       }, 5000);
       return () => clearInterval(interval);
     }
@@ -93,7 +99,7 @@ const TransferSettings = ({ campaignId }) => {
     }
   };
 
-  // 🚀 NEW: 利用可能SIPアカウント取得
+  // 利用可能SIPアカウント取得
   const fetchAvailableSipAccounts = async () => {
     if (!callerIdId) return;
     
@@ -113,6 +119,94 @@ const TransferSettings = ({ campaignId }) => {
     } catch (error) {
       console.error('利用可能SIPアカウント取得エラー:', error);
       setAvailableSipAccounts([]);
+    }
+  };
+
+  // 🆕 通話数診断情報取得
+  const fetchCallCountsDiagnosis = async () => {
+    if (!callerIdId) return;
+    
+    try {
+      const response = await fetch(`${getApiBaseUrl()}/transfer/call-counts-diagnosis/${callerIdId}`, {
+        headers: { 
+          'Authorization': `Bearer ${localStorage.getItem('token')}`,
+          'Cache-Control': 'no-cache'
+        }
+      });
+      
+      if (response.ok) {
+        const data = await response.json();
+        setCallCountsDiagnosis(data);
+      }
+    } catch (error) {
+      console.error('診断情報取得エラー:', error);
+    }
+  };
+
+  // 🔄 通話数リセット機能
+  const resetCallCounts = async () => {
+    if (!callerIdId) {
+      setMessage('❌ 発信者番号IDが取得できません');
+      return;
+    }
+    
+    if (!window.confirm('全ての通話数をリセットしますか？\n\n⚠️ 現在進行中の通話には影響しませんが、通話数カウンターがリセットされます。')) {
+      return;
+    }
+    
+    setResetLoading(true);
+    try {
+      const response = await fetch(`${getApiBaseUrl()}/transfer/reset-call-counts/${callerIdId}`, {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}` }
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        setMessage(`✅ ${data.data.resetCount}個のSIPアカウントの通話数をリセットしました`);
+        
+        // 全ての状況を即座に更新
+        await fetchLoadStatus();
+        await fetchCallCountsDiagnosis();
+      } else {
+        const errorData = await response.json();
+        setMessage('❌ リセットエラー: ' + errorData.message);
+      }
+    } catch (error) {
+      setMessage('❌ リセットエラー: ' + error.message);
+    } finally {
+      setResetLoading(false);
+      setTimeout(() => setMessage(''), 5000);
+    }
+  };
+
+  // 🚨 緊急全体リセット
+  const resetAllCallCounts = async () => {
+    if (!window.confirm('🚨 システム全体の通話数をリセットしますか？\n\n⚠️ この操作は全ての発信者番号に影響します。\n本当に実行しますか？')) {
+      return;
+    }
+    
+    setResetLoading(true);
+    try {
+      const response = await fetch(`${getApiBaseUrl()}/transfer/reset-all-call-counts`, {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}` }
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        setMessage(`🚨 システム全体で${data.data.globalResetCount}個のSIPアカウントをリセットしました`);
+        await fetchLoadStatus();
+        await fetchCallCountsDiagnosis();
+      } else {
+        const errorData = await response.json();
+        setMessage('❌ 全体リセットエラー: ' + errorData.message);
+      }
+    } catch (error) {
+      setMessage('❌ 全体リセットエラー: ' + error.message);
+    } finally {
+      setResetLoading(false);
+      setTimeout(() => setMessage(''), 5000);
     }
   };
 
@@ -152,8 +246,9 @@ const TransferSettings = ({ campaignId }) => {
       if (response.ok) {
         setMessage(`✅ キー${dtmfKey}にSIPアカウント ${sipUsername} を追加しました`);
         setNewSipInputs(prev => ({ ...prev, [dtmfKey]: '' }));
-        await fetchLoadStatus(); // 再読み込み
-        await fetchAvailableSipAccounts(); // 🚀 NEW: 利用可能リスト更新
+        await fetchLoadStatus();
+        await fetchAvailableSipAccounts();
+        await fetchCallCountsDiagnosis(); // 🆕 診断情報更新
       } else {
         const errorData = await response.json();
         setMessage('❌ ' + errorData.message);
@@ -166,7 +261,7 @@ const TransferSettings = ({ campaignId }) => {
     }
   };
 
-  // SIPアカウント削除 - 修正版
+  // SIPアカウント削除
   const removeSipAccount = async (account) => {
     if (!window.confirm(`キー${account.dtmf_key}から ${account.sip_username} を削除しますか？`)) {
       return;
@@ -183,8 +278,9 @@ const TransferSettings = ({ campaignId }) => {
 
       if (response.ok) {
         setMessage(`✅ キー${account.dtmf_key}から ${account.sip_username} を削除しました`);
-        await fetchLoadStatus(); // 再読み込み
-        await fetchAvailableSipAccounts(); // 🚀 NEW: 利用可能リスト更新
+        await fetchLoadStatus();
+        await fetchAvailableSipAccounts();
+        await fetchCallCountsDiagnosis(); // 🆕 診断情報更新
       } else {
         const errorData = await response.json();
         setMessage('❌ ' + errorData.message);
@@ -194,6 +290,24 @@ const TransferSettings = ({ campaignId }) => {
     } finally {
       setLoading(false);
       setTimeout(() => setMessage(''), 3000);
+    }
+  };
+
+  // 全データ更新
+  const refreshAllData = async () => {
+    setLoading(true);
+    try {
+      await Promise.all([
+        fetchLoadStatus(),
+        fetchAvailableSipAccounts(),
+        fetchCallCountsDiagnosis()
+      ]);
+      setMessage('✅ データを更新しました');
+      setTimeout(() => setMessage(''), 2000);
+    } catch (error) {
+      setMessage('❌ 更新エラー: ' + error.message);
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -212,22 +326,92 @@ const TransferSettings = ({ campaignId }) => {
 
   return (
     <div className="bg-white rounded-lg shadow p-6">
+      {/* ヘッダー部分 */}
       <div className="flex items-center justify-between mb-6">
         <div className="flex items-center">
           <Settings className="h-5 w-5 mr-2 text-blue-600" />
           <h2 className="text-lg font-semibold">転送設定</h2>
         </div>
-        <div className="flex items-center text-sm text-gray-600">
-          <Activity className="h-4 w-4 mr-1" />
-          発信者番号ID: {callerIdId}
+        
+        {/* 🆕 Phase2.2: 通話数リセットボタン群 */}
+        <div className="flex items-center space-x-2">
+          <div className="flex items-center text-sm text-gray-600 mr-3">
+            <Activity className="h-4 w-4 mr-1" />
+            発信者番号ID: {callerIdId}
+          </div>
+          
+          <button
+            onClick={refreshAllData}
+            disabled={loading}
+            className="flex items-center px-3 py-2 bg-gray-600 text-white rounded hover:bg-gray-700 disabled:opacity-50 text-sm"
+          >
+            <RefreshCw className={`h-4 w-4 mr-1 ${loading ? 'animate-spin' : ''}`} />
+            更新
+          </button>
+          
+          <button
+            onClick={resetCallCounts}
+            disabled={resetLoading || !callerIdId}
+            className="flex items-center px-3 py-2 bg-orange-600 text-white rounded hover:bg-orange-700 disabled:opacity-50 text-sm"
+          >
+            <RefreshCw className={`h-4 w-4 mr-1 ${resetLoading ? 'animate-spin' : ''}`} />
+            通話数リセット
+          </button>
+          
+          <button
+            onClick={resetAllCallCounts}
+            disabled={resetLoading}
+            className="flex items-center px-3 py-2 bg-red-600 text-white rounded hover:bg-red-700 disabled:opacity-50 text-sm"
+          >
+            <Zap className="h-4 w-4 mr-1" />
+            全体リセット
+          </button>
         </div>
       </div>
 
+      {/* 🆕 通話数診断表示 */}
+      {callCountsDiagnosis && (
+        <div className="mb-6 p-4 bg-gray-50 rounded-lg">
+          <h3 className="text-sm font-medium text-gray-700 mb-3">通話数状況診断</h3>
+          
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-3">
+            <div className="text-center">
+              <div className="text-lg font-bold text-blue-600">{callCountsDiagnosis.summary.totalSipAccounts}</div>
+              <div className="text-xs text-gray-500">総SIP数</div>
+            </div>
+            <div className="text-center">
+              <div className="text-lg font-bold text-yellow-600">{callCountsDiagnosis.summary.busyAccounts}</div>
+              <div className="text-xs text-gray-500">使用中</div>
+            </div>
+            <div className="text-center">
+              <div className="text-lg font-bold text-red-600">{callCountsDiagnosis.summary.overflowAccounts}</div>
+              <div className="text-xs text-gray-500">異常</div>
+            </div>
+            <div className="text-center">
+              <div className="text-lg font-bold text-green-600">{callCountsDiagnosis.summary.totalActiveCalls}</div>
+              <div className="text-xs text-gray-500">総通話数</div>
+            </div>
+          </div>
+          
+          {callCountsDiagnosis.summary.needsReset ? (
+            <div className="flex items-center text-orange-600 text-sm">
+              <AlertTriangle className="h-4 w-4 mr-1" />
+              通話数のリセットが必要です
+            </div>
+          ) : (
+            <div className="flex items-center text-green-600 text-sm">
+              <CheckCircle className="h-4 w-4 mr-1" />
+              全ての通話数が正常です
+            </div>
+          )}
+        </div>
+      )}
+
       {message && (
-        <div className={`p-3 rounded mb-4 ${message.includes('✅') ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
+        <div className={`p-3 rounded mb-4 ${message.includes('✅') || message.includes('🚨') ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
           <div className="flex items-center">
-            {message.includes('✅') ? 
-              <Settings className="h-4 w-4 mr-2" /> : 
+            {message.includes('✅') || message.includes('🚨') ? 
+              <CheckCircle className="h-4 w-4 mr-2" /> : 
               <AlertCircle className="h-4 w-4 mr-2" />
             }
             {message}
@@ -235,7 +419,7 @@ const TransferSettings = ({ campaignId }) => {
         </div>
       )}
 
-      {/* キー1,2,3の設定 - 簡素化版 */}
+      {/* キー1,2,3の設定 */}
       {['1', '2', '3'].map(dtmfKey => (
         <div key={dtmfKey} className="mb-8">
           <div className="flex items-center justify-between mb-4">
@@ -245,20 +429,9 @@ const TransferSettings = ({ campaignId }) => {
                 ({sipAccounts[dtmfKey]?.length || 0}個のSIP)
               </span>
             </h3>
-            <button
-              onClick={() => {
-                fetchLoadStatus();
-                fetchAvailableSipAccounts();
-              }}
-              disabled={loading}
-              className="p-1 text-gray-400 hover:text-gray-600"
-              title="更新"
-            >
-              <RefreshCw className="h-4 w-4" />
-            </button>
           </div>
 
-          {/* 既存SIPアカウント一覧 - 簡素化版 */}
+          {/* 既存SIPアカウント一覧 - 通話数表示付き */}
           <div className="space-y-2 mb-4">
             {sipAccounts[dtmfKey]?.length > 0 ? (
               sipAccounts[dtmfKey].map((account, index) => (
@@ -266,6 +439,16 @@ const TransferSettings = ({ campaignId }) => {
                   <div className="flex items-center space-x-3">
                     <Phone className="h-4 w-4 text-blue-600" />
                     <span className="font-medium">{account.sip_username}</span>
+                    {/* 🆕 通話数表示 */}
+                    <span className={`text-xs px-2 py-1 rounded ${
+                      account.current_calls > 0 
+                        ? account.current_calls > account.max_concurrent_calls 
+                          ? 'bg-red-100 text-red-700' 
+                          : 'bg-yellow-100 text-yellow-700'
+                        : 'bg-green-100 text-green-700'
+                    }`}>
+                      {account.current_calls}/{account.max_concurrent_calls}
+                    </span>
                   </div>
                   <button
                     onClick={() => removeSipAccount(account)}
@@ -275,7 +458,7 @@ const TransferSettings = ({ campaignId }) => {
                         ? 'text-gray-400 cursor-not-allowed'
                         : 'text-red-500 hover:text-red-700'
                     } disabled:opacity-50`}
-                    title={account.current_calls > 0 ? '通話中のため削除できません' : '削除'}
+                    title={account.current_calls > 0 ? '通話中のため削除できません - リセットボタンをお試しください' : '削除'}
                   >
                     <X className="h-4 w-4" />
                   </button>
@@ -288,7 +471,7 @@ const TransferSettings = ({ campaignId }) => {
             )}
           </div>
 
-          {/* SIPアカウント追加フォーム - 簡素化版 */}
+          {/* SIPアカウント追加フォーム */}
           <div className="flex items-center space-x-2">
             <select
               value={newSipInputs[dtmfKey]}
@@ -325,22 +508,33 @@ const TransferSettings = ({ campaignId }) => {
             <strong>キー9:</strong> DNC登録（自動設定済み）
             <br />
             <strong>負荷分散機能:</strong> 各キーで複数のSIPアカウントが自動選択されます
+            <br />
+            <strong>通話数管理:</strong> 通話開始時に自動増加、終了時に自動減少します
           </span>
         </div>
       </div>
 
-      {/* 全体サマリー - 簡素化版 */}
+      {/* 全体サマリー */}
       <div className="mt-6 p-4 bg-gray-50 rounded-lg">
         <h4 className="font-medium mb-2">転送設定サマリー</h4>
         <div className="grid grid-cols-3 gap-4 text-sm text-center">
-          {['1', '2', '3'].map(key => (
-            <div key={key} className="bg-white rounded p-3">
-              <div className="font-medium text-blue-600">キー{key}</div>
-              <div className="text-gray-600">
-                {sipAccounts[key]?.length || 0}個のSIP
+          {['1', '2', '3'].map(key => {
+            const accounts = sipAccounts[key] || [];
+            const totalCalls = accounts.reduce((sum, acc) => sum + acc.current_calls, 0);
+            const totalCapacity = accounts.reduce((sum, acc) => sum + acc.max_concurrent_calls, 0);
+            
+            return (
+              <div key={key} className="bg-white rounded p-3">
+                <div className="font-medium text-blue-600">キー{key}</div>
+                <div className="text-gray-600">
+                  {accounts.length}個のSIP
+                </div>
+                <div className="text-xs text-gray-500">
+                  {totalCalls}/{totalCapacity} 通話中
+                </div>
               </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       </div>
     </div>
