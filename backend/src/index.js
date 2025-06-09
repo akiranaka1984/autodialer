@@ -129,7 +129,7 @@ try {
 // 🚀 6. 転送ルーター（修正版：正しい位置に配置）
 try {
   const transferRouter = require('./routes/transfer');
-  app.use('/api/campaigns', transferRouter);  // /api/campaigns/:id/transfer-settings
+  app.use('/api/transfer', transferRouter);  // /api/transfer/:id/transfer-settings
   routerStatus.transfer = true;
   console.log('✅ transfer router 登録成功');
 } catch (error) {

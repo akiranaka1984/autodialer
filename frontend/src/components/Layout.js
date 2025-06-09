@@ -20,13 +20,13 @@ const Layout = ({ user, onLogout }) => {
  // サイドバーのリンク設定
 const navLinks = [
   { path: '/', label: 'ダッシュボード', icon: <BarChart2 className="h-5 w-5 mr-3" /> },
-  { path: '/test-call', label: 'テスト発信', icon: <Phone className="h-5 w-5 mr-3" /> },
+//  { path: '/test-call', label: 'テスト発信', icon: <Phone className="h-5 w-5 mr-3" /> },
   { path: '/caller-ids', label: '発信者番号管理', icon: <Settings className="h-5 w-5 mr-3" /> },
   { path: '/campaigns', label: 'キャンペーン管理', icon: <Users className="h-5 w-5 mr-3" /> },
   { path: '/operators', label: 'オペレーター管理', icon: <UserCog className="h-5 w-5 mr-3" /> },
   { path: '/calls', label: '通話履歴', icon: <History className="h-5 w-5 mr-3" /> },
-  { path: '/dnc', label: 'DNCリスト', icon: <Ban className="h-5 w-5 mr-3" /> },
-  { path: '/reports', label: 'レポート', icon: <FileText className="h-5 w-5 mr-3" /> },
+//  { path: '/dnc', label: 'DNCリスト', icon: <Ban className="h-5 w-5 mr-3" /> },
+//  { path: '/reports', label: 'レポート', icon: <FileText className="h-5 w-5 mr-3" /> },
   
   // 🎵 音声ファイル管理を追加（ここ）
   { path: '/audio-files', label: '音声ファイル管理', icon: <Music className="h-5 w-5 mr-3" /> },
