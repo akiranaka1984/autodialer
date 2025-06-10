@@ -58,26 +58,38 @@ class CallService {
     }
   }
   
-  async originate(params, preferredProvider = null) {
+// callService.js の originate メソッド（デバッグログ追加版）
+async originate(params, preferredProvider = null) {
+    console.log('🚀🚀🚀 CALLSERVICE-START: originateメソッド開始');
+    console.log('🚀🚀🚀 CALLSERVICE-PARAMS:', JSON.stringify(params));
+    console.log('🚀🚀🚀 CALLSERVICE-PREFERRED:', preferredProvider);
+    
     const provider = preferredProvider || this.selectProvider(params);
+    console.log('🚀🚀🚀 CALLSERVICE-PROVIDER:', provider);
     
     logger.info(`${provider}プロバイダを使用して発信します: ${params.phoneNumber}`);
     
     try {
       // 対応するプロバイダサービスを選択
       const service = this.getProviderService(provider);
+      console.log('🚀🚀🚀 CALLSERVICE-SERVICE:', service ? 'サービスあり' : 'サービスなし');
+      console.log('🚀🚀🚀 CALLSERVICE-SERVICE-TYPE:', service ? service.constructor.name : 'null');
       
       if (!service) {
+        console.log('🚀🚀🚀 CALLSERVICE-ERROR: サービスなし');
         throw new Error(`不明なプロバイダ: ${provider}`);
       }
       
       // プロバイダがモックモードに対応しているか確認
       if (params.mockMode && typeof service.setMockMode === 'function') {
+        console.log('🚀🚀🚀 CALLSERVICE-MOCK: モックモード設定');
         service.setMockMode(true);
       }
       
       // 発信実行
+      console.log('🚀🚀🚀 CALLSERVICE-EXEC-1: service.originate呼び出し直前!!');
       const result = await service.originate(params);
+      console.log('🚀🚀🚀 CALLSERVICE-EXEC-2: service.originate呼び出し完了:', result ? 'レスポンスあり' : 'レスポンスなし');
       
       // プロバイダ情報を追加
       result.provider = provider;
@@ -87,8 +99,10 @@ class CallService {
         service.setMockMode(false);
       }
       
+      console.log('🚀🚀🚀 CALLSERVICE-SUCCESS: 発信成功');
       return result;
     } catch (error) {
+      console.log('🚀🚀🚀 CALLSERVICE-ERROR:', error.message);
       logger.error(`${provider}での発信エラー:`, error);
       
       // フォールバックが有効で、条件に合致する場合は別のプロバイダを試す

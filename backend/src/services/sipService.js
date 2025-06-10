@@ -1,4 +1,4 @@
-// backend/src/services/sipService.js - 音声統合完全版
+// backend/src/services/sipService.js - 完全修正版（DTMF対応+電話発信修正）
 const { spawn, exec } = require('child_process');
 const logger = require('./logger');
 const { EventEmitter } = require('events');
@@ -10,7 +10,7 @@ class SipService extends EventEmitter {
   constructor() {
     super();
     this.connected = false;
-    this.mockMode = false;
+    this.mockMode = process.env.MOCK_SIP === 'true';
     this.sipAccounts = [];
     this.callToAccountMap = new Map();
     this.activeCallsMap = new Map();
@@ -44,9 +44,6 @@ class SipService extends EventEmitter {
 
     try {
       logger.info(`🔧 SIPサービス接続開始（試行 ${this.connectionRetryCount + 1}/${this.maxConnectionRetries + 1}）...`);
-      
-      // 🔍 事前チェック: sipcmdバイナリの存在確認
-      await this.verifySimcmdBinary();
       
       // 🔍 事前チェック: データベース接続確認
       await this.verifyDatabaseConnection();
@@ -85,23 +82,6 @@ class SipService extends EventEmitter {
         logger.error('❌ SIP接続の最大試行回数に達しました - 緊急フォールバック実行');
         return this.enableEmergencyFallback();
       }
-    }
-  }
-
-  // 🔍 sipcmdバイナリ存在確認
-  async verifySimcmdBinary() {
-    try {
-      if (!fs.existsSync(this.sipcmdPath)) {
-        throw new Error(`sipcmdバイナリが見つかりません: ${this.sipcmdPath}`);
-      }
-      
-      // 実行権限確認
-      await fs.promises.access(this.sipcmdPath, fs.constants.X_OK);
-      logger.info(`✅ sipcmdバイナリ確認完了: ${this.sipcmdPath}`);
-      
-    } catch (error) {
-      logger.error(`❌ sipcmdバイナリ確認エラー: ${error.message}`);
-      throw new Error('sipcmdバイナリが利用できません');
     }
   }
 
@@ -415,7 +395,7 @@ class SipService extends EventEmitter {
     }
   }
 
-  // 発信者番号ごとにチャンネルをグループ化（改良版）
+  // 発信者番号ごりにチャンネルをグループ化（改良版）
   organizeChannelsByCallerId() {
     this.callerIdToChannelsMap.clear();
     
@@ -490,113 +470,158 @@ class SipService extends EventEmitter {
     return selectedAccount;
   }
 
-  // 🚀 メイン発信メソッド（音声統合版）
-  async originate(params) {
-    if (this.mockMode) {
-      return this.originateMock(params);
-    }
-    
-    logger.info(`🔥 SIP発信を開始: 発信先=${params.phoneNumber}`);
-    
-    try {
-      // SIPアカウントを取得
-      let sipAccount = await this.getAvailableSipAccount();
-      
-      if (!sipAccount) {
-        throw new Error('利用可能なSIPアカウントが見つかりません');
-      }
-      
-      // 発信準備
-      const formattedNumber = this.formatPhoneNumber(params.phoneNumber);
-      const sipServer = process.env.SIP_SERVER || sipAccount.domain || 'ito258258.site';
-      const callId = 'sip-' + Date.now() + '-' + Math.floor(Math.random() * 10000);
-      
-      logger.info(`📞 SIP発信詳細:`, {
-        account: sipAccount.username,
-        server: sipServer,
-        number: formattedNumber,
-        callerID: sipAccount.callerID,
-        hasAudio: !!(params.campaignAudio && params.campaignAudio.length > 0)
-      });
-      
-      // SIPアカウントを使用中にマーク
-      sipAccount.status = 'busy';
-      sipAccount.lastUsed = new Date();
-      
-      // 通話IDとSIPアカウントを関連付け
-      this.callToAccountMap.set(callId, sipAccount);
-      
-      // 🎵 音声付きSIPコマンド実行
-      const success = await this.executeSipCommand(sipAccount, formattedNumber, callId, params);
-      
-      if (!success) {
-        throw new Error('SIP発信コマンドの実行に失敗しました');
-      }
-      
-      // 発信成功イベントをエミット
-      this.emit('callStarted', {
-        callId,
-        number: params.phoneNumber,
-        callerID: params.callerID || sipAccount.callerID,
-        variables: params.variables || {},
-        mainCallerId: sipAccount.mainCallerId
-      });
-      
-      return {
-        ActionID: callId,
-        Response: 'Success',
-        Message: 'SIP call successfully initiated with audio',
-        SipAccount: sipAccount.username,
-        mainCallerId: sipAccount.mainCallerId,
-        provider: 'sip',
-        hasAudio: !!(params.campaignAudio && params.campaignAudio.length > 0)
-      };
-      
-    } catch (error) {
-      logger.error('SIP発信エラー:', error);
-      
-      // エラー時はリソースを解放
-      if (typeof callId !== 'undefined' && this.callToAccountMap.has(callId)) {
-        await this.releaseCallResource(callId);
-      }
-      
-      throw error;
-    }
-  }
+// sipService.js の originate メソッド（デバッグログ追加版）
+// 📍 約475行目付近の originate メソッドを完全置換
 
-// 🎵 成功パターン100%適用版 - executeSipCommand
-// 🔢 DTMF検知対応版 executeSipCommand（完全版）
+// sipService.js の originate メソッド（約475行目〜）
+async originate(params) {
+  // 🔥 【最重要】sipService.originate 開始ログ
+  logger.info(`🔥 [SIP-DEBUG] ===== sipService.originate 開始 =====`);
+  logger.info(`🔥 [SIP-DEBUG] - phoneNumber: ${params.phoneNumber}`);
+  logger.info(`🔥 [SIP-DEBUG] - callerID: ${params.callerID}`);
+  logger.info(`🔥 [SIP-DEBUG] - mockMode: ${this.mockMode}`);
+  logger.info(`🔥 [SIP-DEBUG] - connected: ${this.connected}`);
+  logger.info(`🔥 [SIP-DEBUG] - sipAccounts数: ${this.sipAccounts?.length || 0}`);
+  
+  if (this.mockMode) {
+    logger.info(`🔥 [SIP-DEBUG] モックモードで処理します`);
+    return this.originateMock(params);
+  }
+  
+  logger.info(`🔥 [SIP-DEBUG] 実発信モードで SIP発信を開始: 発信先=${params.phoneNumber}`);
+  
+  try {
+    // SIPアカウントを取得
+    logger.info(`🔥 [SIP-DEBUG] SIPアカウント取得開始...`);
+    let sipAccount = await this.getAvailableSipAccount();
+    
+    logger.info(`🔥 [SIP-DEBUG] SIPアカウント取得結果:`);
+    logger.info(`🔥 [SIP-DEBUG] - sipAccount存在: ${!!sipAccount}`);
+    logger.info(`🔥 [SIP-DEBUG] - username: ${sipAccount?.username}`);
+    logger.info(`🔥 [SIP-DEBUG] - callerID: ${sipAccount?.callerID}`);
+    
+    if (!sipAccount) {
+      const errorMsg = '利用可能なSIPアカウントが見つかりません';
+      logger.error(`🔥 [SIP-ERROR] ${errorMsg}`);
+      throw new Error(errorMsg);
+    }
+    
+    // 発信準備
+    const formattedNumber = this.formatPhoneNumber(params.phoneNumber);
+    const sipServer = process.env.SIP_SERVER || sipAccount.domain || 'ito258258.site';
+    const callId = 'sip-' + Date.now() + '-' + Math.floor(Math.random() * 10000);
+    
+    logger.info(`🔥 [SIP-DEBUG] 発信準備完了:`);
+    logger.info(`🔥 [SIP-DEBUG] - formattedNumber: ${formattedNumber}`);
+    logger.info(`🔥 [SIP-DEBUG] - sipServer: ${sipServer}`);
+    logger.info(`🔥 [SIP-DEBUG] - callId: ${callId}`);
+    logger.info(`🔥 [SIP-DEBUG] - hasAudio: ${!!(params.campaignAudio && params.campaignAudio.length > 0)}`);
+    
+    // SIPアカウントを使用中にマーク
+    sipAccount.status = 'busy';
+    sipAccount.lastUsed = new Date();
+    
+    // 通話IDとSIPアカウントを関連付け
+    this.callToAccountMap.set(callId, sipAccount);
+    
+    // 🔥 【最重要】executeSipCommand 呼び出し
+    logger.info(`🔥 [SIP-DEBUG] ===== executeSipCommand 呼び出し開始 =====`);
+    const success = await this.executeSipCommand(sipAccount, formattedNumber, callId, params);
+    logger.info(`🔥 [SIP-DEBUG] ===== executeSipCommand 呼び出し完了: ${success} =====`);
+    
+    if (!success) {
+      const errorMsg = 'SIP発信コマンドの実行に失敗しました';
+      logger.error(`🔥 [SIP-ERROR] ${errorMsg}`);
+      throw new Error(errorMsg);
+    }
+    
+    // 発信成功イベントをエミット
+    this.emit('callStarted', {
+      callId,
+      number: params.phoneNumber,
+      callerID: params.callerID || sipAccount.callerID,
+      variables: params.variables || {},
+      mainCallerId: sipAccount.mainCallerId
+    });
+    
+    const result = {
+      ActionID: callId,
+      Response: 'Success',
+      Message: 'SIP call successfully initiated with audio',
+      SipAccount: sipAccount.username,
+      mainCallerId: sipAccount.mainCallerId,
+      provider: 'sip',
+      hasAudio: !!(params.campaignAudio && params.campaignAudio.length > 0)
+    };
+    
+    logger.info(`🔥 [SIP-DEBUG] sipService.originate 正常完了`);
+    logger.info(`🔥 [SIP-DEBUG] 返却結果: ${JSON.stringify(result, null, 2)}`);
+    
+    return result;
+    
+  } catch (error) {
+    logger.error(`🔥 [SIP-ERROR] SIP発信エラー:`, error);
+    logger.error(`🔥 [SIP-ERROR] エラー詳細:`, {
+      message: error.message,
+      stack: error.stack,
+      sipAccountsCount: this.sipAccounts?.length || 0,
+      connected: this.connected
+    });
+    
+    // エラー時はリソースを解放
+    if (typeof callId !== 'undefined' && this.callToAccountMap.has(callId)) {
+      await this.releaseCallResource(callId);
+    }
+    
+    throw error;
+  }
+}
+
+// 修正対象: sipService.js の executeSipCommand メソッド（約590行目〜）
+// 🔥 完全修正版executeSipCommand - DTMF機能保持・音声発信修正版
 async executeSipCommand(sipAccount, formattedNumber, callId, params = {}) {
+  // 🔥 強制確認ログ
+  console.log('🔥🔥🔥 FORCE-LOG: executeSipCommand開始!');
+  console.log('🔥🔥🔥 TIMESTAMP:', new Date().toISOString());
+  console.log('🔥🔥🔥 callId:', callId);
+  console.log('🔥🔥🔥 phoneNumber:', formattedNumber);
+  
+  logger.info(`🚀 音声付きSIP発信: ${sipAccount.username} → ${formattedNumber}`);
+  
   try {
     const sipServer = sipAccount.domain || 'ito258258.site';
     
-    // 音声ファイルパス決定
+    // 🎵 音声ファイルパス決定（シンプル版）
     let audioPath = '/var/www/autodialer/backend/audio-files/welcome-test.wav';
     
+    // キャンペーン音声があれば優先使用
     if (params.campaignAudio && params.campaignAudio.length > 0) {
       const welcomeAudio = params.campaignAudio.find(audio => audio.audio_type === 'welcome');
       if (welcomeAudio && welcomeAudio.path && fs.existsSync(welcomeAudio.path)) {
         audioPath = welcomeAudio.path;
+        logger.info(`🎵 キャンペーン音声使用: ${audioPath}`);
       }
     }
-
-    // 音声ファイル存在チェック
+    
+    // 音声ファイル存在確認
     if (!fs.existsSync(audioPath)) {
-      const fallbackAudio = '/var/www/autodialer/backend/audio-files/default-welcome.wav';
-      audioPath = fs.existsSync(fallbackAudio) ? fallbackAudio : null;
+      logger.warn(`⚠️ 音声ファイル不存在: ${audioPath}`);
+      audioPath = '/var/www/autodialer/backend/audio-files/welcome-test.wav';
     }
-
-    // pjsuaコマンド構築
+    
+    console.log('🔥🔥🔥 音声ファイル:', audioPath);
+    
+    // 🎯 手動成功コマンドを正確に再現（重複オプション除去）
     const pjsuaArgs = [
       '--null-audio',
       `--play-file=${audioPath}`,
       '--auto-play',
       '--auto-loop',
-      '--duration=35',
-      '--max-calls=1',
+      '--duration=15',
       '--auto-answer=200',
       '--no-tcp',
-      '--log-level=3',
+      '--auto-conf',
+      '--no-cli',
       `--id=sip:${sipAccount.username}@${sipServer}`,
       `--registrar=sip:${sipServer}`,
       `--realm=asterisk`,
@@ -604,90 +629,138 @@ async executeSipCommand(sipAccount, formattedNumber, callId, params = {}) {
       `--password=${sipAccount.password}`,
       `sip:${formattedNumber}@${sipServer}`
     ];
-
-    logger.info(`🚀 DTMF対応SIP発信: ${sipAccount.username} -> ${formattedNumber}`);
-
+    
+    const commandString = `pjsua ${pjsuaArgs.join(' ')}`;
+    console.log('🔥🔥🔥 実行コマンド:', commandString);
+    logger.info(`🚀 pjsua実行: ${commandString}`);
+    
     return new Promise((resolve, reject) => {
+      console.log('🔥🔥🔥 Promise開始');
+      
+      // pjsuaプロセス起動
       const pjsuaProcess = spawn('pjsua', pjsuaArgs, {
         stdio: ['ignore', 'pipe', 'pipe'],
-        detached: true,
         env: { ...process.env, LANG: 'C', LC_ALL: 'C' },
         cwd: '/var/www/autodialer/backend'
       });
-
+      
+      console.log('🔥🔥🔥 spawn実行完了, PID:', pjsuaProcess.pid);
+      
       let hasResponded = false;
       let callConnected = false;
-
+      
       const respondOnce = (success, error = null) => {
         if (hasResponded) return;
         hasResponded = true;
+        console.log('🔥🔥🔥 レスポンス:', success ? '成功' : '失敗', error?.message || '');
         success ? resolve(true) : reject(error || new Error('SIP発信失敗'));
       };
-
-      // 🔢 DTMF検知処理
+      
+      // stdout監視（接続確認 + DTMF検知）
       if (pjsuaProcess.stdout) {
         pjsuaProcess.stdout.on('data', (data) => {
           const output = data.toString();
+          console.log('🔥🔥🔥 pjsua出力:', output.substring(0, 200));
           
+          // 接続成功の検知
+          if (output.includes('CALLING') || output.includes('registration success') || 
+              output.includes('status=200') || output.includes('CONFIRMED')) {
+            if (!callConnected) {
+              callConnected = true;
+              console.log('🔥🔥🔥 通話接続検知!');
+            }
+          }
+          
+          // 🔢 DTMF検知処理（重要機能 - 転送・DNC用）
           const dtmfMatch = output.match(/Received DTMF digit\s*([0-9*#])/i) || 
                            output.match(/DTMF digit.*?([0-9*#])/i);
           
           if (dtmfMatch) {
             const dtmfDigit = dtmfMatch[1];
             logger.info(`🔢 DTMF検知: ${dtmfDigit} (CallID: ${callId})`);
+            console.log('🔥🔥🔥 DTMF検知:', dtmfDigit);
             
+            // キー1: 転送処理
             if (dtmfDigit === '1') {
               this.handleTransferRequest(callId, formattedNumber, dtmfDigit);
-            } else if (dtmfDigit === '9') {
+            } 
+            // キー9: DNC処理
+            else if (dtmfDigit === '9') {
               this.handleDncRequest(callId, formattedNumber, dtmfDigit);
             }
           }
         });
       }
-
-      // 通話終了スケジュール
-      const scheduleCallEnd = () => {
-        setTimeout(() => {
-          this.emit('callEnded', {
-            callId,
-            status: callConnected ? 'ANSWERED' : 'FAILED',
-            duration: callConnected ? 35 : 0
-          });
-
-          try {
-            if (pjsuaProcess.pid) {
-              process.kill(-pjsuaProcess.pid, 'SIGTERM');
-            }
-          } catch (killError) {
-            logger.error('プロセス終了エラー:', killError);
-          }
-        }, 30000);
-      };
-
+      
+      // stderr監視（エラー確認）
+      if (pjsuaProcess.stderr) {
+        pjsuaProcess.stderr.on('data', (data) => {
+          const errorOutput = data.toString();
+          console.log('🔥🔥🔥 pjsuaエラー:', errorOutput);
+        });
+      }
+      
+      // プロセス管理
       if (pjsuaProcess.pid) {
-        logger.info(`✅ DTMF対応SIPプロセス開始: PID=${pjsuaProcess.pid}`);
-        
+        // 10秒後に成功と判定
         setTimeout(() => {
+          console.log('🔥🔥🔥 10秒タイマー発火');
           if (!hasResponded) {
             callConnected = true;
-            scheduleCallEnd();
             respondOnce(true);
           }
         }, 10000);
+        
+        // 30秒後にプロセス終了
+        setTimeout(() => {
+          console.log('🔥🔥🔥 30秒で通話終了');
+          
+          // 通話終了イベント発火
+          this.emit('callEnded', {
+            callId,
+            status: callConnected ? 'ANSWERED' : 'FAILED',
+            duration: callConnected ? 30 : 0
+          });
+          
+          // プロセス終了
+          try {
+            if (pjsuaProcess.pid && !pjsuaProcess.killed) {
+              pjsuaProcess.kill('SIGTERM');
+              console.log('🔥🔥🔥 プロセス終了送信');
+            }
+          } catch (killError) {
+            console.log('🔥🔥🔥 プロセス終了エラー:', killError.message);
+          }
+        }, 30000);
+        
       } else {
+        console.log('🔥🔥🔥 PID取得失敗');
         respondOnce(false, new Error('pjsuaプロセス開始失敗'));
       }
-
+      
+      // プロセス終了イベント
       pjsuaProcess.on('exit', (code, signal) => {
+        console.log('🔥🔥🔥 プロセス終了:', code, signal);
         if (!callConnected) {
           this.emit('callEnded', { callId, status: 'FAILED', duration: 0 });
         }
         if (!hasResponded) {
-          respondOnce(code === 0 || callConnected, new Error(`終了コード: ${code}`));
+          const success = code === 0 || callConnected;
+          respondOnce(success, new Error(`終了コード: ${code}`));
         }
       });
-
+      
+      // プロセスエラーイベント
+      pjsuaProcess.on('error', (error) => {
+        console.log('🔥🔥🔥 プロセスエラー:', error.message);
+        if (!hasResponded) {
+          respondOnce(false, error);
+        }
+      });
+      
+      // 最大実行時間保護（60秒）
       setTimeout(() => {
+        console.log('🔥🔥🔥 60秒タイムアウト');
         if (!hasResponded) {
           try {
             if (pjsuaProcess.pid) process.kill(-pjsuaProcess.pid, 'SIGTERM');
@@ -695,10 +768,13 @@ async executeSipCommand(sipAccount, formattedNumber, callId, params = {}) {
           respondOnce(false, new Error('タイムアウト'));
         }
       }, 60000);
+      
+      console.log('🔥🔥🔥 Promise設定完了');
     });
-
+    
   } catch (error) {
-    logger.error(`SIPコマンド実行エラー: ${error.message}`);
+    console.log('🔥🔥🔥 catch エラー:', error.message);
+    logger.error(`SIP発信エラー: ${error.message}`);
     throw error;
   }
 }
