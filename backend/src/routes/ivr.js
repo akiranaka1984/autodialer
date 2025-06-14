@@ -23,6 +23,102 @@ const upload = multer({
   }
 });
 
+// 🔥 新規追加: デバッグ機能付きSIPアカウント選択関数
+async function getSipAccountWithDebug(callerIdId) {
+  logger.info(`🔥 [SIP-DEBUG] ===== SIPアカウント選択開始 =====`);
+  logger.info(`🔥 [SIP-DEBUG] - caller_id_id: ${callerIdId}`);
+  logger.info(`🔥 [SIP-DEBUG] - Timestamp: ${new Date().toISOString()}`);
+
+  try {
+    // 1. データベースから全てのSIPアカウントを取得
+    const [allAccounts] = await db.query(`
+      SELECT 
+        cc.id,
+        cc.username, 
+        cc.password, 
+        cc.status, 
+        cc.updated_at,
+        ci.number as caller_number,
+        ci.description
+      FROM caller_channels cc
+      JOIN caller_ids ci ON cc.caller_id_id = ci.id
+      WHERE cc.caller_id_id = ?
+      ORDER BY cc.updated_at DESC
+    `, [callerIdId]);
+
+    logger.info(`🔥 [SIP-DEBUG] - 取得されたSIPアカウント数: ${allAccounts.length}`);
+    
+    // 全アカウントの詳細をログ出力
+    allAccounts.forEach((account, index) => {
+      logger.info(`🔥 [SIP-DEBUG] - Account${index + 1}: ${account.username} (Status: ${account.status}, Updated: ${account.updated_at})`);
+    });
+
+    // 2. 利用可能なアカウントをフィルタリング
+    const availableAccounts = allAccounts.filter(account => 
+      account.status === 'available'
+    );
+
+    logger.info(`🔥 [SIP-DEBUG] - 利用可能アカウント数: ${availableAccounts.length}`);
+    
+    if (availableAccounts.length === 0) {
+      logger.error(`🔥 [SIP-ERROR] - 利用可能なSIPアカウントが見つかりません`);
+      logger.info(`🔥 [SIP-DEBUG] - 全アカウント状況:`);
+      allAccounts.forEach(acc => {
+        logger.info(`🔥 [SIP-DEBUG]   - ${acc.username}: ${acc.status}`);
+      });
+      
+      // 🚨 緊急対応: 成功確認済みアカウントを強制使用
+      logger.warn(`🔥 [SIP-FALLBACK] - 緊急フォールバック: 成功確認済みアカウントを使用`);
+      return {
+        username: '03750003',
+        password: '42301179',
+        callerID: '03-3528-9359',
+        description: 'Emergency Fallback SIP',
+        domain: 'ito258258.site',
+        provider: 'Emergency SIP'
+      };
+    }
+
+    // 3. 最新のアカウントを選択（updated_atの降順で最初）
+    const selectedAccount = availableAccounts[0];
+    
+    logger.info(`🔥 [SIP-DEBUG] - 選択されたアカウント: ${selectedAccount.username}`);
+    logger.info(`🔥 [SIP-DEBUG] - 選択理由: 最新の利用可能アカウント (${selectedAccount.updated_at})`);
+
+    // 4. 返却用のオブジェクト構築
+    const sipAccount = {
+      username: selectedAccount.username,
+      password: selectedAccount.password,
+      callerID: selectedAccount.caller_number,
+      description: selectedAccount.description || 'SIP Account',
+      domain: 'ito258258.site',
+      provider: 'Database SIP'
+    };
+
+    logger.info(`🔥 [SIP-DEBUG] - 構築されたSIPアカウント情報:`);
+    logger.info(`🔥 [SIP-DEBUG]   - Username: ${sipAccount.username}`);
+    logger.info(`🔥 [SIP-DEBUG]   - CallerID: ${sipAccount.callerID}`);
+    logger.info(`🔥 [SIP-DEBUG]   - Domain: ${sipAccount.domain}`);
+    logger.info(`🔥 [SIP-DEBUG] ===== SIPアカウント選択完了 =====`);
+
+    return sipAccount;
+
+  } catch (error) {
+    logger.error(`🔥 [SIP-ERROR] - SIPアカウント選択エラー:`, error);
+    
+    // エラー時も緊急フォールバック
+    logger.warn(`🔥 [SIP-FALLBACK] - エラー時緊急フォールバック実行`);
+    return {
+      username: '03750003',
+      password: '42301179',
+      callerID: '03-3528-9359',
+      description: 'Error Fallback SIP',
+      domain: 'ito258258.site',
+      provider: 'Error Fallback'
+    };
+  }
+}
+
 // キャンペーンの音声設定を取得
 router.get('/campaigns/:id', async (req, res) => {
   try {
@@ -360,90 +456,135 @@ router.post('/test-call', async (req, res) => {
       };
     }
     
-    // 🚀 発信パラメータ構築（callController.testCallと同じ形式）
-    const params = {
-      phoneNumber: cleanPhoneNumber,
-      callerID: callerIdData 
-        ? `"${callerIdData.description || 'IVR Test'}" <${callerIdData.number}>` 
-        : process.env.DEFAULT_CALLER_ID || '"IVR System" <03-5946-8520>',
-      context: 'autodialer',
-      exten: 's',
-      priority: 1,
-      variables: {
-        CAMPAIGN_ID: campaignId,
-        CONTACT_ID: 'IVR_TEST',
-        CONTACT_NAME: 'IVRテストユーザー',
-        COMPANY: 'IVRテスト発信',
-        IVR_MODE: 'true',
-        TEST_CALL: 'true'
-      },
-      callerIdData,
-      mockMode: false, // IVRテストは常に実発信
-      provider: 'sip', // SIP強制
-      campaignAudio,
-      ivrConfig
-    };
+    // 🔥 修正箇所: カスタムSIPアカウント選択を使用
+    logger.info(`🔥 [IVR-DEBUG] カスタムSIPアカウント選択を実行`);
+    const sipAccount = await getSipAccountWithDebug(callerIdData.id);
+    logger.info(`🔥 [IVR-DEBUG] SIPアカウント選択結果: ${sipAccount ? sipAccount.username : 'なし'}`);
     
-    logger.info('🚀 発信パラメータ構築完了:', {
-      phoneNumber: params.phoneNumber,
-      callerID: params.callerID,
-      provider: params.provider,
-      audioCount: campaignAudio.length,
-      hasIvrConfig: !!ivrConfig,
-      mockMode: params.mockMode
-    });
-    
-    // ✅ 修正: 切断防止版sipcmdを使用
-    logger.info('📞 切断防止版sipcmd使用でcallService.originate() 実行中...');
-    
-    // 🚀 カスタム発信処理（切断防止版）
-    const sipService = require('../services/sipService');
-    
-    // 利用可能なSIPアカウントを取得
-    const sipAccount = await sipService.getAvailableSipAccount();
-    if (!sipAccount) {
+    // 🔥 追加の詳細ログ
+    if (sipAccount) {
+      logger.info(`🔥 [IVR-DEBUG] 発信準備完了:`);
+      logger.info(`🔥 [IVR-DEBUG] - SIP Username: ${sipAccount.username}`);
+      logger.info(`🔥 [IVR-DEBUG] - Caller ID: ${sipAccount.callerID}`);
+      logger.info(`🔥 [IVR-DEBUG] - Target Phone: ${cleanPhoneNumber}`);
+      logger.info(`🔥 [IVR-DEBUG] - Audio Files: ${campaignAudio.length}件`);
+    } else {
+      logger.error(`🔥 [IVR-ERROR] SIPアカウントの取得に完全に失敗しました`);
       throw new Error('利用可能なSIPアカウントが見つかりません');
     }
     
-    // 切断防止版sipcmdで発信
+    // 発信パラメータ構築
     const callId = 'ivr-' + Date.now() + '-' + Math.floor(Math.random() * 10000);
     const { spawn } = require('child_process');
+    const fs = require('fs');
     
-    // 音声ファイルパスを決定
-    let audioPath = '';
+    // 音声ファイルパス決定（文字化け完全対策版）
+    const path = require('path');
+    let audioPath = '/var/www/autodialer/backend/audio-files/welcome-test.wav';
+
     if (campaignAudio && campaignAudio.length > 0) {
       const welcomeAudio = campaignAudio.find(audio => audio.audio_type === 'welcome');
-      if (welcomeAudio) {
-        audioPath = welcomeAudio.path || `/var/www/autodialer/backend/audio-files/${welcomeAudio.filename}`;
+      if (welcomeAudio && welcomeAudio.path) {
+        try {
+          // パスを正規化し、日本語を安全な形に変換
+          const originalPath = welcomeAudio.path;
+          const pathDir = path.dirname(originalPath);
+          const filename = path.basename(originalPath);
+          
+          // ファイル名の日本語を英数字に変換
+          const safeFilename = filename
+            .replace(/[^\x00-\x7F]/g, '_')  // ASCII以外を_に変換
+            .replace(/_{2,}/g, '_')         // 連続する_を1つに
+            .replace(/^_+|_+$/g, '');      // 先頭末尾の_を削除
+          
+          const safePath = path.join(pathDir, safeFilename);
+          
+          // 元ファイルを安全な名前にコピー
+          if (fs.existsSync(originalPath) && !fs.existsSync(safePath)) {
+            fs.copyFileSync(originalPath, safePath);
+            logger.info(`🎵 ファイル名正規化: ${filename} → ${safeFilename}`);
+          }
+          
+          if (fs.existsSync(safePath)) {
+            audioPath = safePath;
+            logger.info(`🎵 正規化音声ファイル使用: ${audioPath}`);
+          } else {
+            logger.warn(`⚠️ 正規化ファイル作成失敗: ${safePath}`);
+          }
+          
+        } catch (error) {
+          logger.error('音声ファイル正規化エラー:', error);
+        }
       }
     }
     
-    // 切断防止版sipcmdコマンドを実行
-    const sipcmdArgs = [
-      sipAccount.username,
-      sipAccount.password,
-      sipAccount.domain || 'ito258258.site',
-      cleanPhoneNumber,
-      audioPath
+    // 必要な変数をすべて定義
+    const sipServer = sipAccount.domain || 'ito258258.site';
+    
+    logger.info(`🎵 最終音声ファイルパス: ${audioPath}`);
+    
+    // 🎯 手動成功コマンドを正確に再現
+    const pjsuaArgs = [
+      '--null-audio',
+      `--play-file=${audioPath}`,
+      '--auto-play',
+      '--auto-loop',
+      '--duration=15',
+      '--auto-answer=200',
+      '--no-tcp',
+      '--auto-conf',
+      '--no-cli',
+      `--id=sip:${sipAccount.username}@${sipServer}`,
+      `--registrar=sip:${sipServer}`,
+      `--realm=asterisk`,
+      `--username=${sipAccount.username}`,
+      `--password=${sipAccount.password}`,
+      `sip:${cleanPhoneNumber}@${sipServer}`
     ];
     
-    logger.info('🚀 切断防止版sipcmd実行:', {
-      command: '/usr/local/bin/sipcmd-no-hangup',
-      args: sipcmdArgs.map((arg, i) => i === 1 ? '***' : arg) // パスワードを隠す
+    logger.info('🚀 pjsua実行:', {
+      command: 'pjsua',
+      audioFile: audioPath,
+      phoneNumber: cleanPhoneNumber,
+      sipUsername: sipAccount.username
     });
     
-    const sipcmdProcess = spawn('/usr/local/bin/sipcmd-no-hangup', sipcmdArgs);
+    const pjsuaProcess = spawn('pjsua', pjsuaArgs, {
+      stdio: ['pipe', 'pipe', 'pipe'],
+      env: { 
+        ...process.env, 
+        LANG: 'ja_JP.UTF-8',        // 日本語UTF-8
+        LC_ALL: 'ja_JP.UTF-8',      // 全ロケールをUTF-8
+        LC_CTYPE: 'ja_JP.UTF-8'     // 文字型もUTF-8
+      },
+      cwd: '/var/www/autodialer/backend'
+    });
+
+    if (pjsuaProcess.stdin) {
+      pjsuaProcess.stdin.write('\n');
+  
+      setTimeout(() => {
+      if (pjsuaProcess.stdin && !pjsuaProcess.killed) {
+       pjsuaProcess.stdin.write('h\n');
+       setTimeout(() => {
+        if (pjsuaProcess.stdin && !pjsuaProcess.killed) {
+          pjsuaProcess.stdin.write('q\n');
+          }
+        }, 1000);
+      }
+     }, 10000);
+    }
     
-    sipcmdProcess.stdout.on('data', (data) => {
-      logger.info(`sipcmd出力: ${data.toString()}`);
+    pjsuaProcess.stdout.on('data', (data) => {
+      logger.info(`pjsua出力: ${data.toString()}`);
     });
     
-    sipcmdProcess.stderr.on('data', (data) => {
-      logger.error(`sipcmdエラー: ${data.toString()}`);
+    pjsuaProcess.stderr.on('data', (data) => {
+      logger.error(`pjsuaエラー: ${data.toString()}`);
     });
     
-    sipcmdProcess.on('close', (code) => {
-      logger.info(`sipcmdプロセス終了: code=${code}`);
+    pjsuaProcess.on('close', (code) => {
+      logger.info(`pjsuaプロセス終了: code=${code}`);
     });
     
     // 通話ログに記録
@@ -466,12 +607,13 @@ router.post('/test-call', async (req, res) => {
     } catch (logError) {
       logger.error('通話ログ記録エラー（発信は継続）:', logError);
     }
-    
+
     // レスポンス構築
+    const sipClient = process.env.SIP_CLIENT || 'pjsua';  // ← オブジェクトの外で宣言
     const responseData = {
       success: true,
       callId: callId,
-      message: 'IVRテスト発信を開始しました（切断防止版）',
+      message: `IVRテスト発信を開始しました（${sipClient}版・デバッグ対応）`,  // ← そのまま使用
       data: {
         phoneNumber: cleanPhoneNumber,
         campaignId: parseInt(campaignId),
@@ -483,9 +625,19 @@ router.post('/test-call', async (req, res) => {
         hasIvrConfig: !!ivrConfig,
         ivrSettings: ivrConfig,
         timestamp: new Date().toISOString(),
-        usedSipcmdNoHangup: true
+        usedPjsua: sipClient === 'pjsua',
+        usedBaresip: sipClient === 'baresip',
+        sipClient: sipClient,
+        // 🔥 デバッグ情報追加
+        debugInfo: {
+          selectedSipAccount: sipAccount.username,
+          sipAccountProvider: sipAccount.provider,
+          callerIdId: callerIdData.id,
+          audioPath: audioPath
+        }
       }
-    };
+    };    
+
     
     logger.info('✅ IVRテスト発信処理完了:', responseData);
     res.json(responseData);
