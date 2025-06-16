@@ -666,7 +666,7 @@ async getAvailableSipAccount(campaignId = null) {
       
       return new Promise((resolve, reject) => {
         const baresipProcess = spawn('/usr/local/bin/sipcmd-baresip', baresipArgs, {
-          stdio: ['pipe', 'pipe', 'pipe'],
+          stdio: ['ignore', 'pipe', 'pipe'],
           env: { ...process.env, LANG: 'C', LC_ALL: 'C' },
           cwd: '/var/www/autodialer/backend'
         });
@@ -843,7 +843,7 @@ async getAvailableSipAccount(campaignId = null) {
       
       return new Promise((resolve, reject) => {
         const pjsuaProcess = spawn('pjsua', pjsuaArgs, {
-          stdio: ['pipe', 'pipe', 'pipe'],
+          stdio: ['ignore', 'pipe', 'pipe'],
           env: { ...process.env, LANG: 'C', LC_ALL: 'C' },
           cwd: '/var/www/autodialer/backend'
         });
