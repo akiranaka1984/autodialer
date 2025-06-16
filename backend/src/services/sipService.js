@@ -824,6 +824,7 @@ async executePjsuaCommand(sipAccount, formattedNumber, callId, params = {}) {
       '--no-tcp',
       '--auto-conf',
       '--log-level=4',  // ✅ DTMF検知に必要
+      '--use-cli',          // ✅ CLI有効化 ← 追加
       //'--no-cli',
       `--id=sip:${sipAccount.username}@${sipServer}`,
       `--registrar=sip:${sipServer}`,
@@ -868,20 +869,40 @@ async executePjsuaCommand(sipAccount, formattedNumber, callId, params = {}) {
               logger.info(`✅ 通話接続確認: ${formattedNumber}`);
             }
           }
-          
-          // ✅ 【修正完了】DTMF検知 - document 21の正確な1パターンのみ
-          const dtmfMatch = output.match(/Received DTMF digit\s*([0-9*#])/i);
-          if (dtmfMatch) {
-            const dtmfDigit = dtmfMatch[1];
-            logger.info(`🔢 DTMF検知: ${dtmfDigit} (CallID: ${callId})`);
-            
-            if (dtmfDigit === '1' || dtmfDigit === '2' || dtmfDigit === '3') {
-              const campaignId = params.variables?.CAMPAIGN_ID;
-              this.handleTransferRequest(callId, formattedNumber, dtmfDigit, campaignId);
-            } else if (dtmfDigit === '9') {
-              this.handleDncRequest(callId, formattedNumber, dtmfDigit);
-            }
-          }
+// ✅ 【強化版】DTMF検知 - 複数パターン対応 + SIPメッセージ除外
+const isSipMessage = output.includes('SIP/2.0') || output.includes('Via:') || output.includes('Contact:');
+
+if (!isSipMessage) {
+  const dtmfPatterns = [
+    /Received DTMF digit\s*([0-9*#])/i,    // pjsua標準
+    /DTMF.*?digit.*?([0-9*#])/i,           // DTMF digit形式
+    /Key.*?([0-9*#]).*?pressed/i,          // Key pressed形式  
+    /DTMF.*?([0-9*#])/i,                   // 基本DTMF形式
+    /digit.*?([0-9*#])/i,                  // digit形式
+    /key.*?([0-9*#])/i,                    // key形式
+    /tone.*?([0-9*#])/i,                   // tone形式
+    /signal.*?([0-9*#])/i                  // signal形式
+  ];
+  
+  for (const pattern of dtmfPatterns) {
+    const dtmfMatch = output.match(pattern);
+    if (dtmfMatch) {
+      const dtmfDigit = dtmfMatch[1];
+      logger.info(`🔢 DTMF検知強化版: ${dtmfDigit} (CallID: ${callId}, Pattern: ${pattern.source})`);
+      
+      if (dtmfDigit === '1' || dtmfDigit === '2' || dtmfDigit === '3') {
+        const campaignId = params.variables?.CAMPAIGN_ID;
+        logger.info(`🔄 転送キー検知: キー${dtmfDigit} → 転送処理開始`);
+        this.handleTransferRequest(callId, formattedNumber, dtmfDigit, campaignId);
+      } else if (dtmfDigit === '9') {
+        logger.info(`🚫 DNCキー検知: キー${dtmfDigit} → DNC処理開始`);
+        this.handleDncRequest(callId, formattedNumber, dtmfDigit);
+      }
+      break; // 1つ見つかったら終了
+    }
+  }
+}          
+
         });
       }
       
@@ -929,7 +950,7 @@ async executePjsuaCommand(sipAccount, formattedNumber, callId, params = {}) {
   }
 }
 
-// 🔧 修正版: 転送処理メソッド（データベース動的取得）
+// 🔧 修正版: 転送処理メソッド（URL修正版）
 async handleTransferRequest(callId, originalNumber, keypress, campaignId = null) {
   try {
     logger.info(`🔄 転送処理開始: CallID=${callId}, キー=${keypress}, Campaign=${campaignId}`);
@@ -981,16 +1002,16 @@ async handleTransferRequest(callId, originalNumber, keypress, campaignId = null)
     
     logger.info(`🎯 負荷分散転送先決定: キー${keypress} → SIP ${transferTarget} (${selectedAccount.current_calls}/${selectedAccount.max_concurrent_calls})`);
     
+    // ✅ 修正: 新しいAPIに対応したリクエストボディ
     const transferRequest = {
       callId: callId,
       originalNumber: originalNumber,
-      transferTarget: transferTarget,  // ✅ データベースから動的取得
-      keypress: keypress,
-      campaignId: campaignId
+      keypress: keypress
+      // transferTarget, campaignId は新APIでは不要（APIが内部処理）
     };
     
     logger.info(`🔧 転送API呼び出し準備:`);
-    logger.info(`🔧 - URL: http://localhost:5000/api/calls/transfer/dtmf`);
+    logger.info(`🔧 - URL: http://localhost:5000/api/transfer/campaigns/${campaignId}/dtmf`);
     logger.info(`🔧 - Method: POST`);
     logger.info(`🔧 - Headers: Content-Type: application/json`);
     logger.info(`🔧 - Body: ${JSON.stringify(transferRequest)}`);
@@ -998,7 +1019,8 @@ async handleTransferRequest(callId, originalNumber, keypress, campaignId = null)
     logger.info(`🔧 - fetch available: ${typeof fetch !== 'undefined'}`);
     logger.info(`🔧 fetch実行開始...`);
     
-    const response = await fetch('http://localhost:5000/api/calls/transfer/dtmf', {
+    // ✅ 修正: 正しいURL使用
+    const response = await fetch(`http://localhost:5000/api/transfer/campaigns/${campaignId}/dtmf`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(transferRequest),
@@ -1034,7 +1056,6 @@ async handleTransferRequest(callId, originalNumber, keypress, campaignId = null)
     return false;
   }
 }
-
   // DNC処理メソッド（既存機能保持）
   async handleDncRequest(callId, originalNumber, keypress) {
     try {
