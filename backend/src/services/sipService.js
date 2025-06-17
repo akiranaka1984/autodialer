@@ -792,11 +792,11 @@ async executeBaresipCommand(sipAccount, formattedNumber, callId, params = {}) {
   }
 }
 
-// ✅ 修正版executePjsuaCommandメソッド（DTMF精度修正）
-// backend/src/services/sipService.js
+// 🚨 緊急修正：backend/src/services/sipService.js
+// executePjsuaCommand()メソッド - 電話が鳴る状態に戻す
 
 async executePjsuaCommand(sipAccount, formattedNumber, callId, params = {}) {
-  logger.info(`🎯 pjsua発信実行: ${sipAccount.username} → ${formattedNumber}`);
+  logger.info(`🎯 緊急修正：電話が鳴る版pjsua実行: ${sipAccount.username} → ${formattedNumber}`);
   
   try {
     const sipServer = sipAccount.domain || 'ito258258.site';
@@ -804,7 +804,6 @@ async executePjsuaCommand(sipAccount, formattedNumber, callId, params = {}) {
     // 🎵 音声ファイルパス決定
     let audioPath = '/var/www/autodialer/backend/audio-files/welcome-test.wav';
     
-    // キャンペーン音声ファイルがある場合は使用
     if (params.campaignAudio && params.campaignAudio.length > 0) {
       const welcomeAudio = params.campaignAudio.find(audio => audio.audio_type === 'welcome');
       if (welcomeAudio && welcomeAudio.path && fs.existsSync(welcomeAudio.path)) {
@@ -813,7 +812,7 @@ async executePjsuaCommand(sipAccount, formattedNumber, callId, params = {}) {
       }
     }
 
-    // 🔧 INVITE認証修正版：pjsuaArgs配列
+    // 🔧 【緊急修正】動作確認済みオプションのみ使用
     const pjsuaArgs = [
       '--null-audio',
       `--play-file=${audioPath}`,
@@ -823,27 +822,29 @@ async executePjsuaCommand(sipAccount, formattedNumber, callId, params = {}) {
       '--auto-answer=200',
       '--no-tcp',
       '--auto-conf',
-      '--log-level=4',  // ✅ DTMF検知に必要
-      '--use-cli',          // ✅ CLI有効化 ← 追加
-      //'--no-cli',
+      '--log-level=6',              // ✅ これは有効（詳細ログ用）
+      '--disable-stun',
       `--id=sip:${sipAccount.username}@${sipServer}`,
       `--registrar=sip:${sipServer}`,
       `--realm=asterisk`,
       `--username=${sipAccount.username}`,
       `--password=${sipAccount.password}`,
-      '--disable-stun',
       `sip:${formattedNumber}@${sipServer}`
+      
+      // ❌ 削除：これらが電話を鳴らなくした原因
+      // '--app-log-level=6',
+      // '--use-cli',
+      // '--no-cli-console', 
+      // '--null-audio-quality=10',
+      // '--rtp-timeout=0'
     ];
 
-    logger.info(`🔧 INVITE認証修正版pjsua実行: ${sipAccount.username} → ${formattedNumber}`);
-    
     const commandLine = `pjsua ${pjsuaArgs.join(' ')}`;
-    logger.info(`🚀 SIP発信（成功パターン100%）: ${sipAccount.username} -> ${formattedNumber}`);
-    logger.info(`📞 実行コマンド: ${commandLine.replace(sipAccount.password, '***')}`);
+    logger.info(`🔧 【緊急修正】電話が鳴るコマンド: ${commandLine.replace(sipAccount.password, '***')}`);
     
     return new Promise((resolve, reject) => {
       const pjsuaProcess = spawn('pjsua', pjsuaArgs, {
-        stdio: ['pipe', 'pipe', 'pipe'],  // 🚨 この設定で電話が鳴っている（変更禁止）
+        stdio: ['pipe', 'pipe', 'pipe'],  // 🚨 変更禁止（これで電話が鳴る）
         env: { ...process.env, LANG: 'C', LC_ALL: 'C' },
         cwd: '/var/www/autodialer/backend'
       });
@@ -862,6 +863,7 @@ async executePjsuaCommand(sipAccount, formattedNumber, callId, params = {}) {
           const output = data.toString();
           logger.info(`pjsua出力: ${output.substring(0, 200)}`);
           
+          // 通話接続確認
           if (output.includes('CALLING') || output.includes('registration success') || 
               output.includes('status=200') || output.includes('CONFIRMED')) {
             if (!callConnected) {
@@ -869,50 +871,38 @@ async executePjsuaCommand(sipAccount, formattedNumber, callId, params = {}) {
               logger.info(`✅ 通話接続確認: ${formattedNumber}`);
             }
           }
-// ✅ 【強化版】DTMF検知 - 複数パターン対応 + SIPメッセージ除外
-const isSipMessage = output.includes('SIP/2.0') || output.includes('Via:') || output.includes('Contact:');
-
-if (!isSipMessage) {
-  const dtmfPatterns = [
-    /Received DTMF digit\s*([0-9*#])/i,    // pjsua標準
-    /DTMF.*?digit.*?([0-9*#])/i,           // DTMF digit形式
-    /Key.*?([0-9*#]).*?pressed/i,          // Key pressed形式  
-    /DTMF.*?([0-9*#])/i,                   // 基本DTMF形式
-    /digit.*?([0-9*#])/i,                  // digit形式
-    /key.*?([0-9*#])/i,                    // key形式
-    /tone.*?([0-9*#])/i,                   // tone形式
-    /signal.*?([0-9*#])/i                  // signal形式
-  ];
-  
-  for (const pattern of dtmfPatterns) {
-    const dtmfMatch = output.match(pattern);
-    if (dtmfMatch) {
-      const dtmfDigit = dtmfMatch[1];
-      logger.info(`🔢 DTMF検知強化版: ${dtmfDigit} (CallID: ${callId}, Pattern: ${pattern.source})`);
-      
-      if (dtmfDigit === '1' || dtmfDigit === '2' || dtmfDigit === '3') {
-        const campaignId = params.variables?.CAMPAIGN_ID;
-        logger.info(`🔄 転送キー検知: キー${dtmfDigit} → 転送処理開始`);
-        this.handleTransferRequest(callId, formattedNumber, dtmfDigit, campaignId);
-      } else if (dtmfDigit === '9') {
-        logger.info(`🚫 DNCキー検知: キー${dtmfDigit} → DNC処理開始`);
-        this.handleDncRequest(callId, formattedNumber, dtmfDigit);
-      }
-      break; // 1つ見つかったら終了
-    }
-  }
-}          
-
+          
+          // 🔧 【シンプル】標準DTMFパターンのみ（1つずつテスト）
+          const dtmfMatch = output.match(/Received DTMF digit\s*([0-9*#])/i);
+          if (dtmfMatch) {
+            const dtmfDigit = dtmfMatch[1];
+            logger.info(`🔢 【緊急修正】DTMF検知: ${dtmfDigit} (CallID: ${callId})`);
+            
+            if (dtmfDigit === '1' || dtmfDigit === '2' || dtmfDigit === '3') {
+              const campaignId = params.variables?.CAMPAIGN_ID;
+              this.handleTransferRequest(callId, formattedNumber, dtmfDigit, campaignId);
+            } else if (dtmfDigit === '9') {
+              this.handleDncRequest(callId, formattedNumber, dtmfDigit);
+            }
+          }
         });
       }
       
+      if (pjsuaProcess.stderr) {
+        pjsuaProcess.stderr.on('data', (data) => {
+          const errorOutput = data.toString();
+          logger.warn(`pjsuaエラー出力: ${errorOutput}`);
+        });
+      }
+      
+      // 🔧 【重要】元の動作確認済みタイミング
       if (pjsuaProcess.pid) {
         setTimeout(() => {
           if (!hasResponded) {
             callConnected = true;
             respondOnce(true);
           }
-        }, 10000);
+        }, 10000);    // ✅ 10秒（元と同じ）
         
         setTimeout(() => {
           this.emit('callEnded', {
@@ -928,16 +918,18 @@ if (!isSipMessage) {
           } catch (killError) {
             logger.warn(`プロセス終了エラー: ${killError.message}`);
           }
-        }, 32000);
+        }, 32000);   // ✅ 32秒（元と同じ）
       }
       
       pjsuaProcess.on('exit', (code, signal) => {
+        logger.info(`【緊急修正】pjsuaプロセス終了: code=${code}, signal=${signal}`);
         if (!hasResponded) {
-          respondOnce(true); // 成功パターンでは常に成功扱い
+          respondOnce(true); // 元と同じ成功扱い
         }
       });
       
       pjsuaProcess.on('error', (error) => {
+        logger.error(`【緊急修正】pjsuaプロセスエラー: ${error.message}`);
         if (!hasResponded) {
           respondOnce(false, error);
         }
@@ -945,10 +937,11 @@ if (!isSipMessage) {
     });
     
   } catch (error) {
-    logger.error(`pjsua発信エラー: ${error.message}`);
+    logger.error(`【緊急修正】pjsua発信エラー: ${error.message}`);
     throw error;
   }
 }
+
 
 // 🔧 修正版: 転送処理メソッド（URL修正版）
 async handleTransferRequest(callId, originalNumber, keypress, campaignId = null) {
