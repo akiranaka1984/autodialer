@@ -815,6 +815,7 @@ async executePjsuaCommand(sipAccount, formattedNumber, callId, params = {}) {
     // 🔧 【緊急修正】動作確認済みオプションのみ使用
     const pjsuaArgs = [
       '--null-audio',
+      '--local-port=5061',
       `--play-file=${audioPath}`,
       '--auto-play',
       '--auto-loop',

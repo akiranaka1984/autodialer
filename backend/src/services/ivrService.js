@@ -78,7 +78,17 @@ class IvrService {
       scriptContent += `  same => n,Set(CAMPAIGN_ID=${campaignId})\n`;
       scriptContent += `  same => n,Set(KEYPRESS=1)\n`;
       scriptContent += `  same => n,Goto(operator-transfer,s,1)\n\n`;
+      // 2キー: オペレーター接続
+      scriptContent += `exten => 2,1,NoOp(Operator transfer requested)\n`;
+      scriptContent += `  same => n,Set(CAMPAIGN_ID=${campaignId})\n`;
+      scriptContent += `  same => n,Set(KEYPRESS=2)\n`;
+      scriptContent += `  same => n,Goto(operator-transfer,s,1)\n\n`;
       
+      // 3キー: オペレーター接続
+      scriptContent += `exten => 3,1,NoOp(Operator transfer requested)\n`;
+      scriptContent += `  same => n,Set(CAMPAIGN_ID=${campaignId})\n`;
+      scriptContent += `  same => n,Set(KEYPRESS=3)\n`;
+      scriptContent += `  same => n,Goto(operator-transfer,s,1)\n\n`;
       // 9キー: 通話終了（DNCリストに追加）
       scriptContent += `exten => 9,1,NoOp(DNC requested)\n`;
       scriptContent += `  same => n,Set(CAMPAIGN_ID=${campaignId})\n`;
