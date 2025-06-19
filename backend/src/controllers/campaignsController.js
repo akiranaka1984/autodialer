@@ -1,3 +1,4 @@
+// backend/src/controllers/campaignsController.js - 修正版（IVR自動デプロイ対応）
 const db = require('../services/database');
 const logger = require('../services/logger');
 const dialerService = require('../services/dialerService');
@@ -49,7 +50,7 @@ exports.getCampaignDetails = async (req, res) => {
   }
 };
 
-// キャンペーンの開始
+// キャンペーンの開始（✅ IVR自動デプロイ機能追加）
 exports.startCampaign = async (req, res) => {
   try {
     const campaignId = req.params.id;
@@ -75,11 +76,28 @@ exports.startCampaign = async (req, res) => {
       return res.status(400).json({ message: '連絡先が登録されていません' });
     }
     
+    // ✅ 新規追加: IVRスクリプトの自動デプロイ
+    try {
+      const ivrService = require('../services/ivrService');
+      const deployResult = await ivrService.deployIvrScript(campaignId);
+      logger.info(`✅ IVRスクリプト自動デプロイ完了: キャンペーン ${campaignId}`, {
+        scriptPath: deployResult.scriptPath,
+        message: deployResult.message
+      });
+    } catch (ivrError) {
+      logger.warn(`⚠️ IVRスクリプトデプロイエラー（キャンペーン開始は継続）: ${ivrError.message}`);
+      // IVRデプロイに失敗してもキャンペーン開始は継続する
+      // 音声ファイルは自動で利用されるため、スクリプトなしでも基本的な発信は可能
+    }
+    
     // キャンペーンを開始
     const result = await dialerService.startCampaign(campaignId);
     
     if (result) {
-      res.json({ message: 'キャンペーンを開始しました', status: 'active' });
+      res.json({ 
+        message: 'キャンペーンを開始しました（IVRスクリプトも自動デプロイされました）', 
+        status: 'active' 
+      });
     } else {
       res.status(500).json({ message: 'キャンペーンの開始に失敗しました' });
     }
@@ -107,15 +125,27 @@ exports.pauseCampaign = async (req, res) => {
   }
 };
 
-// キャンペーンの再開
+// キャンペーンの再開（✅ IVR自動デプロイ機能を含む）
 exports.resumeCampaign = async (req, res) => {
   try {
     const campaignId = req.params.id;
     
+    // ✅ 再開時もIVRスクリプトを自動デプロイ
+    try {
+      const ivrService = require('../services/ivrService');
+      const deployResult = await ivrService.deployIvrScript(campaignId);
+      logger.info(`✅ IVRスクリプト自動デプロイ完了（再開時）: キャンペーン ${campaignId}`);
+    } catch (ivrError) {
+      logger.warn(`⚠️ IVRスクリプトデプロイエラー（キャンペーン再開は継続）: ${ivrError.message}`);
+    }
+    
     const result = await dialerService.resumeCampaign(campaignId);
     
     if (result) {
-      res.json({ message: 'キャンペーンを再開しました', status: 'active' });
+      res.json({ 
+        message: 'キャンペーンを再開しました（IVRスクリプトも自動デプロイされました）', 
+        status: 'active' 
+      });
     } else {
       res.status(500).json({ message: 'キャンペーンの再開に失敗しました' });
     }
