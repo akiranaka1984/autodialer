@@ -648,7 +648,7 @@ class SipService extends EventEmitter {
  // ✅ 修正後の正しい構造
       const originateCommand = [
         'Action: Originate',
-	`Channel: PJSIP/${formattedNumber}@${sipAccount.username}`,
+	`Channel: SIP/${sipAccount.username}@${sipAccount.domain || 'pantex.online'}/${formattedNumber}`,
         `Context: autodialer-campaign-${campaignId}`,
         'Exten: s', // ✅ IVRの開始拡張子を's'に固定
         'Priority: 1',

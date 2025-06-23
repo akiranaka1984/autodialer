@@ -51,12 +51,15 @@ exports.getCampaignDetails = async (req, res) => {
 };
 
 // キャンペーンの開始（✅ IVR自動デプロイ機能追加）
+// キャンペーンの開始（✅ IVR自動デプロイ機能追加 + 配列分割代入修正）
 exports.startCampaign = async (req, res) => {
   try {
     const campaignId = req.params.id;
     
-    // キャンペーンの検証
-    const [campaign] = await db.query(`
+    console.log('🔍 campaignsController.startCampaign 開始:', { campaignId });
+    
+    // ✅ 修正: 正しい配列分割代入
+    const [rows] = await db.query(`
       SELECT c.*, ci.active as caller_id_active,
              (SELECT COUNT(*) FROM contacts WHERE campaign_id = c.id) as contact_count
       FROM campaigns c
@@ -64,28 +67,56 @@ exports.startCampaign = async (req, res) => {
       WHERE c.id = ?
     `, [campaignId]);
     
+    // ✅ 修正: 配列の最初の要素を取得
+    const campaign = rows[0];
+    
+    console.log('🔍 修正後のクエリ結果:', {
+      rows_length: rows?.length,
+      campaign_exists: campaign ? 'YES' : 'NO',
+      caller_id_id: campaign?.caller_id_id,
+      caller_id_active: campaign?.caller_id_active,
+      contact_count: campaign?.contact_count
+    });
+    
     if (!campaign) {
+      console.log('❌ キャンペーンが見つかりません');
       return res.status(404).json({ message: 'キャンペーンが見つかりません' });
     }
     
+    console.log('🔍 検証開始:', {
+      'campaign.caller_id_id': campaign.caller_id_id,
+      'campaign.caller_id_active': campaign.caller_id_active,
+      'typeof caller_id_id': typeof campaign.caller_id_id,
+      'typeof caller_id_active': typeof campaign.caller_id_active,
+      '!campaign.caller_id_id': !campaign.caller_id_id,
+      '!campaign.caller_id_active': !campaign.caller_id_active
+    });
+    
     if (!campaign.caller_id_id || !campaign.caller_id_active) {
+      console.log('❌ 発信者番号検証失敗:', {
+        caller_id_id: campaign.caller_id_id,
+        caller_id_active: campaign.caller_id_active
+      });
       return res.status(400).json({ message: '有効な発信者番号が設定されていません' });
     }
     
     if (campaign.contact_count === 0) {
+      console.log('❌ 連絡先なし');
       return res.status(400).json({ message: '連絡先が登録されていません' });
     }
+    
+    console.log('✅ 検証完了、IVRデプロイ開始');
     
     // ✅ 新規追加: IVRスクリプトの自動デプロイ
     try {
       const ivrService = require('../services/ivrService');
       const deployResult = await ivrService.deployIvrScript(campaignId);
-      logger.info(`✅ IVRスクリプト自動デプロイ完了: キャンペーン ${campaignId}`, {
+      console.log(`✅ IVRスクリプト自動デプロイ完了: キャンペーン ${campaignId}`, {
         scriptPath: deployResult.scriptPath,
         message: deployResult.message
       });
     } catch (ivrError) {
-      logger.warn(`⚠️ IVRスクリプトデプロイエラー（キャンペーン開始は継続）: ${ivrError.message}`);
+      console.log(`⚠️ IVRスクリプトデプロイエラー（キャンペーン開始は継続）: ${ivrError.message}`);
       // IVRデプロイに失敗してもキャンペーン開始は継続する
       // 音声ファイルは自動で利用されるため、スクリプトなしでも基本的な発信は可能
     }
@@ -102,12 +133,12 @@ exports.startCampaign = async (req, res) => {
       res.status(500).json({ message: 'キャンペーンの開始に失敗しました' });
     }
   } catch (error) {
+    console.log('❌ campaignsController.startCampaign エラー:', error);
     logger.error('キャンペーン開始エラー:', error);
     res.status(500).json({ message: 'エラーが発生しました' });
   }
 };
 
-// キャンペーンの一時停止
 exports.pauseCampaign = async (req, res) => {
   try {
     const campaignId = req.params.id;

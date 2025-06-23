@@ -1,5 +1,6 @@
 const express = require('express');
 const router = express.Router();
+const callController = require("../controllers/callController");
 const db = require('../services/database');
 const dialerService = require('../services/dialerService');
 const logger = require('../services/logger');
@@ -212,42 +213,7 @@ router.post('/dnc/add', async (req, res) => {
   }
 });
 
-// テスト発信API
-router.post('/test', async (req, res) => {
-  try {
-    const { phoneNumber, callerID, mockMode } = req.body;
-    
-    if (!phoneNumber) {
-      return res.status(400).json({ message: '発信先電話番号は必須です' });
-    }
-    
-    const callService = require('../services/callService');
-    const params = {
-      phoneNumber,
-      callerID: callerID || process.env.DEFAULT_CALLER_ID || '"Auto Dialer" <03-5946-8520>',
-      context: 'autodialer',
-      exten: 's',
-      priority: 1,
-      variables: {
-        CAMPAIGN_ID: 'TEST',
-        CONTACT_ID: 'TEST',
-        TEST_CALL: 'true'
-      },
-      mockMode
-    };
-    
-    const result = await callService.originate(params);
-    
-    res.json({
-      success: true,
-      callId: result.ActionID,
-      message: 'テスト発信が開始されました',
-      data: result
-    });
-  } catch (error) {
-    logger.error('テスト発信エラー:', error);
-    res.status(500).json({ message: 'テスト発信に失敗しました', error: error.message });
-  }
+router.post("/test", callController.testCall);
 });
 
 // 通話履歴の取得（管理画面用）

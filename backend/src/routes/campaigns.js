@@ -1,9 +1,12 @@
-// backend/src/routes/campaigns.js - 整理済み版（転送API競合解決）
-const dialerService = require('../services/dialerService');
+// backend/src/routes/campaigns.js - IVR自動デプロイ対応修正版
 const express = require('express');
 const router = express.Router();
 const db = require('../services/database');
 const logger = require('../services/logger');
+const dialerService = require('../services/dialerService');
+
+// ✅ 追加: campaignsControllerをインポート（IVR自動デプロイのため）
+const campaignsController = require('../controllers/campaignsController');
 
 // キャンペーン一覧取得
 router.get('/', async (req, res) => {
@@ -156,15 +159,24 @@ router.put('/:id', async (req, res) => {
     
     const [result] = await db.query(
       'UPDATE campaigns SET name = ?, description = ?, caller_id_id = ?, script = ?, status = ?, updated_at = NOW() WHERE id = ?',
-      [name, description || '', caller_id_id || null, script || '', status || 'draft', id]
+      [name, description, caller_id_id, script, status, id]
     );
+    
+    if (result.affectedRows === 0) {
+      return res.status(500).json({ message: 'キャンペーンの更新に失敗しました' });
+    }
     
     logger.info(`キャンペーン更新完了: ID=${id}`);
     
     res.json({
       success: true,
       message: 'キャンペーンを更新しました',
-      campaignId: parseInt(id)
+      campaign: {
+        id: parseInt(id),
+        name,
+        description,
+        status
+      }
     });
     
   } catch (error) {
@@ -178,57 +190,38 @@ router.delete('/:id', async (req, res) => {
   try {
     const { id } = req.params;
     
-    logger.info(`🗑️ キャンペーン削除開始: ID=${id}`);
+    logger.info(`🗑️ キャンペーン削除リクエスト: ID=${id}`);
     
-    // 1. キャンペーンの存在確認
-    const [campaigns] = await db.query('SELECT id, name, status FROM campaigns WHERE id = ?', [id]);
+    // 削除前のデータ量確認
+    const [campaigns] = await db.query('SELECT * FROM campaigns WHERE id = ?', [id]);
     
     if (campaigns.length === 0) {
-      logger.warn(`削除対象のキャンペーンが見つかりません: ID=${id}`);
-      return res.status(404).json({ 
-        success: false,
-        message: 'キャンペーンが見つかりません' 
-      });
+      return res.status(404).json({ message: 'キャンペーンが見つかりません' });
     }
     
     const campaign = campaigns[0];
     
-    // 2. アクティブなキャンペーンの削除確認
+    // アクティブなキャンペーンは削除不可
     if (campaign.status === 'active') {
-      logger.warn(`アクティブなキャンペーンの削除試行: ID=${id}`);
-      return res.status(400).json({ 
-        success: false,
-        message: 'アクティブなキャンペーンは削除できません。先に停止してください。' 
-      });
+      return res.status(400).json({ message: 'アクティブなキャンペーンは削除できません。まず停止してください。' });
     }
     
-    // 3. 関連データの確認
-    const [contactCount] = await db.query(
-      'SELECT COUNT(*) as total FROM contacts WHERE campaign_id = ?', 
-      [id]
-    );
-    
-    const [callLogCount] = await db.query(
-      'SELECT COUNT(*) as total FROM call_logs WHERE campaign_id = ?', 
-      [id]
-    );
-    
-    const contactTotal = contactCount[0].total;
-    const callLogTotal = callLogCount[0].total;
-    
-    logger.info(`削除対象データ: Campaign=${campaign.name}, Contacts=${contactTotal}, CallLogs=${callLogTotal}`);
-    
-    // 4. トランザクション開始して削除実行
+    // トランザクション開始
     await db.query('START TRANSACTION');
     
     try {
-      // 関連データを順番に削除
+      // 関連データ数の確認
+      const [contactCount] = await db.query('SELECT COUNT(*) as count FROM contacts WHERE campaign_id = ?', [id]);
+      const [callLogCount] = await db.query('SELECT COUNT(*) as count FROM call_logs WHERE campaign_id = ?', [id]);
       
-      // 4-1. キャンペーン音声の関連付けを削除
-      if (contactTotal > 0) {
-        await db.query('DELETE FROM campaign_audio WHERE campaign_id = ?', [id]);
-        logger.info(`キャンペーン音声関連付けを削除: ${id}`);
-      }
+      const contactTotal = contactCount[0].count;
+      const callLogTotal = callLogCount[0].count;
+      
+      logger.info(`削除対象データ: Contacts=${contactTotal}, CallLogs=${callLogTotal}`);
+      
+      // 4-1. キャンペーン音声設定を削除
+      await db.query('DELETE FROM campaign_audio WHERE campaign_id = ?', [id]);
+      logger.info(`キャンペーン音声設定を削除: ${id}`);
       
       // 4-2. IVR設定を削除
       await db.query('DELETE FROM campaign_ivr_config WHERE campaign_id = ?', [id]);
@@ -296,142 +289,14 @@ router.delete('/:id', async (req, res) => {
   }
 });
 
-// キャンペーン開始
-router.post('/:id/start', async (req, res) => {
-  try {
-    const campaignId = parseInt(req.params.id);
-    
-    logger.info(`🚀 キャンペーン開始リクエスト: ${campaignId}`);
-    
-    // キャンペーンの存在と状態確認
-    const [campaigns] = await db.query(
-      'SELECT * FROM campaigns WHERE id = ?',
-      [campaignId]
-    );
-    
-    if (campaigns.length === 0) {
-      return res.status(404).json({ message: 'キャンペーンが見つかりません' });
-    }
-    
-    const campaign = campaigns[0];
-    
-    if (campaign.status === 'active') {
-      return res.status(400).json({ message: 'キャンペーンは既にアクティブです' });
-    }
-    
-    // 発信対象の連絡先数をチェック
-    const [contactCount] = await db.query(
-      'SELECT COUNT(*) as count FROM contacts WHERE campaign_id = ? AND status = "pending"',
-      [campaignId]
-    );
-    
-    if (contactCount[0].count === 0) {
-      return res.status(400).json({ 
-        message: '発信対象の連絡先がありません。連絡先を追加してからキャンペーンを開始してください。' 
-      });
-    }
-    
-    // データベースでキャンペーンをアクティブに設定
-    await db.query(
-      'UPDATE campaigns SET status = "active", updated_at = NOW() WHERE id = ?',
-      [campaignId]
-    );
-    
-    // dialerServiceでキャンペーン開始
-    try {
-      const result = await dialerService.startCampaign(campaignId);
-      if (!result) {
-        // dialerService失敗時もDBは更新済みなので、手動でロールバック
-        await db.query(
-          'UPDATE campaigns SET status = "paused", updated_at = NOW() WHERE id = ?',
-          [campaignId]
-        );
-        return res.status(500).json({ message: 'キャンペーンの開始に失敗しました' });
-      }
-    } catch (dialerError) {
-      logger.warn('dialerService エラー（継続）:', dialerError.message);
-      // dialerServiceエラーでもキャンペーンは開始状態を維持
-    }
-    
-    logger.info(`✅ キャンペーン開始成功: ${campaignId}`);
-    
-    res.json({
-      success: true,
-      message: `キャンペーン「${campaign.name}」を開始しました`,
-      campaign: {
-        id: campaignId,
-        name: campaign.name,
-        totalContacts: contactCount[0].count
-      }
-    });
-    
-  } catch (error) {
-    logger.error(`キャンペーン開始エラー: ${req.params.id}`, error);
-    res.status(500).json({ 
-      message: 'キャンペーンの開始に失敗しました',
-      error: error.message 
-    });
-  }
-});
+// ✅ 修正: キャンペーン開始 - campaignsController.startCampaignを使用
+router.post('/:id/start', campaignsController.startCampaign);
 
-// キャンペーン停止
-router.post('/:id/stop', async (req, res) => {
-  try {
-    const campaignId = parseInt(req.params.id);
-    
-    logger.info(`🛑 キャンペーン停止リクエスト: ${campaignId}`);
-    
-    // キャンペーンの存在確認
-    const [campaigns] = await db.query(
-      'SELECT * FROM campaigns WHERE id = ?',
-      [campaignId]
-    );
-    
-    if (campaigns.length === 0) {
-      return res.status(404).json({ message: 'キャンペーンが見つかりません' });
-    }
-    
-    const campaign = campaigns[0];
-    
-    if (campaign.status !== 'active') {
-      return res.status(400).json({ message: 'キャンペーンはアクティブではありません' });
-    }
-    
-    // データベースでキャンペーンを停止
-    await db.query(
-      'UPDATE campaigns SET status = "paused", updated_at = NOW() WHERE id = ?',
-      [campaignId]
-    );
-    
-    // dialerServiceでキャンペーン停止
-    try {
-      const result = await dialerService.pauseCampaign(campaignId);
-      if (!result) {
-        logger.warn('dialerService停止失敗（DBは更新済み）');
-      }
-    } catch (dialerError) {
-      logger.warn('dialerService停止エラー（継続）:', dialerError.message);
-    }
-    
-    logger.info(`✅ キャンペーン停止成功: ${campaignId}`);
-    
-    res.json({
-      success: true,
-      message: `キャンペーン「${campaign.name}」を停止しました`,
-      campaign: {
-        id: campaignId,
-        name: campaign.name
-      }
-    });
-    
-  } catch (error) {
-    logger.error(`キャンペーン停止エラー: ${req.params.id}`, error);
-    res.status(500).json({ 
-      message: 'キャンペーンの停止に失敗しました',
-      error: error.message 
-    });
-  }
-});
+// ✅ 修正: キャンペーン停止 - campaignsController.pauseCampaignを使用  
+router.post('/:id/stop', campaignsController.pauseCampaign);
+
+// ✅ 修正: キャンペーン再開 - campaignsController.resumeCampaignを使用
+router.post('/:id/resume', campaignsController.resumeCampaign);
 
 // キャンペーン統計取得
 router.get('/:id/stats', async (req, res) => {
@@ -440,7 +305,7 @@ router.get('/:id/stats', async (req, res) => {
     
     logger.info(`キャンペーン統計取得: ID=${id}`);
     
-    // キャンペーンの存在確認
+    // キャンペーン存在確認
     const [campaigns] = await db.query('SELECT * FROM campaigns WHERE id = ?', [id]);
     
     if (campaigns.length === 0) {
