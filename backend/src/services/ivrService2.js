@@ -147,17 +147,12 @@ class IvrService {
       scriptContent += `  same => n,Set(TRANSFER_CAMPAIGN_ID=\${CAMPAIGN_ID})\n`;
       scriptContent += `  same => n,Set(CONTACT_PHONE=\${CALLERID(num)})\n`;
       scriptContent += `  same => n,System(/usr/local/bin/transfer_notify.sh "\${TRANSFER_CALL_ID}" "\${TRANSFER_CAMPAIGN_ID}" "\${KEYPRESS}" "\${CONTACT_PHONE}")\n`;
-      scriptContent += `  same => n,Wait(0.5)\n`; // APIレスポンスを待つ
-      scriptContent += `  same => n,Set(TRANSFER_DEST=\${SHELL(cat /tmp/transfer_\${TRANSFER_CALL_ID}.txt 2>/dev/null | tr -d '\\n')})\n`;
-      scriptContent += `  same => n,GotoIf($[\${LEN(\${TRANSFER_DEST})} = 0]?transfer-failed)\n`;
-      scriptContent += `  same => n,NoOp(Transfer to: \${TRANSFER_DEST})\n`;
       scriptContent += `  same => n,Playback(pls-wait-connect-call)\n`;
-      scriptContent += `  same => n,Transfer(PJSIP/\${TRANSFER_DEST}@${campaign.domain})\n`;
-      scriptContent += `  same => n(transfer-failed),NoOp(Transfer failed)\n`;
+      scriptContent += `  same => n,Transfer(SIP/${campaign.caller_id_number}@${campaign.domain})\n`;
+      scriptContent += `  same => n,NoOp(Transfer failed)\n`;
       scriptContent += `  same => n,Playback(beeperr)\n`;
       scriptContent += `  same => n,Hangup()\n`;
-      scriptContent += `  same => n,System(rm -f /tmp/transfer_\${TRANSFER_CALL_ID}.txt)\n`; // クリーンアップ
- 
+      
       // ファイルに保存
       const scriptPath = path.join(this.ivrDir, `campaign-${campaignId}.conf`);
       await fs.writeFile(scriptPath, scriptContent);

@@ -4,9 +4,6 @@ const path = require('path');
 const uuid = require('uuid');
 const db = require('./database');
 const logger = require('./logger');
-const { exec } = require('child_process');
-const util = require('util');
-const execPromise = util.promisify(exec);
 
 class AudioService {
   constructor() {
@@ -25,112 +22,35 @@ class AudioService {
     }
   }
 
-  // 音声ファイルを8kHzに変換
-  async convertTo8kHz(inputPath, outputPath) {
-    try {
-      logger.info(`音声ファイルを8kHzに変換開始: ${inputPath}`);
-      
-      // soxを使用して8kHz、モノラル、WAV形式に変換
-      const command = `sox "${inputPath}" -r 8000 -c 1 -t wav "${outputPath}"`;
-      
-      const { stdout, stderr } = await execPromise(command);
-      
-      if (stderr && !stderr.includes('sox WARN')) {
-        logger.warn(`sox変換の警告: ${stderr}`);
-      }
-      
-      logger.info(`音声ファイルを8kHzに変換完了: ${outputPath}`);
-      return true;
-    } catch (error) {
-      logger.error('音声ファイル変換エラー:', error);
-      
-      // soxがインストールされていない場合の対処
-      if (error.message.includes('sox: not found') || error.message.includes('sox: command not found')) {
-        logger.error('soxがインストールされていません。sudo apt-get install sox を実行してください。');
-        throw new Error('音声変換ツールがインストールされていません');
-      }
-      
-      throw error;
-    }
-  }
-
   // 音声ファイルをアップロード
   async uploadAudio(file, name, description) {
-    let tempPath = null;
-    let finalPath = null;
-    
     try {
       const fileId = uuid.v4();
-      const baseFilename = `${fileId}-${file.originalname.replace(/\s+/g, '_')}`;
+      const filename = `${fileId}-${file.originalname.replace(/\s+/g, '_')}`;
+      const filePath = path.join(this.audioDir, filename);
       
-      // 拡張子を.wavに統一（Asteriskとの互換性のため）
-      const filename = baseFilename.replace(/\.[^.]+$/, '.wav');
-      
-      tempPath = path.join(this.audioDir, `temp_${filename}`);
-      finalPath = path.join(this.audioDir, filename);
-      
-      // 一時ファイルとして保存
-      await fs.writeFile(tempPath, file.buffer);
-      
-      // 8kHzに変換
-      try {
-        await this.convertTo8kHz(tempPath, finalPath);
-        // 変換成功後、一時ファイルを削除
-        await fs.unlink(tempPath);
-      } catch (convertError) {
-        logger.warn('音声変換に失敗しました。元のファイルを使用します:', convertError);
-        // 変換に失敗した場合は元のファイルを使用
-        await fs.rename(tempPath, finalPath);
-      }
-      
-      // ファイルの実際のサイズを取得
-      const stats = await fs.stat(finalPath);
-      const fileSize = stats.size;
-      
-      // Asteriskユーザーに権限を付与
-      try {
-        await execPromise(`sudo chown asterisk:asterisk "${finalPath}"`);
-        await execPromise(`sudo chmod 644 "${finalPath}"`);
-      } catch (chownError) {
-        logger.warn('ファイル権限の設定に失敗しました:', chownError);
-      }
+      // ファイルを保存
+      await fs.writeFile(filePath, file.buffer);
       
       // データベースに登録
       const result = await db.query(
         'INSERT INTO audio_files (id, name, filename, path, mimetype, size, description, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, NOW())',
-        [fileId, name, filename, finalPath, 'audio/wav', fileSize, description]
+        [fileId, name, filename, filePath, file.mimetype, file.size, description]
       );
       
-      logger.info(`音声ファイルをアップロードしました: ${name}, ID=${fileId}, サイズ=${fileSize}bytes`);
+      logger.info(`音声ファイルをアップロードしました: ${name}, ID=${fileId}`);
       
       return {
         id: fileId,
         name,
         filename,
-        path: finalPath,
-        mimetype: 'audio/wav',
-        size: fileSize,
+        path: filePath,
+        mimetype: file.mimetype,
+        size: file.size,
         description
       };
     } catch (error) {
       logger.error('音声ファイルアップロードエラー:', error);
-      
-      // エラー時のクリーンアップ
-      if (tempPath) {
-        try {
-          await fs.unlink(tempPath);
-        } catch (unlinkError) {
-          // 無視
-        }
-      }
-      if (finalPath && finalPath !== tempPath) {
-        try {
-          await fs.unlink(finalPath);
-        } catch (unlinkError) {
-          // 無視
-        }
-      }
-      
       throw error;
     }
   }

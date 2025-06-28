@@ -26,95 +26,15 @@ router.post('/start', async (req, res) => {
 // キーパッド入力通知（Asteriskから呼び出し）
 router.post('/keypress', async (req, res) => {
   try {
-    const { callId, campaignId, keypress, customerPhone } = req.body;
+    const { callId, keypress } = req.body;
     
-    if (!callId || !campaignId || !keypress) {
-      return res.status(400).json({ message: '必須パラメータが不足しています' });
+    if (!callId) {
+      return res.status(400).json({ message: '通話IDが必要です' });
     }
     
-    logger.info(`📞 Phase2 転送キー入力: CallID=${callId}, Campaign=${campaignId}, Key=${keypress}`);
+    logger.info(`キーパッド入力: CallID=${callId}, Keypress=${keypress}`);
     
-    // キーが1,2,3の場合は転送処理
-    if (['1', '2', '3'].includes(keypress)) {
-      // キャンペーン情報を取得
-      const [campaigns] = await db.query(`
-        SELECT id, caller_id_id, name
-        FROM campaigns 
-        WHERE id = ?
-      `, [campaignId]);
-      
-      if (campaigns.length === 0) {
-        return res.status(404).json({ success: false, message: 'キャンペーンが見つかりません' });
-      }
-      
-      const campaign = campaigns[0];
-      const callerIdId = campaign.caller_id_id;
-      
-      // 転送先SIPアカウントを取得（負荷分散）
-      const [sipAccounts] = await db.query(`
-        SELECT id, sip_username, priority, current_calls, max_concurrent_calls, active
-        FROM transfer_sip_assignments
-        WHERE caller_id_id = ? AND dtmf_key = ? AND active = 1
-        ORDER BY priority DESC, current_calls ASC, id ASC
-      `, [callerIdId, keypress]);
-      
-      if (sipAccounts.length === 0) {
-        logger.warn(`転送SIPアカウントなし: CallerID=${callerIdId}, Key=${keypress}`);
-        return res.status(404).json({
-          success: false,
-          message: `転送先が設定されていません`
-        });
-      }
-      
-      // 最適なSIPアカウントを選択
-      const availableAccounts = sipAccounts.filter(acc => 
-        acc.current_calls < acc.max_concurrent_calls && acc.active === 1
-      );
-      
-      if (availableAccounts.length === 0) {
-        return res.status(503).json({
-          success: false,
-          message: '現在利用可能な転送先がありません'
-        });
-      }
-      
-      // 負荷分散選択
-      availableAccounts.sort((a, b) => {
-        if (a.current_calls !== b.current_calls) return a.current_calls - b.current_calls;
-        if (a.priority !== b.priority) return b.priority - a.priority;
-        return a.id - b.id;
-      });
-      
-      const selectedSip = availableAccounts[0];
-      
-      // 通話数を増加
-      await db.query(`
-        UPDATE transfer_sip_assignments 
-        SET current_calls = current_calls + 1 
-        WHERE sip_username = ?
-      `, [selectedSip.sip_username]);
-      
-      // 転送ログ記録
-      await db.query(`
-        INSERT INTO transfer_logs 
-        (original_call_id, campaign_id, original_number, transfer_number, keypress, transfer_initiated_at, status)
-        VALUES (?, ?, ?, ?, ?, NOW(), 'initiated')
-      `, [callId, campaignId, customerPhone || '', selectedSip.sip_username, keypress]);
-      
-      logger.info(`✅ 転送先決定: ${selectedSip.sip_username} (${selectedSip.current_calls + 1}/${selectedSip.max_concurrent_calls})`);
-      
-      // 成功レスポンス（transfer_notify.shが期待する形式）
-      return res.json({
-        success: true,
-        transfer: {
-          selectedSip: selectedSip.sip_username,
-          campaignId: parseInt(campaignId),
-          keypress: keypress
-        }
-      });
-    }
-    
-    // キー9またはその他の場合は通常の記録のみ
+    // 通話ログの更新
     await db.query(
       'UPDATE call_logs SET keypress = ? WHERE call_id = ?',
       [keypress, callId]
@@ -122,7 +42,7 @@ router.post('/keypress', async (req, res) => {
     
     res.json({ success: true });
   } catch (error) {
-    logger.error('転送処理エラー:', error);
+    logger.error('キーパッド入力通知エラー:', error);
     res.status(500).json({ message: error.message });
   }
 });

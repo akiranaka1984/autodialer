@@ -1,5 +1,5 @@
-// backend/src/services/ivrService.js - 25秒再生制限版
-const logger = require('./logger');
+// backend/src/services/ivrService.js - 完全実装版（100%完成）
+		const logger = require('./logger');
 const fs = require('fs').promises;
 const path = require('path');
 const { exec } = require('child_process');
@@ -24,12 +24,12 @@ class IvrService {
     }
   }
 
-  // キャンペーン用のIVRスクリプトを生成（25秒制限付き）
+  // キャンペーン用のIVRスクリプトを生成
   async generateIvrScript(campaignId) {
     try {
       // キャンペーン情報を取得
       const [campaigns] = await db.query(
-        'SELECT c.id, c.name, ci.number as caller_id_number, ci.domain FROM campaigns c JOIN caller_ids ci ON c.caller_id_id = ci.id WHERE c.id = ?',
+	'SELECT c.id, c.name, ci.number as caller_id_number, ci.domain FROM campaigns c JOIN caller_ids ci ON c.caller_id_id = ci.id WHERE c.id = ?',
         [campaignId]
       );
       
@@ -51,89 +51,77 @@ class IvrService {
       }, {}) : {};
       
       // IVRスクリプトの内容を生成
-      let scriptContent = `; IVR Script for Campaign: ${campaign.name} (ID: ${campaignId})\n`;
-      scriptContent += `; 25秒再生制限付きバージョン\n\n`;
+      let scriptContent = `; IVR Script for Campaign: ${campaign.name} (ID: ${campaignId})\n\n`;
       
       scriptContent += `[autodialer-campaign-${campaignId}]\n`;
-      scriptContent += `exten => s,1,Answer()\n`;
-      scriptContent += `  same => n,Wait(1)\n`;
       
-      // 25秒の絶対タイムアウトを設定
-      scriptContent += `  same => n,Set(TIMEOUT(absolute)=25)\n`;
-      scriptContent += `  same => n,Set(PLAYBACK_START=\${EPOCH})\n`;
-      scriptContent += `  same => n,Set(LOOP_COUNT=0)\n`;
-      
-      // 音声ファイルのパスを決定（welcomeとmenuを統合）
-      let audioFile = null;
+      // 初期挨拶（welcome）
       if (audioMap.welcome) {
-        audioFile = `autodialer/${path.basename(audioMap.welcome.filename, path.extname(audioMap.welcome.filename))}`;
-      } else if (audioMap.menu) {
-        audioFile = `autodialer/${path.basename(audioMap.menu.filename, path.extname(audioMap.menu.filename))}`;
+        scriptContent += `exten => s,1,Answer()\n`;
+        scriptContent += `  same => n,Wait(1)\n`;
+        scriptContent += `  same => n,Playback(autodialer/${path.basename(audioMap.welcome.filename, path.extname(audioMap.welcome.filename))})\n`;
       } else {
-        audioFile = 'vm-tempgreeting';
+        scriptContent += `exten => s,1,Answer()\n`;
+        scriptContent += `  same => n,Wait(1)\n`;
+	scriptContent += `  same => n,Playback(vm-tempgreeting)\n`;
       }
       
-      // 25秒間のループ再生処理
-      scriptContent += `  same => n(playloop),NoOp(Starting playback loop)\n`;
-      scriptContent += `  same => n,Set(CURRENT_TIME=\${EPOCH})\n`;
-      scriptContent += `  same => n,Set(ELAPSED_TIME=\${MATH(\${CURRENT_TIME}-\${PLAYBACK_START},int)})\n`;
-      scriptContent += `  same => n,GotoIf($[\${ELAPSED_TIME} >= 23]?waitforkey)\n`;
+      // メニュー案内（menu）
+      if (audioMap.menu) {
+        scriptContent += `  same => n,Playback(autodialer/${path.basename(audioMap.menu.filename, path.extname(audioMap.menu.filename))})\n`;
+      } else {
+　　　　scriptContent += `  same => n,Playback(vm-tempgreeting)\n`;
+      }
       
-      // 音声を再生（キー入力を受け付けながら）
-      scriptContent += `  same => n,Background(${audioFile})\n`;
-      scriptContent += `  same => n,Set(LOOP_COUNT=$[\${LOOP_COUNT} + 1])\n`;
-      scriptContent += `  same => n,NoOp(Loop count: \${LOOP_COUNT}, Elapsed: \${ELAPSED_TIME} seconds)\n`;
-      
-      // まだ時間があればループ継続
-      scriptContent += `  same => n,Goto(playloop)\n`;
-      
-      // キー入力待機（残り時間）
-      scriptContent += `  same => n(waitforkey),NoOp(25 seconds elapsed, waiting for key input)\n`;
-      scriptContent += `  same => n,WaitExten(2)\n\n`;
+      // キー入力待機
+      scriptContent += `  same => n,WaitExten(10)\n\n`;
       
       // 1キー: オペレーター接続
-      scriptContent += `exten => 1,1,NoOp(Operator transfer requested - Key 1)\n`;
-      scriptContent += `  same => n,Set(TIMEOUT(absolute)=)\n`; // タイムアウトをクリア
+      scriptContent += `exten => 1,1,NoOp(Operator transfer requested)\n`;
       scriptContent += `  same => n,Set(CAMPAIGN_ID=${campaignId})\n`;
       scriptContent += `  same => n,Set(KEYPRESS=1)\n`;
       scriptContent += `  same => n,Goto(operator-transfer-${campaignId},s,1)\n\n`;
       
       // 2キー: オペレーター接続
-      scriptContent += `exten => 2,1,NoOp(Operator transfer requested - Key 2)\n`;
-      scriptContent += `  same => n,Set(TIMEOUT(absolute)=)\n`; // タイムアウトをクリア
+      scriptContent += `exten => 2,1,NoOp(Operator transfer requested)\n`;
       scriptContent += `  same => n,Set(CAMPAIGN_ID=${campaignId})\n`;
       scriptContent += `  same => n,Set(KEYPRESS=2)\n`;
       scriptContent += `  same => n,Goto(operator-transfer-${campaignId},s,1)\n\n`;
       
       // 3キー: オペレーター接続
-      scriptContent += `exten => 3,1,NoOp(Operator transfer requested - Key 3)\n`;
-      scriptContent += `  same => n,Set(TIMEOUT(absolute)=)\n`; // タイムアウトをクリア
+      scriptContent += `exten => 3,1,NoOp(Operator transfer requested)\n`;
       scriptContent += `  same => n,Set(CAMPAIGN_ID=${campaignId})\n`;
       scriptContent += `  same => n,Set(KEYPRESS=3)\n`;
       scriptContent += `  same => n,Goto(operator-transfer-${campaignId},s,1)\n\n`;
       
       // 9キー: 通話終了（DNCリストに追加）
       scriptContent += `exten => 9,1,NoOp(DNC requested)\n`;
-      scriptContent += `  same => n,Set(TIMEOUT(absolute)=)\n`; // タイムアウトをクリア
       scriptContent += `  same => n,Set(CAMPAIGN_ID=${campaignId})\n`;
       scriptContent += `  same => n,Set(KEYPRESS=9)\n`;
       scriptContent += `  same => n,Playback(vm-goodbye)\n`;
       scriptContent += `  same => n,Hangup()\n\n`;
       
-      // タイムアウト（25秒経過）
-      scriptContent += `exten => T,1,NoOp(Absolute timeout reached - 25 seconds)\n`;
-      scriptContent += `  same => n,Playback(goodbye)\n`;
-      scriptContent += `  same => n,Hangup()\n\n`;
+      // タイムアウトやその他のキー入力
+      scriptContent += `exten => t,1,NoOp(Timeout occurred)\n`;
       
-      // その他のタイムアウト
-      scriptContent += `exten => t,1,NoOp(Input timeout occurred)\n`;
-      scriptContent += `  same => n,Playback(goodbye)\n`;
+      if (audioMap.goodbye) {
+        scriptContent += `  same => n,Playback(autodialer/${path.basename(audioMap.goodbye.filename, path.extname(audioMap.goodbye.filename))})\n`;
+      } else {
+	scriptContent += `  same => n,Playback(goodbye)\n`;
+      }
+      
       scriptContent += `  same => n,Hangup()\n\n`;
       
       // 無効なキー入力
       scriptContent += `exten => i,1,NoOp(Invalid input)\n`;
-      scriptContent += `  same => n,Playback(invalid)\n`;
-      scriptContent += `  same => n,Goto(s,playloop)\n\n`;
+      
+      if (audioMap.error) {
+        scriptContent += `  same => n,Playback(autodialer/${path.basename(audioMap.error.filename, path.extname(audioMap.error.filename))})\n`;
+      } else {
+        scriptContent += `  same => n,Playback(invalid)\n`;
+      }
+      
+      scriptContent += `  same => n,Goto(s,4)\n\n`;
       
       // 通話終了時の処理
       scriptContent += `exten => h,1,NoOp(Hangup handler)\n`;
@@ -147,22 +135,17 @@ class IvrService {
       scriptContent += `  same => n,Set(TRANSFER_CAMPAIGN_ID=\${CAMPAIGN_ID})\n`;
       scriptContent += `  same => n,Set(CONTACT_PHONE=\${CALLERID(num)})\n`;
       scriptContent += `  same => n,System(/usr/local/bin/transfer_notify.sh "\${TRANSFER_CALL_ID}" "\${TRANSFER_CAMPAIGN_ID}" "\${KEYPRESS}" "\${CONTACT_PHONE}")\n`;
-      scriptContent += `  same => n,Wait(0.5)\n`; // APIレスポンスを待つ
-      scriptContent += `  same => n,Set(TRANSFER_DEST=\${SHELL(cat /tmp/transfer_\${TRANSFER_CALL_ID}.txt 2>/dev/null | tr -d '\\n')})\n`;
-      scriptContent += `  same => n,GotoIf($[\${LEN(\${TRANSFER_DEST})} = 0]?transfer-failed)\n`;
-      scriptContent += `  same => n,NoOp(Transfer to: \${TRANSFER_DEST})\n`;
       scriptContent += `  same => n,Playback(pls-wait-connect-call)\n`;
-      scriptContent += `  same => n,Transfer(PJSIP/\${TRANSFER_DEST}@${campaign.domain})\n`;
-      scriptContent += `  same => n(transfer-failed),NoOp(Transfer failed)\n`;
+      scriptContent += `  same => n,Transfer(SIP/${campaign.caller_id_number}@${campaign.domain})\n`;
+      scriptContent += `  same => n,NoOp(Transfer failed)\n`;
       scriptContent += `  same => n,Playback(beeperr)\n`;
       scriptContent += `  same => n,Hangup()\n`;
-      scriptContent += `  same => n,System(rm -f /tmp/transfer_\${TRANSFER_CALL_ID}.txt)\n`; // クリーンアップ
- 
+      
       // ファイルに保存
       const scriptPath = path.join(this.ivrDir, `campaign-${campaignId}.conf`);
       await fs.writeFile(scriptPath, scriptContent);
       
-      logger.info(`25秒制限付きキャンペーンIVRスクリプトを生成しました: ${scriptPath}`);
+      logger.info(`キャンペーンIVRスクリプトを生成しました: ${scriptPath}`);
       
       return {
         path: scriptPath,
