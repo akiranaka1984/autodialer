@@ -645,9 +645,6 @@ class SipService extends EventEmitter {
     logger.info('✅ データ整合性確認完了 - AMI送信実行');
     
     try {
-      // originateActionの定義の前に追加
-      const callerIdValue = sipAccount.callerID || sipAccount.username;
-
  // ✅ 修正後の正しい構造
       const originateCommand = [
         'Action: Originate',
@@ -655,11 +652,8 @@ class SipService extends EventEmitter {
         `Context: autodialer-campaign-${campaignId}`,
         'Exten: s', // ✅ IVRの開始拡張子を's'に固定
         'Priority: 1',
-	`CallerID: "${sipAccount.callerID || sipAccount.username}" <${sipAccount.callerID || sipAccount.username}>`, // 表示名付きの完全な形式
-	`Variable: CALLERID(name)=${sipAccount.callerID || sipAccount.username}`,
-	`Variable: CALLERID(num)=${sipAccount.callerID || sipAccount.username}`,
-	`Variable: PJSIP_HEADER(update,From)=\\"${callerIdValue}\\" <sip:${callerIdValue}@pantex.online>`,
-	`ActionID: ${callId}`,
+        `CallerID: ${sipAccount.username}`, // ✅ SIPアカウントを発信者番号に
+        `ActionID: ${callId}`,
         'Async: yes',
         '', // 空行で終了
         ''

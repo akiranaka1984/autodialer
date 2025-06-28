@@ -214,7 +214,6 @@ router.post('/dnc/add', async (req, res) => {
 });
 
 router.post("/test", callController.testCall);
-});
 
 // 通話履歴の取得（管理画面用）
 router.get('/', async (req, res) => {

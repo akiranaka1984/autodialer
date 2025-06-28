@@ -59,7 +59,7 @@ class IvrService {
       if (audioMap.welcome) {
         scriptContent += `exten => s,1,Answer()\n`;
         scriptContent += `  same => n,Wait(1)\n`;
-        scriptContent += `  same => n,Playback(autodialer/${path.basename(audioMap.welcome.filename, path.extname(audioMap.welcome.filename))})\n`;
+        scriptContent += `  same => n,Playback(${path.basename(audioMap.welcome.filename, path.extname(audioMap.welcome.filename))})\n`;
       } else {
         scriptContent += `exten => s,1,Answer()\n`;
         scriptContent += `  same => n,Wait(1)\n`;
@@ -68,7 +68,7 @@ class IvrService {
       
       // メニュー案内（menu）
       if (audioMap.menu) {
-        scriptContent += `  same => n,Playback(autodialer/${path.basename(audioMap.menu.filename, path.extname(audioMap.menu.filename))})\n`;
+        scriptContent += `  same => n,Playback(${path.basename(audioMap.menu.filename, path.extname(audioMap.menu.filename))})\n`;
       } else {
 　　　　scriptContent += `  same => n,Playback(vm-tempgreeting)\n`;
       }
@@ -98,14 +98,14 @@ class IvrService {
       scriptContent += `exten => 9,1,NoOp(DNC requested)\n`;
       scriptContent += `  same => n,Set(CAMPAIGN_ID=${campaignId})\n`;
       scriptContent += `  same => n,Set(KEYPRESS=9)\n`;
-      scriptContent += `  same => n,Playback(vm-goodbye)\n`;
+      scriptContent += `  same => n,Playback(custom/dnc-confirmation)\n`;
       scriptContent += `  same => n,Hangup()\n\n`;
       
       // タイムアウトやその他のキー入力
       scriptContent += `exten => t,1,NoOp(Timeout occurred)\n`;
       
       if (audioMap.goodbye) {
-        scriptContent += `  same => n,Playback(autodialer/${path.basename(audioMap.goodbye.filename, path.extname(audioMap.goodbye.filename))})\n`;
+        scriptContent += `  same => n,Playback(${path.basename(audioMap.goodbye.filename, path.extname(audioMap.goodbye.filename))})\n`;
       } else {
 	scriptContent += `  same => n,Playback(goodbye)\n`;
       }
@@ -116,9 +116,9 @@ class IvrService {
       scriptContent += `exten => i,1,NoOp(Invalid input)\n`;
       
       if (audioMap.error) {
-        scriptContent += `  same => n,Playback(autodialer/${path.basename(audioMap.error.filename, path.extname(audioMap.error.filename))})\n`;
+        scriptContent += `  same => n,Playback(${path.basename(audioMap.error.filename, path.extname(audioMap.error.filename))})\n`;
       } else {
-        scriptContent += `  same => n,Playback(invalid)\n`;
+        scriptContent += `  same => n,Playback(custom/invalid-option)\n`;
       }
       
       scriptContent += `  same => n,Goto(s,4)\n\n`;
@@ -135,10 +135,10 @@ class IvrService {
       scriptContent += `  same => n,Set(TRANSFER_CAMPAIGN_ID=\${CAMPAIGN_ID})\n`;
       scriptContent += `  same => n,Set(CONTACT_PHONE=\${CALLERID(num)})\n`;
       scriptContent += `  same => n,System(/usr/local/bin/transfer_notify.sh "\${TRANSFER_CALL_ID}" "\${TRANSFER_CAMPAIGN_ID}" "\${KEYPRESS}" "\${CONTACT_PHONE}")\n`;
-      scriptContent += `  same => n,Playback(pls-wait-connect-call)\n`;
+      scriptContent += `  same => n,Playback(custom/transfer-to-operator)\n`;
       scriptContent += `  same => n,Transfer(SIP/${campaign.caller_id_number}@${campaign.domain})\n`;
       scriptContent += `  same => n,NoOp(Transfer failed)\n`;
-      scriptContent += `  same => n,Playback(beeperr)\n`;
+      scriptContent += `  same => n,Playback(custom/transfer-failed)\n`;
       scriptContent += `  same => n,Hangup()\n`;
       
       // ファイルに保存
@@ -165,31 +165,31 @@ class IvrService {
       scriptContent += `[autodialer-test]\n`;
       scriptContent += `exten => s,1,Answer()\n`;
       scriptContent += `  same => n,Wait(1)\n`;
-      scriptContent += `  same => n,Playback(vm-greeting)\n`;
-      scriptContent += `  same => n,Playback(vm-tempgreeting)\n`;
+      scriptContent += `  same => n,Playback(custom/test-welcome)\n`;
+      scriptContent += `  same => n,Playback(custom/test-menu)\n`;
       scriptContent += `  same => n,WaitExten(10)\n\n`;
       
       // 1キー: オペレーター接続
       scriptContent += `exten => 1,1,NoOp(Operator transfer requested)\n`;
       scriptContent += `  same => n,Set(CAMPAIGN_ID=test)\n`;
       scriptContent += `  same => n,Set(KEYPRESS=1)\n`;
-      scriptContent += `  same => n,Playback(pls-wait-connect-call)\n`;
+      scriptContent += `  same => n,Playback(custom/transfer-to-operator)\n`;
       scriptContent += `  same => n,Hangup()\n\n`;
       
       // 9キー: 通話終了（DNCリストに追加）
       scriptContent += `exten => 9,1,NoOp(DNC requested)\n`;
       scriptContent += `  same => n,Set(KEYPRESS=9)\n`;
-      scriptContent += `  same => n,Playback(vm-goodbye)\n`;
+      scriptContent += `  same => n,Playback(custom/dnc-confirmation)\n`;
       scriptContent += `  same => n,Hangup()\n\n`;
       
       // タイムアウトやその他のキー入力
       scriptContent += `exten => t,1,NoOp(Timeout occurred)\n`;
-      scriptContent += `  same => n,Playback(goodbye)\n`;
+      scriptContent += `  same => n,Playback(custom/default-goodbye)\n`;
       scriptContent += `  same => n,Hangup()\n\n`;
       
       // 無効なキー入力
       scriptContent += `exten => i,1,NoOp(Invalid input)\n`;
-      scriptContent += `  same => n,Playback(invalid)\n`;
+      scriptContent += `  same => n,Playback(custom/invalid-option)\n`;
       scriptContent += `  same => n,Goto(s,4)\n\n`;
       
       // 通話終了時の処理
