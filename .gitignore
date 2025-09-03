@@ -65,3 +65,22 @@ campaign-99[0-9].conf
 # 重複ファイル
 campaigns2.js
 ivrService3.js
+
+# フロントエンド
+frontend/node_modules/
+frontend/build/
+frontend/.env
+frontend/.env.*
+
+# 環境固有のファイル
+*.env.ami
+*.env.local
+*.env.production
+
+# アップロードファイル
+backend/uploads/
+backend/audio-files/*.wav
+
+# Asterisk設定のバックアップ
+/etc/asterisk/*.backup
+/etc/asterisk/*.bak
