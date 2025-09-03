@@ -129,11 +129,11 @@ class AsteriskService extends EventEmitter {
     
     // AMIに接続
     await this.client.connect(
-      process.env.ASTERISK_USERNAME || 'admin',
-      process.env.ASTERISK_PASSWORD || 'password',
+      process.env.AMI_USERNAME || 'autodialer',
+      process.env.AMI_SECRET || 'autodial123',
       {
-        host: 'ito258258.site', // 直接サーバー名を指定
-        port: 5060 // SIPの標準ポート 
+        host: process.env.AMI_HOST || '127.0.0.1', // AMIホスト
+        port: parseInt(process.env.AMI_PORT || '5038') // AMIポート 
       }
     );
     

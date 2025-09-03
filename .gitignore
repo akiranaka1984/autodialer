@@ -1,51 +1,67 @@
-# Dependencies
-node_modules/
-*/node_modules/
-
-# Environment variables
+# 環境設定
 .env
-.env.local
-.env.development
-.env.production
+*.env.local
+*.env.production
 
-# Logs
-logs/
+# ログファイル
 *.log
+logs/
+/tmp/
+
+# Node.js
+node_modules/
 npm-debug.log*
-pm2-error.log
-pm2-out.log
 
-# Database
-*.sql.backup
-database.dump
+# データベース
+*.sql
+*.sqlite
+*.db
 
-# Audio files (if large)
-backend/audio-files/*.mp3
-backend/audio-files/*.wav
-backend/audio-files/*.ogg
+# 秘密鍵・証明書
+*.pem
+*.key
+*.crt
 
-# PM2
-.pm2/
-ecosystem.config.js
+# バックアップファイル
+*.backup
+*.bak
 
-# OS generated files
+# OS関連
 .DS_Store
-.DS_Store?
-._*
-.Spotlight-V100
-.Trashes
-ehthumbs.db
 Thumbs.db
 
-# IDE files
+# エディタ設定
 .vscode/
 .idea/
-*.swp
-*.swo
 
-# Temporary files
-tmp/
-temp/
-emergency-*.js
-*.backup
-*.broken-backup
+# ビルドファイル
+dist/
+build/
+
+# AMI設定
+*.env.ami
+
+# バックアップファイル（追加パターン）
+*.backup_*
+*.original
+*.broken
+*.api_backup
+*.backup[0-9]
+*.[0-9]*
+*.fix-backup
+*.manual_backup
+
+# 一時ファイル
+backend/uploads/
+backend/scripts/
+
+# 修正・テストファイル
+fix_*.js
+*-fixed.conf
+campaign-[0-9].conf
+campaign-9[0-9].conf
+campaign-99[0-9].conf
+
+# 重複ファイル
+campaigns2.js
+ivrService3.js

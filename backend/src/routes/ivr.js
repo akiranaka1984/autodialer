@@ -531,6 +531,8 @@ router.post('/test-call', async (req, res) => {
       '--auto-loop',
       '--duration=15',
       '--auto-answer=200',
+      '--local-port=5061',
+      '--outbound=sip:127.0.0.1:5070',
       '--no-tcp',
       '--auto-conf',
       '--no-cli',

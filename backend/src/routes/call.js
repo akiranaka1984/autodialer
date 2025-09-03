@@ -322,12 +322,27 @@ router.post('/callback/call-end', async (req, res) => {
 // 🎯 転送実行API - 通話数増加機能統合版
 router.post('/transfer/dtmf', async (req, res) => {
   try {
-    const { callId, originalNumber, transferTarget, keypress } = req.body;
+    const { callId, originalNumber, transferTarget, keypress, campaignId } = req.body;
     
-    logger.info(`🔄 転送要求受信: CallID=${callId}, 転送先=${transferTarget}, キー=${keypress}`);
+    // 転送先の決定
+    let finalTransferTarget = transferTarget;
+
+    // transferTargetが送られていない場合、データベースから取得
+    if (!finalTransferTarget && campaignId && keypress) {
+      const [destinations] = await db.query(
+        'SELECT transfer_to FROM campaign_transfer_destinations WHERE campaign_id = ? AND dtmf_key = ? AND active = 1',
+        [campaignId, keypress]
+      );
+      
+      if (destinations.length > 0) {
+        finalTransferTarget = destinations[0].transfer_to;
+      }
+    }
+
+    logger.info(`🔄 転送要求受信: CallID=${callId}, 転送先=${finalTransferTarget}, キー=${keypress}`);
     
     // 必須パラメータ検証
-    if (!callId || !originalNumber || !transferTarget || !keypress) {
+    if (!callId || !originalNumber || !finalTransferTarget || !keypress) {
       return res.status(400).json({ 
         success: false,
         message: '必須パラメータが不足しています (callId, originalNumber, transferTarget, keypress)'
@@ -335,12 +350,12 @@ router.post('/transfer/dtmf', async (req, res) => {
     }
     
     // 🎯 Phase2.2: 転送先SIPアカウントの通話数を事前に増加
-    logger.info(`📈 転送開始前の通話数増加処理: ${transferTarget}`);
+    logger.info(`📈 転送開始前の通話数増加処理: ${finalTransferTarget}`);
     
-    const incrementSuccess = await updateTransferCallCount(transferTarget, 1);
+    const incrementSuccess = await updateTransferCallCount(finalTransferTarget, 1);
     
     if (!incrementSuccess) {
-      logger.warn(`⚠️ 転送先SIPアカウントが見つかりません: ${transferTarget}`);
+      logger.warn(`⚠️ 転送先SIPアカウントが見つかりません: ${finalTransferTarget}`);
       // 転送は継続するが、通話数管理対象外として扱う
     }
     
@@ -350,18 +365,18 @@ router.post('/transfer/dtmf', async (req, res) => {
       FROM caller_channels cc 
       JOIN caller_ids ci ON cc.caller_id_id = ci.id 
       WHERE cc.username = ? AND cc.status = 'available'
-    `, [transferTarget]);
+    `, [finalTransferTarget]);
     
     if (sipAccounts.length === 0) {
       // 🔄 エラー時は通話数を元に戻す
       if (incrementSuccess) {
-        await updateTransferCallCount(transferTarget, -1);
-        logger.info(`🔄 転送失敗により通話数を戻しました: ${transferTarget}`);
+        await updateTransferCallCount(finalTransferTarget, -1);
+        logger.info(`🔄 転送失敗により通話数を戻しました: ${finalTransferTarget}`);
       }
       
       return res.status(400).json({ 
         success: false,
-        message: `転送先SIPアカウント ${transferTarget} が利用できません`
+        message: `転送先SIPアカウント ${finalTransferTarget} が利用できません`
       });
     }
     
@@ -373,9 +388,9 @@ router.post('/transfer/dtmf', async (req, res) => {
         INSERT INTO transfer_logs 
         (original_call_id, original_number, transfer_number, keypress, transfer_initiated_at, status)
         VALUES (?, ?, ?, ?, NOW(), 'initiated')
-      `, [callId, originalNumber, transferTarget, keypress]);
+      `, [callId, originalNumber, finalTransferTarget, keypress]);
       
-      logger.info(`📝 転送ログ記録: ${transferId} (${callId} → ${transferTarget})`);
+      logger.info(`📝 転送ログ記録: ${transferId} (${callId} → ${finalTransferTarget})`);
       
     } catch (logError) {
       logger.error('転送ログ記録エラー:', logError);
@@ -388,7 +403,7 @@ router.post('/transfer/dtmf', async (req, res) => {
         UPDATE call_logs
         SET transfer_attempted = 1, transfer_successful = 0, transfer_target = ?, keypress = ?
         WHERE call_id = ?
-      `, [transferTarget, keypress, callId]);
+      `, [finalTransferTarget, keypress, callId]);
       
       logger.info(`📝 通話ログ更新: 転送試行記録 (${callId})`);
       
@@ -406,13 +421,13 @@ router.post('/transfer/dtmf', async (req, res) => {
         variables: {
           ORIGINAL_CALL_ID: callId,
           TRANSFER_TYPE: 'operator',
-          TRANSFER_TARGET: transferTarget,
+          TRANSFER_TARGET: finalTransferTarget,
           ORIGINAL_NUMBER: originalNumber
         },
         provider: 'sip'
       };
       
-      logger.info(`📞 SIP転送実行開始: ${transferTarget}`);
+      logger.info(`📞 SIP転送実行開始: ${finalTransferTarget}`);
       
       const transferResult = await sipService.originate(transferParams);
       
@@ -431,18 +446,18 @@ router.post('/transfer/dtmf', async (req, res) => {
           WHERE original_call_id = ?
         `, [callId]);
         
-        logger.info(`✅ 転送実行成功: ${callId} → ${transferTarget} (転送CallID: ${transferResult.ActionID})`);
+        logger.info(`✅ 転送実行成功: ${callId} → ${finalTransferTarget} (転送CallID: ${transferResult.ActionID})`);
         
         res.json({
           success: true,
           transferId: transferId,
           transferCallId: transferResult.ActionID,
-          transferTarget: transferTarget,
-          message: `${transferTarget}への転送を開始しました`,
+          transferTarget: finalTransferTarget,
+          message: `${finalTransferTarget}への転送を開始しました`,
           data: {
             originalCallId: callId,
             transferCallId: transferResult.ActionID,
-            transferTarget: transferTarget,
+            transferTarget: finalTransferTarget,
             keypress: keypress,
             callCountIncremented: incrementSuccess
           }
@@ -457,8 +472,8 @@ router.post('/transfer/dtmf', async (req, res) => {
       
       // 🔄 転送失敗時は通話数を元に戻す
       if (incrementSuccess) {
-        await updateTransferCallCount(transferTarget, -1);
-        logger.info(`🔄 転送失敗により通話数をロールバック: ${transferTarget}`);
+        await updateTransferCallCount(finalTransferTarget, -1);
+        logger.info(`🔄 転送失敗により通話数をロールバック: ${finalTransferTarget}`);
       }
       
       // 通話ログを失敗に更新

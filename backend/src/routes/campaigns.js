@@ -5,6 +5,9 @@ const db = require('../services/database');
 const logger = require('../services/logger');
 const dialerService = require('../services/dialerService');
 
+// ✅ 追加: ivrServiceをインポート（IVR自動デプロイのため）
+const ivrService = require('../services/ivrService');
+
 // ✅ 追加: campaignsControllerをインポート（IVR自動デプロイのため）
 const campaignsController = require('../controllers/campaignsController');
 
@@ -106,7 +109,7 @@ router.get('/:id', async (req, res) => {
   }
 });
 
-// キャンペーン作成
+// キャンペーン作成 - ✅ IVR自動デプロイ実装
 router.post('/', async (req, res) => {
   try {
     const { name, description, caller_id_id, script } = req.body;
@@ -123,6 +126,58 @@ router.post('/', async (req, res) => {
     );
     
     const campaignId = result.insertId;
+
+    // 転送設定を自動作成（transfer_sip_assignmentsからコピー）
+    if (caller_id_id) {
+      try {
+        const [transferSettings] = await db.query(
+          `INSERT INTO campaign_transfer_destinations (campaign_id, dtmf_key, sip_username, active, created_at)
+           SELECT ?, dtmf_key, sip_username, active, NOW()
+           FROM transfer_sip_assignments
+           WHERE caller_id_id = ? AND active = 1`,
+          [campaignId, caller_id_id]
+        );
+        logger.info(`転送設定を自動作成: Campaign=${campaignId}, 設定数=${transferSettings.affectedRows}`);
+      } catch (transferError) {
+        logger.warn(`転送設定の自動作成に失敗（処理は継続）: ${transferError.message}`);
+      }
+    }
+    
+    // ✅ 追加: IVRスクリプトの自動生成
+    try {
+      logger.info(`🎯 IVRスクリプト自動生成開始: Campaign=${campaignId}`);
+      
+      // IVRスクリプトをデプロイ
+      const deployResult = await ivrService.deployIvrScript(campaignId);
+      
+      if (deployResult && deployResult.success) {
+        logger.info(`✅ IVRスクリプト自動生成成功: ${deployResult.scriptPath}`);
+        
+        // データベースのivr_deployedフラグを更新
+        await db.query(
+          'UPDATE campaigns SET ivr_deployed = true, ivr_deploy_time = NOW() WHERE id = ?',
+          [campaignId]
+        );
+      } else {
+        logger.warn(`⚠️ IVRスクリプト自動生成に失敗しましたが、キャンペーン作成は続行します`);
+      }
+    } catch (ivrError) {
+      logger.error(`❌ IVRスクリプト自動生成エラー（キャンペーン作成は成功）:`, ivrError);
+      // IVR生成エラーがあってもキャンペーン作成は成功とする
+    }
+　　// フォールバック: campaign-74からコピー
+      try {
+        const { exec } = require('child_process');
+        exec(`/usr/local/bin/fix-campaign-ivr.sh ${campaignId}`, (error, stdout, stderr) => {
+          if (error) {
+            logger.error(`フォールバックも失敗: ${error}`);
+          } else {
+            logger.info(`✅ フォールバックでIVRスクリプト作成: ${stdout}`);
+          }
+        });
+      } catch (fallbackError) {
+        logger.error(`フォールバックエラー: ${fallbackError}`);
+      }
     
     logger.info(`キャンペーン作成完了: ID=${campaignId}, Name=${name}`);
     

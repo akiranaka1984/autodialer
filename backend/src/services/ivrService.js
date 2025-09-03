@@ -1,4 +1,4 @@
-// backend/src/services/ivrService.js - 25秒再生制限版
+// backend/src/services/ivrService.js - 25秒再生制限版（DTMF転送修正版）
 const logger = require('./logger');
 const fs = require('fs').promises;
 const path = require('path');
@@ -60,7 +60,7 @@ class IvrService {
       
       // 25秒の絶対タイムアウトを設定
       scriptContent += `  same => n,Set(TIMEOUT(absolute)=25)\n`;
-      scriptContent += `  same => n,Set(PLAYBACK_START=\${EPOCH})\n`;
+      scriptContent += `  same => n,Set(PLAYBACK_START=\\\${EPOCH})\n`;
       scriptContent += `  same => n,Set(LOOP_COUNT=0)\n`;
       
       // 音声ファイルのパスを決定（welcomeとmenuを統合）
@@ -73,48 +73,44 @@ class IvrService {
         audioFile = 'vm-tempgreeting';
       }
       
-      // 25秒間のループ再生処理
-      scriptContent += `  same => n(playloop),NoOp(Starting playback loop)\n`;
-      scriptContent += `  same => n,Set(CURRENT_TIME=\${EPOCH})\n`;
-      scriptContent += `  same => n,Set(ELAPSED_TIME=\${MATH(\${CURRENT_TIME}-\${PLAYBACK_START},int)})\n`;
-      scriptContent += `  same => n,GotoIf($[\${ELAPSED_TIME} >= 23]?waitforkey)\n`;
-      
-      // 音声を再生（キー入力を受け付けながら）
-      scriptContent += `  same => n,Background(${audioFile})\n`;
-      scriptContent += `  same => n,Set(LOOP_COUNT=$[\${LOOP_COUNT} + 1])\n`;
-      scriptContent += `  same => n,NoOp(Loop count: \${LOOP_COUNT}, Elapsed: \${ELAPSED_TIME} seconds)\n`;
-      
-      // まだ時間があればループ継続
-      scriptContent += `  same => n,Goto(playloop)\n`;
-      
-      // キー入力待機（残り時間）
-      scriptContent += `  same => n(waitforkey),NoOp(25 seconds elapsed, waiting for key input)\n`;
-      scriptContent += `  same => n,WaitExten(2)\n\n`;
+      // Read版メニュー処理
+      scriptContent += `  same => n,Set(ATTEMPTS=0)\n`;
+      scriptContent += `  same => n(menu),NoOp(=== Playing menu and waiting for DTMF ===)\n`;
+      scriptContent += `  same => n,System(echo "$(date): Playing menu, DTMF enabled..." >> /tmp/dtmf_debug.log)\n`;
+      scriptContent += `  same => n,Read(PRESSED_KEY,${audioFile},1,s,,10)\n`;
+      scriptContent += `  same => n,System(echo "[$(date '+%Y-%m-%d %H:%M:%S')] Read() result: \\\${PRESSED_KEY}" >> /tmp/dtmf_debug.log)\n`;
+      scriptContent += `  same => n,GotoIf($["\\\${PRESSED_KEY}" = "1"]?1,1)\n`;
+      scriptContent += `  same => n,GotoIf($["\\\${PRESSED_KEY}" = "2"]?2,1)\n`;
+      scriptContent += `  same => n,GotoIf($["\\\${PRESSED_KEY}" = "3"]?3,1)\n`;
+      scriptContent += `  same => n,GotoIf($["\\\${PRESSED_KEY}" = "9"]?9,1)\n`;
+      scriptContent += `  same => n,Set(ATTEMPTS=$[\\\${ATTEMPTS} + 1])\n`;
+      scriptContent += `  same => n,GotoIf($[\\\${ATTEMPTS} < 3]?menu)\n`;
+      scriptContent += `  same => n,Hangup()\n\n`;
       
       // 1キー: オペレーター接続
-      scriptContent += `exten => 1,1,NoOp(Operator transfer requested - Key 1)\n`;
-      scriptContent += `  same => n,Set(TIMEOUT(absolute)=)\n`; // タイムアウトをクリア
+      scriptContent += `exten => 1,1,System(echo "$(date): DTMF 1 pressed - CallID: \\\${UNIQUEID}" >> /tmp/dtmf_debug.log)\n`;
+      scriptContent += `  same => n,NoOp(Operator transfer requested - Key 1)\n`;
       scriptContent += `  same => n,Set(CAMPAIGN_ID=${campaignId})\n`;
       scriptContent += `  same => n,Set(KEYPRESS=1)\n`;
       scriptContent += `  same => n,Goto(operator-transfer-${campaignId},s,1)\n\n`;
-      
+
       // 2キー: オペレーター接続
-      scriptContent += `exten => 2,1,NoOp(Operator transfer requested - Key 2)\n`;
-      scriptContent += `  same => n,Set(TIMEOUT(absolute)=)\n`; // タイムアウトをクリア
+      scriptContent += `exten => 2,1,System(echo "$(date): DTMF 2 pressed - CallID: \\\${UNIQUEID}" >> /tmp/dtmf_debug.log)\n`;
+      scriptContent += `  same => n,NoOp(Operator transfer requested - Key 2)\n`;
       scriptContent += `  same => n,Set(CAMPAIGN_ID=${campaignId})\n`;
       scriptContent += `  same => n,Set(KEYPRESS=2)\n`;
-      scriptContent += `  same => n,Goto(operator-transfer-${campaignId},s,1)\n\n`;
+      scriptContent += `  same => n,Goto(operator-transfer-${campaignId},s,1)\n\n`; 
       
       // 3キー: オペレーター接続
-      scriptContent += `exten => 3,1,NoOp(Operator transfer requested - Key 3)\n`;
-      scriptContent += `  same => n,Set(TIMEOUT(absolute)=)\n`; // タイムアウトをクリア
+      scriptContent += `exten => 3,1,System(echo "$(date): DTMF 3 pressed - CallID: \\\${UNIQUEID}" >> /tmp/dtmf_debug.log)\n`;
+      scriptContent += `  same => n,NoOp(Operator transfer requested - Key 3)\n`;
       scriptContent += `  same => n,Set(CAMPAIGN_ID=${campaignId})\n`;
       scriptContent += `  same => n,Set(KEYPRESS=3)\n`;
       scriptContent += `  same => n,Goto(operator-transfer-${campaignId},s,1)\n\n`;
       
       // 9キー: 通話終了（DNCリストに追加）
-      scriptContent += `exten => 9,1,NoOp(DNC requested)\n`;
-      scriptContent += `  same => n,Set(TIMEOUT(absolute)=)\n`; // タイムアウトをクリア
+      scriptContent += `exten => 9,1,System(echo "$(date): DTMF 9 pressed - CallID: \\\${UNIQUEID}" >> /tmp/dtmf_debug.log)\n`;
+      scriptContent += `  same => n,NoOp(DNC requested)\n`;
       scriptContent += `  same => n,Set(CAMPAIGN_ID=${campaignId})\n`;
       scriptContent += `  same => n,Set(KEYPRESS=9)\n`;
       scriptContent += `  same => n,Playback(vm-goodbye)\n`;
@@ -133,31 +129,88 @@ class IvrService {
       // 無効なキー入力
       scriptContent += `exten => i,1,NoOp(Invalid input)\n`;
       scriptContent += `  same => n,Playback(invalid)\n`;
-      scriptContent += `  same => n,Goto(s,playloop)\n\n`;
+      scriptContent += `  same => n,Goto(s,menu)\n\n`;
       
       // 通話終了時の処理
       scriptContent += `exten => h,1,NoOp(Hangup handler)\n`;
-      scriptContent += `  same => n,System(curl -X POST http://localhost:5000/api/callback/call-end -d "callId=${campaignId}-\${UNIQUEID}&duration=\${ANSWEREDTIME}&disposition=\${DIALSTATUS}&keypress=\${KEYPRESS}")\n`;
+      scriptContent += `  same => n,System(curl -X POST http://localhost:5000/api/callback/call-end -d "callId=${campaignId}-\\\${UNIQUEID}&duration=\\\${ANSWEREDTIME}&disposition=\\\${DIALSTATUS}")\n`;
       
-      // operator-transferコンテキスト追加
+      // operator-transferコンテキスト追加（修正版）
       scriptContent += `\n; operator-transfer context\n`;
       scriptContent += `[operator-transfer-${campaignId}]\n`;
-      scriptContent += `exten => s,1,NoOp(=== OPERATOR TRANSFER ===)\n`;
-      scriptContent += `  same => n,Set(TRANSFER_CALL_ID=\${UNIQUEID})\n`;
-      scriptContent += `  same => n,Set(TRANSFER_CAMPAIGN_ID=\${CAMPAIGN_ID})\n`;
-      scriptContent += `  same => n,Set(CONTACT_PHONE=\${CALLERID(num)})\n`;
-      scriptContent += `  same => n,System(/usr/local/bin/transfer_notify.sh "\${TRANSFER_CALL_ID}" "\${TRANSFER_CAMPAIGN_ID}" "\${KEYPRESS}" "\${CONTACT_PHONE}")\n`;
-      scriptContent += `  same => n,Wait(0.5)\n`; // APIレスポンスを待つ
-      scriptContent += `  same => n,Set(TRANSFER_DEST=\${SHELL(cat /tmp/transfer_\${TRANSFER_CALL_ID}.txt 2>/dev/null | tr -d '\\n')})\n`;
-      scriptContent += `  same => n,GotoIf($[\${LEN(\${TRANSFER_DEST})} = 0]?transfer-failed)\n`;
-      scriptContent += `  same => n,NoOp(Transfer to: \${TRANSFER_DEST})\n`;
+      scriptContent += `exten => s,1,NoOp(=== OPERATOR TRANSFER START ===)\n`;
+      scriptContent += `  same => n,System(echo "[$(date)] Transfer Start - CallID: \\\${UNIQUEID}, Phone: \\\${CALLERID(num)}, Key: \\\${KEYPRESS}" >> /tmp/dtmf_debug.log)\n`;
+      scriptContent += `  same => n,Set(TRANSFER_CALL_ID=\\\${UNIQUEID})\n`;
+      scriptContent += `  same => n,Set(TRANSFER_CAMPAIGN_ID=\\\${CAMPAIGN_ID})\n`;
+      scriptContent += `  same => n,Set(CONTACT_PHONE=\\\${CALLERID(num)})\n`;
+      scriptContent += `  same => n,NoOp(Variables: CallID=\\\${TRANSFER_CALL_ID}, Phone=\\\${CONTACT_PHONE}, Key=\\\${KEYPRESS})\n`;
+      
+      // 転送音声の再生
       scriptContent += `  same => n,Playback(pls-wait-connect-call)\n`;
-      scriptContent += `  same => n,Transfer(PJSIP/\${TRANSFER_DEST}@${campaign.domain})\n`;
-      scriptContent += `  same => n(transfer-failed),NoOp(Transfer failed)\n`;
-      scriptContent += `  same => n,Playback(beeperr)\n`;
-      scriptContent += `  same => n,Hangup()\n`;
-      scriptContent += `  same => n,System(rm -f /tmp/transfer_\${TRANSFER_CALL_ID}.txt)\n`; // クリーンアップ
- 
+      scriptContent += `  same => n,Wait(1)\n`;
+      
+      // 転送先設定を取得
+      const [destinations] = await db.query(
+        'SELECT * FROM campaign_transfer_destinations WHERE campaign_id = ? AND active = 1 ORDER BY dtmf_key',
+        [campaignId]
+      );
+      
+      if (destinations.length > 0) {
+        // 各転送先に対してGotoIfを生成
+        destinations.forEach(dest => {
+          scriptContent += `  same => n,GotoIf($["\\\${KEYPRESS}" = "${dest.dtmf_key}"]?transfer${dest.dtmf_key})\n`;
+        });
+        scriptContent += `  same => n,Playback(sorry)\n`;
+        scriptContent += `  same => n,Hangup()\n`;
+        
+        // 各転送先のDial設定を生成（修正版）
+        destinations.forEach(dest => {
+          scriptContent += `  same => n(transfer${dest.dtmf_key}),NoOp(=== Transferring to ${dest.sip_username} for key ${dest.dtmf_key} ===)\n`;
+          scriptContent += `  same => n,System(echo "[$(date)] Dialing ${dest.sip_username}" >> /tmp/dtmf_debug.log)\n`;
+          scriptContent += `  same => n,Set(TRANSFER_TARGET=${dest.sip_username})\n`;
+          
+          // 転送実行
+          scriptContent += `  same => n,Dial(PJSIP/${dest.sip_username},30,tT)\n`;
+          
+          // 転送結果の処理
+          scriptContent += `  same => n,NoOp(Dial Status: \\\${DIALSTATUS})\n`;
+          scriptContent += `  same => n,System(echo "[$(date)] Dial Status: \\\${DIALSTATUS} for ${dest.sip_username}" >> /tmp/dtmf_debug.log)\n`;
+          scriptContent += `  same => n,GotoIf($["\\\${DIALSTATUS}" = "ANSWER"]?success${dest.dtmf_key})\n`;
+          scriptContent += `  same => n,Playback(sorry)\n`;
+          scriptContent += `  same => n,Hangup()\n`;
+          scriptContent += `  same => n(success${dest.dtmf_key}),NoOp(Transfer Successful to ${dest.sip_username})\n`;
+          scriptContent += `  same => n,Hangup()\n`;
+        });
+      } else {
+        // デフォルトの転送先（設定がない場合）
+        scriptContent += `  same => n,GotoIf($["\\\${KEYPRESS}" = "1"]?transfer1)\n`;
+        scriptContent += `  same => n,GotoIf($["\\\${KEYPRESS}" = "2"]?transfer2)\n`;
+        scriptContent += `  same => n,GotoIf($["\\\${KEYPRESS}" = "3"]?transfer3)\n`;
+        scriptContent += `  same => n,Playback(sorry)\n`;
+        scriptContent += `  same => n,Hangup()\n`;
+        
+        // デフォルト転送先の処理（修正版）
+        scriptContent += `  same => n(transfer1),NoOp(Default transfer to 03500001)\n`;
+        scriptContent += `  same => n,System(echo "[$(date)] Default Dialing 03500001" >> /tmp/dtmf_debug.log)\n`;
+        scriptContent += `  same => n,Dial(PJSIP/03500001,30,tT)\n`;
+        scriptContent += `  same => n,NoOp(Dial Status: \\\${DIALSTATUS})\n`;
+        scriptContent += `  same => n,Hangup()\n`;
+        
+        scriptContent += `  same => n(transfer2),NoOp(Default transfer to 03500002)\n`;
+        scriptContent += `  same => n,System(echo "[$(date)] Default Dialing 03500002" >> /tmp/dtmf_debug.log)\n`;
+        scriptContent += `  same => n,Dial(PJSIP/03500002,30,tT)\n`;
+        scriptContent += `  same => n,NoOp(Dial Status: \\\${DIALSTATUS})\n`;
+        scriptContent += `  same => n,Hangup()\n`;
+        
+        scriptContent += `  same => n(transfer3),NoOp(Default transfer to 03500003)\n`;
+        scriptContent += `  same => n,System(echo "[$(date)] Default Dialing 03500003" >> /tmp/dtmf_debug.log)\n`;
+        scriptContent += `  same => n,Dial(PJSIP/03500003,30,tT)\n`;
+        scriptContent += `  same => n,NoOp(Dial Status: \\\${DIALSTATUS})\n`;
+        scriptContent += `  same => n,Hangup()\n`;
+      }
+      
+      scriptContent += `\n`;
+      
       // ファイルに保存
       const scriptPath = path.join(this.ivrDir, `campaign-${campaignId}.conf`);
       await fs.writeFile(scriptPath, scriptContent);
@@ -190,7 +243,7 @@ class IvrService {
       scriptContent += `exten => 1,1,NoOp(Operator transfer requested)\n`;
       scriptContent += `  same => n,Set(CAMPAIGN_ID=test)\n`;
       scriptContent += `  same => n,Set(KEYPRESS=1)\n`;
-      scriptContent += `  same => n,Playback(pls-wait-connect-call)\n`;
+      scriptContent += `  same => n,Playback(one-moment-please)\n`;
       scriptContent += `  same => n,Hangup()\n\n`;
       
       // 9キー: 通話終了（DNCリストに追加）
@@ -211,7 +264,7 @@ class IvrService {
       
       // 通話終了時の処理
       scriptContent += `exten => h,1,NoOp(Hangup handler)\n`;
-      scriptContent += `  same => n,System(curl -X POST http://localhost:5000/api/callback/call-end -d "callId=test-\${UNIQUEID}&duration=\${ANSWEREDTIME}&disposition=\${DIALSTATUS}&keypress=\${KEYPRESS}")\n`;
+      scriptContent += `  same => n,System(curl -X POST http://localhost:5000/api/callback/call-end -d "callId=test-\\\${UNIQUEID}&duration=\\\${ANSWEREDTIME}&disposition=\\\${DIALSTATUS}")\n`;
       
       // ファイルに保存
       const scriptPath = path.join(this.ivrDir, 'default-test.conf');

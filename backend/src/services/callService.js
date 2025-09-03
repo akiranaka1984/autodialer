@@ -96,10 +96,20 @@ class CallService {
     return provider === 'sip' ? this.sip : null;
   }
   
-  selectProvider(params) {
-    // 常にSIPを返す
-    return 'sip';
+selectProvider(params) {
+  // パラメータで明示的に指定されている場合
+  if (params.provider) {
+    return params.provider;
   }
+  
+  // 環境変数の設定を優先
+  if (process.env.DEFAULT_CALL_PROVIDER === 'asterisk') {
+    return 'asterisk';
+  }
+  
+  // デフォルトはSIP
+  return 'sip';
+}
   
   mapProviderName(providerName) {
     // SIPのみサポート

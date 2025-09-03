@@ -1,3 +1,4 @@
+const sipConfig = require('../config/sip.config');
 // backend/src/services/sipService.js - v60.0完全版（AMI対応・100%完成）
 const { spawn, exec } = require('child_process');
 const logger = require('./logger');
@@ -29,8 +30,8 @@ class SipService extends EventEmitter {
     // 🆕 AMI接続設定（v60.0追加）
     this.amiHost = '127.0.0.1';
     this.amiPort = 5038;
-    this.amiUsername = 'autodialer';
-    this.amiPassword = 'autodialer123';
+    this.amiUsername = process.env.AMI_USERNAME || 'autodialer';
+    this.amiPassword = process.env.AMI_PASSWORD || process.env.AMI_SECRET || 'autodial123';
     this.amiConnection = null;
     this.amiConnected = false;
     
@@ -133,7 +134,7 @@ class SipService extends EventEmitter {
         if (!this.amiConnected) {
           reject(new Error('AMI接続タイムアウト'));
         }
-      }, 10000);
+      }, 30000);
     });
   }
 
@@ -164,6 +165,7 @@ class SipService extends EventEmitter {
           this.amiConnection.removeListener('data', onData);
           if (!responseReceived) {
             responseReceived = true;
+          logger.info(`AMI応答内容: ${response}`);
             logger.error('❌ AMIエラー応答');
             reject(new Error('AMI Error Response'));
           }
@@ -181,7 +183,7 @@ class SipService extends EventEmitter {
           logger.error('❌ AMI送信タイムアウト');
           reject(new Error('AMI送信タイムアウト'));
         }
-      }, 10000);
+      }, 30000);
     });
   }
 
@@ -281,7 +283,7 @@ class SipService extends EventEmitter {
             password: this.generateDefaultPassword(callerId.id),
             callerID: callerId.number,
             description: callerId.description || `発信者番号${callerId.id}`,
-            domain: callerId.domain || 'pantex.online',
+            domain: callerId.domain || 'bigaccess.xyz',
             provider: callerId.provider || 'Default SIP',
             mainCallerId: callerId.id,
             channelType: 'both',
@@ -301,7 +303,7 @@ class SipService extends EventEmitter {
         password: channel.password || this.generateDefaultPassword(channel.caller_id_id),
         callerID: channel.caller_number || '03-5946-8520',
         description: channel.description || `チャンネル${channel.id}`,
-        domain: channel.domain || 'pantex.online',
+        domain: channel.domain || 'bigaccess.xyz',
         provider: channel.provider || 'SIP Provider',
         mainCallerId: channel.caller_id_id || 1,
         channelType: 'both',
@@ -354,7 +356,7 @@ class SipService extends EventEmitter {
         password: '12345678',
         callerID: '0369087851',
         description: '動作確認済み SIP 1',
-        domain: 'pantex.online',
+        domain: 'bigaccess.xyz',
         provider: 'Working SIP',
         mainCallerId: 1,
         channelType: 'both',
@@ -658,7 +660,7 @@ class SipService extends EventEmitter {
 	`CallerID: "${sipAccount.callerID || sipAccount.username}" <${sipAccount.callerID || sipAccount.username}>`, // 表示名付きの完全な形式
 	`Variable: CALLERID(name)=${sipAccount.callerID || sipAccount.username}`,
 	`Variable: CALLERID(num)=${sipAccount.callerID || sipAccount.username}`,
-	`Variable: PJSIP_HEADER(update,From)=\\"${callerIdValue}\\" <sip:${callerIdValue}@pantex.online>`,
+	`Variable: PJSIP_HEADER(update,From)=\"${callerIdValue}\" <sip:${callerIdValue}@${safeSipAccount.domain || 'bigaccess.xyz'}>`,
 	`ActionID: ${callId}`,
         'Async: yes',
         '', // 空行で終了
@@ -736,7 +738,7 @@ class SipService extends EventEmitter {
         status: 'ANSWERED',
         duration: 10
       });
-    }, 10000);
+    }, 30000);
     
     return {
       ActionID: callId,
