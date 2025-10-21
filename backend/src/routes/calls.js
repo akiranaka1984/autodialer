@@ -4,6 +4,7 @@ const callController = require("../controllers/callController");
 const db = require('../services/database');
 const dialerService = require('../services/dialerService');
 const logger = require('../services/logger');
+const leadService = require('../services/leadService');
 
 // 通話開始通知（Asteriskから呼び出し）
 router.post('/start', async (req, res) => {
@@ -137,7 +138,25 @@ router.post('/end', async (req, res) => {
     }
     
     logger.info(`通話終了通知: CallID=${callId}, Duration=${duration}, Disposition=${disposition}, Keypress=${keypress}`);
-    
+        // ===== ここから追加（134行目あたり） =====
+    // 見込み客判定処理
+    if (duration && duration > 0) {
+      const [callLogs] = await db.query(
+        'SELECT campaign_id, phone_number FROM call_logs WHERE call_id = ?',
+        [callId]
+      );
+      
+      if (callLogs.length > 0) {
+        const callLog = callLogs[0];
+        await leadService.processCallEnd({
+          campaign_id: callLog.campaign_id,
+          phone_number: callLog.phone_number,
+          duration: parseInt(duration)
+        });
+        logger.info(`見込み客判定完了: ${callLog.phone_number} (${duration}秒)`);
+      }
+    }
+    // ===== ここまで追加 =====    
     // 通話終了処理
     await dialerService.handleCallEnd(callId, duration, disposition, keypress);
     

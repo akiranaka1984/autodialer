@@ -20,6 +20,7 @@ import DNCManagement from './components/DNCManagement';
 import SystemSettings from './components/SystemSettings';
 import OperatorDashboard from './components/OperatorDashboard';
 import AudioFileManager from './components/AudioFileManager';
+import LeadManagement from './components/LeadManagement';
 
 // オペレーターインターフェースのインポート
 import OperatorLayout from './components/OperatorInterface/OperatorLayout';
@@ -133,6 +134,7 @@ function App() {
                 <Route path="reports" element={<ReportDashboard />} />
                 <Route path="calls" element={<CallHistory />} />
                 <Route path="dnc" element={<DNCManagement />} />
+		<Route path="leads" element={<LeadManagement />} />
                 <Route path="operators" element={<OperatorDashboard />} />
                 <Route path="settings" element={<SystemSettings />} />
                 <Route path="*" element={<NotFound />} />

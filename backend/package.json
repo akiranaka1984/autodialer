@@ -33,6 +33,7 @@
     "proxy-addr": "^2.0.7",
     "readable-stream": "^4.7.0",
     "sip.js": "^0.21.2",
+    "telnyx": "^3.6.0",
     "twilio": "^4.0.0",
     "util": "^0.12.5",
     "uuid": "^9.0.1",

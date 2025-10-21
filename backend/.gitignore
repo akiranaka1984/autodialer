@@ -1,0 +1,32 @@
+# Node modules
+node_modules/
+
+# Environment variables
+.env
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+
+# PM2
+.pm2/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+
+# Temporary files
+tmp/
+temp/
+
+# Audio files (optional - 音声ファイルをGitHubに含めない場合)
+audio-files/*.mp3
+audio-files/*.wav
+
+# IVR scripts (optional)
+ivr-scripts/*.js

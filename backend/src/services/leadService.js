@@ -1,0 +1,274 @@
+// ========================================
+// backend/src/services/leadService.js
+// ========================================
+// このファイルは見込み客を判定する「頭脳」の部分です
+
+const db = require('./database');
+const logger = require('./logger');
+
+class LeadService {
+  
+  // ========================================
+  // 1. キャンペーンの設定を取得する
+  // ========================================
+  async getCampaignSettings(campaignId) {
+    try {
+      // データベースから設定を取得
+      const [settings] = await db.query(
+        'SELECT * FROM lead_settings WHERE campaign_id = ?',
+        [campaignId]
+      );
+      
+      // 設定が無ければ初期値を作る
+      if (settings.length === 0) {
+        await this.createDefaultSettings(campaignId);
+        return { 
+          campaign_id: campaignId, 
+          threshold_seconds: 15,  // デフォルトは15秒
+          enabled: true 
+        };
+      }
+      
+      return settings[0];
+    } catch (error) {
+      logger.error('設定取得エラー:', error);
+      throw error;
+    }
+  }
+
+  // ========================================
+  // 2. デフォルト設定を作成
+  // ========================================
+  async createDefaultSettings(campaignId) {
+    try {
+      await db.query(
+        'INSERT INTO lead_settings (campaign_id, threshold_seconds, enabled) VALUES (?, 15, TRUE)',
+        [campaignId]
+      );
+      logger.info(`キャンペーン${campaignId}のデフォルト設定（15秒）を作成しました`);
+    } catch (error) {
+      logger.error('デフォルト設定作成エラー:', error);
+    }
+  }
+
+  // ========================================
+  // 3. 設定を更新する（5秒、10秒、15秒など変更可能）
+  // ========================================
+  async updateCampaignSettings(campaignId, thresholdSeconds) {
+    try {
+      // 入力チェック：5〜60秒の間のみ許可
+      if (thresholdSeconds < 5 || thresholdSeconds > 60) {
+        throw new Error('設定可能な秒数は5〜60秒です');
+      }
+      
+      // 設定を更新
+      await db.query(
+        'UPDATE lead_settings SET threshold_seconds = ? WHERE campaign_id = ?',
+        [thresholdSeconds, campaignId]
+      );
+      
+      logger.info(`✅ キャンペーン${campaignId}の判定秒数を${thresholdSeconds}秒に変更しました`);
+      
+      return { success: true, message: `設定を${thresholdSeconds}秒に変更しました` };
+      
+    } catch (error) {
+      logger.error('設定更新エラー:', error);
+      throw error;
+    }
+  }
+
+  // ========================================
+  // 4. 通話終了時に見込み客かどうか判定する（最重要！）
+  // ========================================
+  async processCallEnd(callData) {
+    try {
+      const { campaign_id, phone_number, duration } = callData;
+      
+      // Step 1: そのキャンペーンの設定を取得
+      const settings = await this.getCampaignSettings(campaign_id);
+      
+      if (!settings.enabled) {
+        logger.info('見込み客判定機能が無効です');
+        return;
+      }
+      
+      // Step 2: 設定秒数と比較して判定
+      const thresholdSeconds = settings.threshold_seconds;
+      const isQualified = duration >= thresholdSeconds;
+      
+      logger.info(`📞 通話終了処理`);
+      logger.info(`  キャンペーン: ${campaign_id}`);
+      logger.info(`  電話番号: ${phone_number}`);
+      logger.info(`  通話時間: ${duration}秒`);
+      logger.info(`  判定基準: ${thresholdSeconds}秒`);
+      logger.info(`  判定結果: ${isQualified ? '⭐見込み客！' : '❌対象外'}`);
+      
+      // Step 3: 見込み客なら記録する
+      if (isQualified) {
+        await this.addToHotLeads(campaign_id, phone_number, duration);
+      }
+      
+      // Step 4: 通話記録を更新（全ての通話）
+      await this.updateCallStats(campaign_id, phone_number, duration);
+      
+    } catch (error) {
+      logger.error('通話終了処理エラー:', error);
+      // エラーが起きても通話処理は続行
+    }
+  }
+
+  // ========================================
+  // 5. 見込み客リストに追加
+  // ========================================
+  async addToHotLeads(campaignId, phoneNumber, duration) {
+    try {
+      // スコア計算（簡単なロジック）
+      let score = 0;
+      if (duration >= 30) score = 100;      // 30秒以上 = 100点
+      else if (duration >= 20) score = 80;  // 20秒以上 = 80点
+      else if (duration >= 15) score = 60;  // 15秒以上 = 60点
+      else if (duration >= 10) score = 40;  // 10秒以上 = 40点
+      else score = 20;                      // それ以下 = 20点
+      
+      // データベースに保存（既にあれば更新）
+      await db.query(`
+        INSERT INTO hot_leads 
+        (campaign_id, phone_number, max_duration, first_call_duration, lead_score, call_count, is_qualified, qualified_at, last_call_date)
+        VALUES (?, ?, ?, ?, ?, 1, TRUE, NOW(), NOW())
+        ON DUPLICATE KEY UPDATE
+          max_duration = GREATEST(max_duration, ?),
+          lead_score = GREATEST(lead_score, ?),
+          is_qualified = TRUE,
+          call_count = call_count + 1,
+          last_call_date = NOW()
+      `, [
+        campaignId, phoneNumber, duration, duration, score,
+        duration, score
+      ]);
+      
+      logger.info(`⭐ 見込み客リストに追加: ${phoneNumber} (スコア: ${score}点)`);
+      
+    } catch (error) {
+      logger.error('見込み客追加エラー:', error);
+    }
+  }
+
+  // ========================================
+  // 6. 通話統計を更新
+  // ========================================
+  async updateCallStats(campaignId, phoneNumber, duration) {
+    try {
+      // 既存レコードがあるかチェック
+      const [existing] = await db.query(
+        'SELECT * FROM hot_leads WHERE campaign_id = ? AND phone_number = ?',
+        [campaignId, phoneNumber]
+      );
+      
+      if (existing.length > 0) {
+        // 更新
+        await db.query(`
+          UPDATE hot_leads 
+          SET 
+            max_duration = GREATEST(max_duration, ?),
+            last_call_date = NOW()
+          WHERE campaign_id = ? AND phone_number = ?
+        `, [duration, campaignId, phoneNumber]);
+      }
+      
+    } catch (error) {
+      logger.error('統計更新エラー:', error);
+    }
+  }
+
+  // ========================================
+  // 7. 見込み客リストを取得（キャンペーンの設定秒数で自動判定）
+  // ========================================
+  async getHotLeads(campaignId, options = {}) {
+    try {
+      // そのキャンペーンの設定を取得
+      const settings = await this.getCampaignSettings(campaignId);
+      const thresholdSeconds = settings.threshold_seconds;
+      
+      // オプション設定
+      const limit = options.limit || 100;
+      const offset = options.offset || 0;
+      const customThreshold = options.customThreshold || thresholdSeconds;
+      
+      // 見込み客を取得
+      const [leads] = await db.query(`
+        SELECT 
+          h.*,
+          '' as contact_name,
+          '' as company,
+          ? as threshold_used
+        FROM hot_leads h
+        -- JOIN disabled
+        WHERE h.campaign_id = ?
+          AND h.max_duration >= ?
+        ORDER BY h.lead_score DESC, h.max_duration DESC
+        LIMIT ? OFFSET ?
+      `, [customThreshold, campaignId, customThreshold, limit, offset]);
+      
+      // 統計情報も取得
+      const [stats] = await db.query(`
+        SELECT 
+          COUNT(*) as total_qualified,
+          AVG(max_duration) as avg_duration,
+          MAX(max_duration) as max_duration
+        FROM hot_leads 
+        WHERE campaign_id = ? AND max_duration >= ?
+      `, [campaignId, customThreshold]);
+      
+      return {
+        campaign_id: campaignId,
+        threshold_seconds: customThreshold,
+        leads: leads,
+        stats: stats[0],
+        count: leads.length
+      };
+      
+    } catch (error) {
+      logger.error('見込み客リスト取得エラー:', error);
+      throw error;
+    }
+  }
+
+  // ========================================
+  // 8. CSVエクスポート用データ取得
+  // ========================================
+  async exportHotLeads(campaignId, thresholdSeconds = null) {
+    try {
+      // 設定秒数を取得（指定がなければキャンペーンのデフォルト）
+      if (!thresholdSeconds) {
+        const settings = await this.getCampaignSettings(campaignId);
+        thresholdSeconds = settings.threshold_seconds;
+      }
+      
+      const [leads] = await db.query(`
+        SELECT 
+          h.phone_number as '電話番号',
+          c.name as '氏名',
+          '' as company as '会社名',
+          h.max_duration as '最長聴取時間（秒）',
+          h.lead_score as 'スコア',
+          h.call_count as 'コール回数',
+          h.last_call_date as '最終コール日時',
+          h.status as 'ステータス'
+        FROM hot_leads h
+        -- JOIN disabled
+        WHERE h.campaign_id = ?
+          AND h.max_duration >= ?
+        ORDER BY h.lead_score DESC
+      `, [campaignId, thresholdSeconds]);
+      
+      return leads;
+      
+    } catch (error) {
+      logger.error('エクスポートデータ取得エラー:', error);
+      throw error;
+    }
+  }
+}
+
+// シングルトンパターン（1つのインスタンスを使い回す）
+module.exports = new LeadService();

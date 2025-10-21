@@ -4,6 +4,7 @@ const cors = require('cors');
 const http = require('http');
 const logger = require('./services/logger');
 const db = require('./services/database');
+const leadsRouter = require('./routes/leads');
 
 require('dotenv').config();
 
@@ -156,7 +157,28 @@ try {
   console.error('❌ ivr router 登録失敗:', error.message);
 }
 
+//  9. Telnyxルーター
+try {
+  const telnyxRouter = require('./routes/telnyx');
+  app.use('/api/telnyx', telnyxRouter);
+  routerStatus.telnyx = true;
+  console.log('✅ telnyx router 登録成功');
+} catch (error) {
+  console.error('❌ telnyx router 登録失敗:', error.message);
+}
+// ========== ここから追加 ==========
+// 10. 見込み客管理ルーター
+try {
+  app.use('/api/leads', leadsRouter);  // ← これを追加！
+  routerStatus.leads = true;           // ← オプション：ステータス管理
+  console.log('✅ leads router 登録成功');
+} catch (error) {
+  console.error('❌ leads router 登録失敗:', error.message);
+}
+// ========== ここまで追加 ==========
+
 console.log('📊 ルーター登録状況:', routerStatus);
+
 
 // === 認証エンドポイント ===
 app.post("/api/auth/login", (req, res) => {

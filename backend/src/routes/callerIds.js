@@ -1,8 +1,100 @@
-// backend/src/routes/callerIds.js - 500エラー修正版
+// backend/src/routes/callerIds.js - Asterisk Realtime統合版
 const express = require('express');
 const router = express.Router();
 const db = require('../services/database');
 const logger = require('../services/logger');
+
+// ===== Asterisk Realtime 自動登録関数 =====
+async function registerToAsteriskRealtime(channel, callerId) {
+  const channelId = channel.username;
+  
+  try {
+    // トランザクション開始
+    await db.query('START TRANSACTION');
+    
+    try {
+      // ps_endpoints に登録
+      await db.query(`
+        INSERT INTO ps_endpoints (id, transport, aors, auth, context, allow, direct_media, callerid)
+        VALUES (?, 'transport-udp', ?, ?, 'autodialer', 'ulaw,alaw', 'no', ?)
+        ON DUPLICATE KEY UPDATE 
+          callerid = VALUES(callerid),
+          transport = VALUES(transport),
+          context = VALUES(context),
+          allow = VALUES(allow)
+      `, [channelId, channelId, channelId, `"${callerId.number}" <${callerId.number}>`]);
+      
+      // ps_auths に登録
+      await db.query(`
+        INSERT INTO ps_auths (id, auth_type, username, password)
+        VALUES (?, 'userpass', ?, ?)
+        ON DUPLICATE KEY UPDATE 
+          password = VALUES(password),
+          auth_type = VALUES(auth_type)
+      `, [channelId, channelId, channel.password]);
+      
+      // ps_aors に登録
+      await db.query(`
+        INSERT INTO ps_aors (id, max_contacts, qualify_frequency)
+        VALUES (?, 1, 60)
+        ON DUPLICATE KEY UPDATE 
+          max_contacts = VALUES(max_contacts),
+          qualify_frequency = VALUES(qualify_frequency)
+      `, [channelId]);
+      
+      // アウトバウンド登録を追加（新規追加部分）
+      if (channel.domain || callerId.domain) {
+        const domain = channel.domain || callerId.domain;
+        await db.query(`
+          INSERT INTO ps_outbound_registrations 
+          (id, server_uri, client_uri, contact_user, transport, outbound_auth, expiration, retry_interval)
+          VALUES (?, ?, ?, ?, 'transport-udp', ?, 3600, 60)
+          ON DUPLICATE KEY UPDATE 
+            server_uri = VALUES(server_uri),
+            client_uri = VALUES(client_uri),
+            outbound_auth = VALUES(outbound_auth)
+        `, [
+          channelId,
+          `sip:${domain}`,
+          `sip:${channelId}@${domain}`,
+          channelId,
+          channelId
+        ]);
+      }
+      
+      // コミット
+      await db.query('COMMIT');
+      
+      logger.info(`✅ Asterisk Realtime登録完了（アウトバウンド含む）: ${channelId}`);
+      return true;
+      
+    } catch (error) {
+      // エラー時はロールバック
+      await db.query('ROLLBACK');
+      throw error;
+    }
+    
+  } catch (error) {
+    logger.error(`❌ Asterisk Realtime登録エラー: ${error.message}`);
+    throw error;
+  }
+}
+
+// 既存のチャンネルを削除する関数
+async function removeFromAsteriskRealtime(channelId) {
+  try {
+    await db.query('DELETE FROM ps_endpoints WHERE id = ?', [channelId]);
+    await db.query('DELETE FROM ps_auths WHERE id = ?', [channelId]);
+    await db.query('DELETE FROM ps_aors WHERE id = ?', [channelId]);
+    
+    logger.info(`✅ Asterisk Realtimeから削除完了: ${channelId}`);
+    return true;
+  } catch (error) {
+    logger.error(`❌ Asterisk Realtime削除エラー: ${error.message}`);
+    throw error;
+  }
+}
+// ===== ここまでが追加部分 =====
 
 // 認証ミドルウェア（簡易版）
 const auth = (req, res, next) => {
@@ -333,6 +425,7 @@ router.get('/:id/channels', async (req, res) => {
   }
 });
 
+// チャンネル追加（Asterisk Realtime統合）
 router.post('/:id/channels', async (req, res) => {
   try {
     const callerId = req.params.id;
@@ -354,10 +447,35 @@ router.post('/:id/channels', async (req, res) => {
       return res.status(400).json({ message: 'このユーザー名は既に登録されています' });
     }
     
+    // 発信者番号情報を取得
+    const [callerIdData] = await db.query(
+      'SELECT * FROM caller_ids WHERE id = ?',
+      [callerId]
+    );
+    
+    if (callerIdData.length === 0) {
+      return res.status(404).json({ message: '発信者番号が見つかりません' });
+    }
+    
+    const callerInfo = callerIdData[0];
+    
+    // チャンネルを追加
     const [result] = await db.query(`
       INSERT INTO caller_channels (caller_id_id, username, password, channel_type, status, created_at)
       VALUES (?, ?, ?, ?, 'available', NOW())
     `, [callerId, username, password, channel_type || 'both']);
+    
+    // Asterisk Realtimeに自動登録
+    try {
+      await registerToAsteriskRealtime(
+        { username, password, domain: callerInfo.domain },
+        callerInfo
+      );
+      logger.info(`✅ チャンネル ${username} をAsterisk Realtimeに登録しました`);
+    } catch (asteriskError) {
+      logger.error('Asterisk Realtime登録エラー（チャンネルは追加済み）:', asteriskError);
+      // Asterisk登録に失敗してもチャンネル追加は成功として扱う
+    }
     
     const [newChannel] = await db.query(
       'SELECT * FROM caller_channels WHERE id = ?',
@@ -382,7 +500,6 @@ router.use((error, req, res, next) => {
     error: process.env.NODE_ENV === 'development' ? error.message : 'Internal Server Error'
   });
 });
-
 
 // チャンネル編集
 router.put("/channels/:channelId", async (req, res) => {
@@ -430,13 +547,26 @@ router.put("/channels/:channelId", async (req, res) => {
   }
 });
 
-// チャンネル削除
+// チャンネル削除（Asterisk Realtime統合）
 router.delete("/channels/:channelId", async (req, res) => {
   try {
     const channelId = req.params.channelId;
     
     console.log("チャンネル削除開始:", channelId);
     
+    // 削除するチャンネルの情報を取得
+    const [channels] = await db.query(
+      'SELECT username FROM caller_channels WHERE id = ?',
+      [channelId]
+    );
+    
+    if (channels.length === 0) {
+      return res.status(404).json({ message: 'チャンネルが見つかりません' });
+    }
+    
+    const channel = channels[0];
+    
+    // データベースから削除
     const [result] = await db.query(
       "DELETE FROM caller_channels WHERE id = ?",
       [channelId]
@@ -444,6 +574,14 @@ router.delete("/channels/:channelId", async (req, res) => {
     
     if (result.affectedRows === 0) {
       return res.status(404).json({ message: "チャンネルが見つかりません" });
+    }
+    
+    // Asterisk Realtimeからも削除
+    try {
+      await removeFromAsteriskRealtime(channel.username);
+      logger.info(`✅ チャンネル ${channel.username} をAsterisk Realtimeから削除しました`);
+    } catch (asteriskError) {
+      logger.error('Asterisk Realtime削除エラー:', asteriskError);
     }
     
     console.log("チャンネル削除成功:", channelId);
@@ -457,4 +595,5 @@ router.delete("/channels/:channelId", async (req, res) => {
     res.status(500).json({ message: "チャンネルの削除に失敗しました" });
   }
 });
+
 module.exports = router;

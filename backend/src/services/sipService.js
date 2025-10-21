@@ -1,5 +1,5 @@
 const sipConfig = require('../config/sip.config');
-// backend/src/services/sipService.js - v60.0完全版（AMI対応・100%完成）
+// backend/src/services/sipService.js - v61.0 動的ドメイン対応版
 const { spawn, exec } = require('child_process');
 const logger = require('./logger');
 const { EventEmitter } = require('events');
@@ -65,7 +65,8 @@ class SipService extends EventEmitter {
       
       if (this.sipAccounts.length === 0) {
         logger.warn('⚠️ データベースからSIPアカウントを読み込めませんでした - フォールバック処理');
-        this.createFallbackAccounts();
+        // フォールバックは使用しない（動的ドメイン対応のため）
+        throw new Error('有効なSIPアカウントがありません');
       }
       
       // 発信者番号ごとのチャンネルグループを作成
@@ -91,8 +92,8 @@ class SipService extends EventEmitter {
         await new Promise(resolve => setTimeout(resolve, retryDelay));
         return await this.connect();
       } else {
-        logger.error('❌ SIP接続の最大試行回数に達しました - 緊急フォールバック実行');
-        return this.enableEmergencyFallback();
+        logger.error('❌ SIP接続の最大試行回数に達しました');
+        throw error;
       }
     }
   }
@@ -235,12 +236,12 @@ class SipService extends EventEmitter {
     throw new Error('SIPアカウントの読み込みに失敗しました');
   }
 
-  // データベースからSIPアカウント読み込み（改良版）
+  // 🔥 動的ドメイン対応版 - データベースからSIPアカウント読み込み
   async loadSipAccountsFromDatabase() {
     try {
       logger.info('🔧 データベースからSIPチャンネル情報を読み込み中...');
       
-      // より詳細なクエリ
+      // より詳細なクエリ（ドメイン情報を含む）
       const [channels] = await db.query(`
         SELECT 
           cc.id,
@@ -253,7 +254,7 @@ class SipService extends EventEmitter {
           ci.number as caller_number, 
           ci.description, 
           ci.provider, 
-          ci.domain, 
+          ci.domain,  -- 発信者番号のドメインを取得
           ci.active as caller_active
         FROM caller_channels cc
         JOIN caller_ids ci ON cc.caller_id_id = ci.id
@@ -277,13 +278,13 @@ class SipService extends EventEmitter {
         if (basicCallerIds.length > 0) {
           logger.info(`📞 基本発信者番号を検出: ${basicCallerIds.length}件`);
           
-          // 基本発信者番号から仮想SIPアカウントを作成
+          // 基本発信者番号から仮想SIPアカウントを作成（動的ドメイン対応）
           return basicCallerIds.map((callerId, index) => ({
             username: `${callerId.number.replace(/[^\d]/g, '').substring(0, 8)}${String(index + 1).padStart(2, '0')}`,
             password: this.generateDefaultPassword(callerId.id),
             callerID: callerId.number,
             description: callerId.description || `発信者番号${callerId.id}`,
-            domain: callerId.domain || 'bigaccess.xyz',
+            domain: callerId.domain,  // 動的にドメインを使用
             provider: callerId.provider || 'Default SIP',
             mainCallerId: callerId.id,
             channelType: 'both',
@@ -298,12 +299,13 @@ class SipService extends EventEmitter {
         throw new Error('データベースに有効な発信者番号が見つかりません');
       }
       
+      // 動的ドメイン対応版 - formattedAccountsの作成
       const formattedAccounts = channels.map(channel => ({
         username: channel.username || `default-${channel.id}`,
         password: channel.password || this.generateDefaultPassword(channel.caller_id_id),
         callerID: channel.caller_number || '03-5946-8520',
         description: channel.description || `チャンネル${channel.id}`,
-        domain: channel.domain || 'bigaccess.xyz',
+        domain: channel.domain,  // データベースから取得したドメインを使用
         provider: channel.provider || 'SIP Provider',
         mainCallerId: channel.caller_id_id || 1,
         channelType: 'both',
@@ -315,6 +317,20 @@ class SipService extends EventEmitter {
       }));
       
       logger.info(`✅ 合計${formattedAccounts.length}個のSIPチャンネルを読み込み`);
+      
+      // ドメイン情報のログ出力
+      const domainSummary = {};
+      formattedAccounts.forEach(account => {
+        if (!domainSummary[account.domain]) {
+          domainSummary[account.domain] = 0;
+        }
+        domainSummary[account.domain]++;
+      });
+      
+      logger.info('📊 ドメイン別チャンネル数:');
+      Object.entries(domainSummary).forEach(([domain, count]) => {
+        logger.info(`  - ${domain}: ${count}チャンネル`);
+      });
       
       return formattedAccounts;
       
@@ -335,40 +351,6 @@ class SipService extends EventEmitter {
       hash = hash & hash; // 32-bit整数に変換
     }
     return Math.abs(hash).toString().substring(0, 8).padStart(8, '1');
-  }
-
-  // 🚨 緊急フォールバック
-  enableEmergencyFallback() {
-    logger.warn('🚨 SIPサービス緊急フォールバック開始');
-    
-    this.createFallbackAccounts();
-    this.connected = true;
-    
-    logger.warn('⚠️ 緊急フォールバックモードで動作中');
-    return true;
-  }
-
-  // フォールバックアカウント作成（成功アカウント使用）
-  createFallbackAccounts() {
-    this.sipAccounts = [
-      {
-        username: '03500002',
-        password: '12345678',
-        callerID: '0369087851',
-        description: '動作確認済み SIP 1',
-        domain: 'bigaccess.xyz',
-        provider: 'Working SIP',
-        mainCallerId: 1,
-        channelType: 'both',
-        status: 'available',
-        lastUsed: null,
-        failCount: 0,
-        channelId: 'working-1',
-        isVirtual: true
-      }
-    ];
-    
-    logger.warn(`🚨 フォールバックアカウント作成完了: ${this.sipAccounts.length}個`);
   }
 
   // アカウント概要ログ
@@ -460,7 +442,7 @@ class SipService extends EventEmitter {
     });
     
     this.callerIdToChannelsMap.forEach((channels, callerId) => {
-      logger.info(`📞 発信者番号ID ${callerId}: ${channels.length}チャンネル (${channels[0]?.callerID})`);
+      logger.info(`📞 発信者番号ID ${callerId}: ${channels.length}チャンネル (${channels[0]?.callerID}) - ドメイン: ${channels[0]?.domain}`);
     });
   }
 
@@ -497,6 +479,7 @@ class SipService extends EventEmitter {
       
       logger.info(`🔍 選択されたSIPアカウント: ${selectedAccount.username}`);
       logger.info(`🔍 - username: "${selectedAccount.username}" (type: ${typeof selectedAccount.username})`);
+      logger.info(`🔍 - domain: "${selectedAccount.domain}"`);
       
       return selectedAccount;
       
@@ -559,6 +542,7 @@ class SipService extends EventEmitter {
       logger.info(`🔥 [SIP-DEBUG] AMI発信準備完了:`);
       logger.info(`🔥 [SIP-DEBUG] - formattedNumber: ${formattedNumber}`);
       logger.info(`🔥 [SIP-DEBUG] - callId: ${callId}`);
+      logger.info(`🔥 [SIP-DEBUG] - domain: ${sipAccount.domain}`);
       
       // SIPアカウントを使用中にマーク
       sipAccount.status = 'busy';
@@ -595,7 +579,8 @@ class SipService extends EventEmitter {
         hasAudio: !!(params.campaignAudio && params.campaignAudio.length > 0),
         sipClient: 'asterisk-ami',
         usedAsteriskAmi: true,
-        ivrContext: `autodialer-campaign-${campaignId}`
+        ivrContext: `autodialer-campaign-${campaignId}`,
+        domain: sipAccount.domain
       };
       
       logger.info(`🔥 [SIP-DEBUG] sipService.originate 正常完了 (AMI版)`);
@@ -614,12 +599,13 @@ class SipService extends EventEmitter {
     }
   }
 
-  // 🆕 新メソッド：Asterisk AMI Originate実行
+  // 🆕 動的ドメイン対応版 - Asterisk AMI Originate実行
   async executeAmiOriginate(sipAccount, formattedNumber, callId, campaignId, params = {}) {
     logger.info('🔍 ===== AMI発信データ追跡開始 =====');
     
     // STEP1: 引数として受け取った時点のデータ検証
     logger.info(`🔍 STEP1-引数確認: sipAccount.username="${sipAccount.username}" (type: ${typeof sipAccount.username})`);
+    logger.info(`🔍 STEP1-引数確認: sipAccount.domain="${sipAccount.domain}"`);
     logger.info(`🔍 STEP1-引数確認: formattedNumber="${formattedNumber}"`);
     logger.info(`🔍 STEP1-引数確認: callId="${callId}"`);
     logger.info(`🔍 STEP1-引数確認: campaignId="${campaignId}"`);
@@ -633,16 +619,11 @@ class SipService extends EventEmitter {
     // STEP3: 安全なディープコピー作成
     const safeSipAccount = JSON.parse(JSON.stringify(sipAccount));
     logger.info(`🔍 STEP3-ディープコピー: safeSipAccount.username="${safeSipAccount.username}"`);
+    logger.info(`🔍 STEP3-ディープコピー: safeSipAccount.domain="${safeSipAccount.domain}"`);
     
-    // STEP4: Channel値構築
-    const channelValue = `SIP/${safeSipAccount.username}@${safeSipAccount.domain}`;
+    // STEP4: Channel値構築（動的ドメイン対応）
+　　const channelValue = `PJSIP/${safeSipAccount.username}/${formattedNumber}`;
     logger.info(`🔍 STEP4-Channel構築: "${channelValue}"`);
-    
-    // STEP5: 最終検証
-    if (channelValue.includes(formattedNumber)) {
-      logger.error('🚨 Channel値に発信先番号混入検出！');
-      throw new Error('Channel値汚染検出 - AMI送信中断');
-    }
     
     logger.info('✅ データ整合性確認完了 - AMI送信実行');
     
@@ -650,17 +631,19 @@ class SipService extends EventEmitter {
       // originateActionの定義の前に追加
       const callerIdValue = sipAccount.callerID || sipAccount.username;
 
- // ✅ 修正後の正しい構造
+      // ✅ 動的ドメイン対応版 - 修正後の正しい構造
       const originateCommand = [
         'Action: Originate',
-	`Channel: PJSIP/${formattedNumber}@${sipAccount.username}`,
+	`Channel: PJSIP/${sipAccount.username}/sip:${formattedNumber}@${safeSipAccount.domain}`,
         `Context: autodialer-campaign-${campaignId}`,
         'Exten: s', // ✅ IVRの開始拡張子を's'に固定
         'Priority: 1',
-	`CallerID: "${sipAccount.callerID || sipAccount.username}" <${sipAccount.callerID || sipAccount.username}>`, // 表示名付きの完全な形式
-	`Variable: CALLERID(name)=${sipAccount.callerID || sipAccount.username}`,
-	`Variable: CALLERID(num)=${sipAccount.callerID || sipAccount.username}`,
-	`Variable: PJSIP_HEADER(update,From)=\"${callerIdValue}\" <sip:${callerIdValue}@${safeSipAccount.domain || 'bigaccess.xyz'}>`,
+        `CallerID: "${sipAccount.callerID || sipAccount.username}" <${sipAccount.callerID || sipAccount.username}>`, // 表示名付きの完全な形式
+        `Variable: CALLERID(name)=${sipAccount.callerID || sipAccount.username}`,
+        `Variable: CALLERID(num)=${sipAccount.callerID || sipAccount.username}`,
+        `Variable: PJSIP_HEADER(update,From)=\"${callerIdValue}\" <sip:${callerIdValue}@${safeSipAccount.domain}>`,  // 動的ドメイン使用
+	`Variable: PJSIP_HEADER(add,P-Asserted-Identity)=<sip:${callerIdValue}@${safeSipAccount.domain}>`,
+	`Variable: ORIG_CALL_ID=${callId}`,
 	`ActionID: ${callId}`,
         'Async: yes',
         '', // 空行で終了
@@ -715,8 +698,15 @@ class SipService extends EventEmitter {
     let sipAccount = await this.getAvailableSipAccount();
     if (!sipAccount) {
       // モックモードでも最低限のアカウントを作成
-      this.createFallbackAccounts();
-      sipAccount = this.sipAccounts[0];
+      logger.warn('モックモード: 利用可能なSIPアカウントがないため、仮想アカウントを使用');
+      sipAccount = {
+        username: 'mock-user',
+        password: 'mock-pass',
+        callerID: '0359468520',
+        domain: 'mock.domain',
+        mainCallerId: 1,
+        status: 'available'
+      };
     }
     
     const callId = `sip-mock-${Date.now()}`;
@@ -746,7 +736,8 @@ class SipService extends EventEmitter {
       Message: 'Originate successfully queued (SIP MOCK)',
       SipAccount: sipAccount.username,
       mainCallerId: sipAccount.mainCallerId,
-      provider: 'sip'
+      provider: 'sip',
+      domain: sipAccount.domain
     };
   }
 

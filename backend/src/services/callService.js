@@ -45,7 +45,16 @@ class CallService {
   async originate(params, preferredProvider = null) {
     console.log('🚀🚀🚀 CALLSERVICE-START: originateメソッド開始（SIP専用）');
     console.log('🚀🚀🚀 CALLSERVICE-PARAMS:', JSON.stringify(params));
-    
+　　
+　　  // 🆕 Telnyx使用チェック（最優先）
+  if (process.env.USE_TELNYX === 'true' || params.provider === 'telnyx') {
+    logger.info('📞 Telnyxで発信を実行');
+    const telnyxService = require('./telnyxService');
+    return await telnyxService.makeCall(params);
+  }
+  
+  // 既存のSIP発信処理
+  logger.info('📞 SIPで発信を実行'); 
     // プロバイダは常にSIP
     const provider = 'sip';
     console.log('🚀🚀🚀 CALLSERVICE-PROVIDER: sip（固定）');
